@@ -4,6 +4,12 @@ import os
 import torch
 import cv2
 import glob
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+root_dir = os.path.dirname(parent_dir)  
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
 from model.gemdepth import GemDepth
 from model.utils.dc_utils import read_video_frames
 
@@ -147,7 +153,7 @@ if __name__ == '__main__':
         'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
     }
     gemdepth = GemDepth(**model_configs[args.encoder])
-    checkpoint = torch.load(".checkpoint/gemdepth.pth", map_location='cpu')
+    checkpoint = torch.load("./checkpoint/gemdepth.pth", map_location='cpu')
     ckpt = checkpoint.get("model", checkpoint) 
     new_ckpt = {k.replace("module.", ""): v for k, v in ckpt.items()}
     gemdepth.load_state_dict(new_ckpt, strict=False)

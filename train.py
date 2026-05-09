@@ -71,7 +71,7 @@ def main(cfg):
     invariant_loss_func = VideoDepthLoss(pose_flag = cfg.pose_flag)
     total_step = 0
     should_keep_training = True
-    writer = SummaryWriter(log_dir=".logs/train") 
+    writer = SummaryWriter(log_dir="./logs/train") 
     while should_keep_training:
         model.train()
         for data in tqdm(train_loader, dynamic_ncols=True, disable=not accelerator.is_main_process):
