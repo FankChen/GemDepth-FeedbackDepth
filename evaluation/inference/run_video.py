@@ -128,8 +128,8 @@ def save_source_video(frames, output_path, fps=30):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='GemDepth Batch Processing')
-    parser.add_argument('--input_dir', type=str, default="/home/R11031/depthanything/demo/kitti_36/")
-    parser.add_argument('--output_dir', type=str, default="/home/R11031/depthanything/demo/icml_gemdepth/")
+    parser.add_argument('--input_dir', type=str, default="")
+    parser.add_argument('--output_dir', type=str, default="")
     parser.add_argument('--input_size', type=int, default=518)
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitb', 'vitl'])
     parser.add_argument('--max_len', type=int, default=-1)
@@ -147,7 +147,7 @@ if __name__ == '__main__':
         'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
     }
     gemdepth = GemDepth(**model_configs[args.encoder])
-    checkpoint = torch.load("/home/R11031/Gemdepth/checkpoint/gemdepth.pth", map_location='cpu')
+    checkpoint = torch.load(".checkpoint/gemdepth.pth", map_location='cpu')
     ckpt = checkpoint.get("model", checkpoint) 
     new_ckpt = {k.replace("module.", ""): v for k, v in ckpt.items()}
     gemdepth.load_state_dict(new_ckpt, strict=False)

@@ -122,9 +122,9 @@ def eval_depthcrafter(infer_paths, depth_gt_paths, factors, args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--infer_path', type=str, default='/mnt/sfs_turbo_new/R11031/video_test/')
+    parser.add_argument('--infer_path', type=str, default='')
     parser.add_argument('--infer_type', type=str, default='npy')
-    parser.add_argument('--benchmark_path', type=str, default='/mnt/data-a808/R11031/')
+    parser.add_argument('--benchmark_path', type=str, default='')
     parser.add_argument('--datasets', type=str, nargs='+', default=['kitti_500'])
     args = parser.parse_args()
     results_save_path = os.path.join(args.infer_path, 'results.txt')
@@ -227,7 +227,7 @@ def main():
                 depth_gt_paths = []
                 factors = []
                 for images in value:
-                    infer_path = (args.infer_path + '/'+ 'kitti_icml' + '/' + images['image']).replace('.jpg', '.npy').replace('.png', '.npy')
+                    infer_path = (args.infer_path + '/'+ dataset + '/' + images['image']).replace('.jpg', '.npy').replace('.png', '.npy')
                     infer_paths.append(infer_path)
                     depth_gt_paths.append(args.root_path + '/' + images['gt_depth'])
                     factors.append(images['factor'])

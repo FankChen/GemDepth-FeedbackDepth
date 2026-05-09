@@ -315,7 +315,7 @@ class DepthVideoDataset(Dataset):
     
 if __name__ == '__main__':
     dataset = DepthVideoDataset('train',
-                                data_dirs=["/mnt/data-a808/R11031/dynamic/"],
+                                data_dirs=[""],
                                 seq_len=32)
     dataloader = DataLoader(dataset, batch_size=1, num_workers=4,shuffle=True,pin_memory=True)
     with torch.no_grad():

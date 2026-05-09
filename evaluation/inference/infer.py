@@ -15,8 +15,8 @@ from model.gemdepth import GemDepth
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--infer_path', type=str, default='/mnt/sfs_turbo_new/R11031/video_test/')
-    parser.add_argument('--json_file', type=str, default="/mnt/data-a808/R11031/kitti/kitti_video_500.json")
+    parser.add_argument('--infer_path', type=str, default='')
+    parser.add_argument('--json_file', type=str, default="")
     parser.add_argument('--datasets', type=str, nargs='+', default=['kitti'])
     parser.add_argument('--input_size', type=int, default=518)
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
@@ -45,7 +45,7 @@ if __name__ == '__main__':
                 videos = []
                 for images in value:
                     image_path = os.path.join(root_path, images['image'])
-                    infer_path = (args.infer_path + '/'+ 'kitti_icml' +'/' + images['image']).replace('.jpg', '.npy').replace('.png', '.npy')
+                    infer_path = (args.infer_path + '/'+ dataset +'/' + images['image']).replace('.jpg', '.npy').replace('.png', '.npy')
                     infer_paths.append(infer_path)
                     img = cv2.imread(image_path)
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
