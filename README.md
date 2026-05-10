@@ -1,9 +1,9 @@
-<h2 align="center"> GemDepth: Geometry-Embedded Features for 3D-Consistent Video Depth
-</h2>
+<h2 align="center"> GemDepth: Geometry-Embedded Features for 3D-Consistent Video Depth </h2>
+
 <div align="center">
-
-<h5 align="center"> If you like our project, please give us a star ⭐ on GitHub for latest update.  </h2>
-
+  <h5>If you like our project, please give us a star ⭐ on GitHub for the latest updates.</h5>
+  
+  [![Model](https://img.shields.io/badge/🤗%20HuggingFace-Model%20-yellow)](https://huggingface.co/YuechengLiu/GemDepth)
 </div>
 
 
