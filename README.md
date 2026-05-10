@@ -9,7 +9,7 @@
 
 ## 📢 News
 - **[2026.05.09]** 🔥 GemDepth is out! It effectively recovering fine-grained
-details and has better 3D temporal consistency!
+details and has better 3D temporal consistency.
 
 
 ## 👋 Introduction
