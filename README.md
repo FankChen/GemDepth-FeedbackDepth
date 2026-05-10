@@ -23,11 +23,6 @@ particularly in complex dynamic scenarios.
 
 ![network](assets/media/network.png)
 
-## 🌈: Zero-shot performance on KITTI
-Zero-shot generalization performance on KITTI benchmark.
-
-<img src="assets/media/kitti_gem.gif" width="1241" height="1504">  
-
 ##  📝 Benchmarks performance
 ![benchmark](assets/media/zero-shot.png)
 
