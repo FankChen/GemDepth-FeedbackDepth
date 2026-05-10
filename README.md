@@ -42,10 +42,8 @@ model_configs = {
     'vitl': {'encoder': 'vitl''features': 256, 'out_channels'[256, 512, 1024, 1024]},
 }
 gemdepth = GemDepth(**model_configs[argencoder])
-checkpoint = torch.load("./checkpoint/gemdepth.pth"map_location='cpu',weights_only=False)
-ckpt = checkpoint.get("model", checkpoint) 
-new_ckpt = {k.replace("module.", ""): for k, v in ckpt.items()}
-gemdepth.load_state_dict(new_ckptstrict=False)
+checkpoint = torch.load("./checkpoint/gemdepth.pth",map_location='cpu',weights_only=False)
+gemdepth.load_state_dict(checkpoint,strict=strict)
 gemdepth = gemdepth.to(DEVICE).eval()
 frames, target_fps = read_video_frames(video_path, args.max_len, args.target_fps, 1280)
 depths, fps = gemdepth.infer_video_depth(frames, target_fps, input_size=args.input_size,device=DEVICE, fp32=args.fp32)
