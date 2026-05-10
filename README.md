@@ -42,10 +42,8 @@ model_configs = {
     'vitl': {'encoder': 'vitl''features': 256, 'out_channels'[256, 512, 1024, 1024]},
 }
 gemdepth = GemDepth(**model_configs[argencoder])
-checkpoint = torch.load("./checkpoint/gemdepth.pth"map_location='cpu',weights_only=False)
-ckpt = checkpoint.get("model", checkpoint) 
-new_ckpt = {k.replace("module.", ""): for k, v in ckpt.items()}
-gemdepth.load_state_dict(new_ckptstrict=False)
+checkpoint = torch.load("./checkpoint/gemdepth.pth",map_location='cpu',weights_only=False)
+gemdepth.load_state_dict(checkpoint,strict=True)
 gemdepth = gemdepth.to(DEVICE).eval()
 frames, target_fps = read_video_frames(video_path, args.max_len, args.target_fps, 1280)
 depths, fps = gemdepth.infer_video_depth(frames, target_fps, input_size=args.input_size,device=DEVICE, fp32=args.fp32)
@@ -55,7 +53,7 @@ depths, fps = gemdepth.infer_video_depth(frames, target_fps, input_size=args.inp
 ### Running script on video
 ```bash
 # run script on video
-python run_video.py --input_dir ./assets/example_videos --output_dir ./assets/example_videos  
+python run_video.py --input_dir ./assets/example_videos --output_dir ./assets/example_result  
 ```
 
 ## ✏️ Training Data
@@ -105,7 +103,10 @@ python evaluation/eval/eval.py \
 ## ✈️ Training
 To train GemDepth on mix-datasets, run
 ```Shell
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py   
+## stage1
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py --config-name stage1
+## stage2
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py --config-name stage2
 ```
 
 
