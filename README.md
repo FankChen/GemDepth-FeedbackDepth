@@ -63,8 +63,10 @@ depths, fps = gemdepth.infer_video_depth(frames, target_fps, input_size=args.inp
 
 ### Running script on video
 ```bash
-# run script on video
-python run_video.py --input_dir ./assets/example_videos --output_dir ./assets/example_result  
+# Only video depth output
+python evaluation/inference/run_video.py --input_dir ./assets/example_videos --output_dir ./assets/example_result
+# video depth & pointcloud output
+python evaluation/inference/run_video_pointcloud.py --input_dir ./assets/example_videos --output_dir ./assets/example_result  
 ```
 
 ## ✏️ Training Data
