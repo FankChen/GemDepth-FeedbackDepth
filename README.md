@@ -76,6 +76,11 @@ python run_video.py --input_dir ./assets/example_videos --output_dir ./assets/ex
 * [Dynamic Replica](https://github.com/facebookresearch/dynamic_stereo)
 * [IRS](https://github.com/HKBU-HPML/IRS)
 
+## ✈️ Model weights
+
+| Model      |                                               Link                                                |
+|:----:|:-------------------------------------------------------------------------------------------------:|
+| GemDepth| [Download 🤗](https://huggingface.co/YuechengLiu/GemDepth/blob/main/gemdepth.pth?download=true) |
 
 ## ✈️ Evaluation
 
