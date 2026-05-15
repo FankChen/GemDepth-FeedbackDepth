@@ -24,7 +24,7 @@ Welcome to the official repository for **GemDepth**!
 
 GemDepth is a framework built on the insight that an explicit awareness of camera motion and global 3D structure is a prerequisite for 3D consistency. Distinctively, GemDepth introduces a Geometry-Embedding Module (GEM) that predicts inter-frame camera poses to generate implicit geometric embeddings. This injection of motion priors equips the network with intrinsic 3D perception and alignment capabilities. Guided by these geometric cues, our Alternating Spatio-Temporal Transformer (ASTT) captures latent point-level correspondences to simultaneously enhance spatial precision for sharp details and enforce rigorous temporal consistency.
 
-GemDepth achieves stateof-the-art performance across multiple datasets,
+GemDepth achieves state of-the-art performance across multiple datasets,
 particularly in complex dynamic scenarios.
 
 ![network](assets/media/network.png)
