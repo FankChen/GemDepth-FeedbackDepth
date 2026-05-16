@@ -43,6 +43,8 @@ MODEL_CONFIGS = {
 
 DEFAULT_CHECKPOINT = ROOT_DIR / "checkpoint" / "gemdepth.pth"
 MAX_DEMO_FRAMES = 300
+DEFAULT_POINT_CLOUD_FRAMES = 12
+DEFAULT_POINT_CLOUD_POINTS = 150_000
 
 
 def resolve_checkpoint() -> str:
@@ -158,6 +160,103 @@ def save_combined_video(frames, depths, output_path, fps=12, grayscale=False):
     writer.release()
 
 
+def frame_to_world_points(depth, frame, intrinsic, extrinsic):
+    if depth.ndim == 3:
+        depth = depth.squeeze()
+
+    h, w = depth.shape[:2]
+    frame = np.asarray(frame)
+    if frame.shape[:2] != (h, w):
+        frame = cv2.resize(frame, (w, h), interpolation=cv2.INTER_LINEAR)
+    if frame.dtype != np.uint8:
+        frame = (frame * 255 if frame.max() <= 1.0 else frame).astype(np.uint8)
+    if frame.ndim == 2:
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+    else:
+        frame = frame[:, :, :3]
+
+    valid = np.isfinite(depth) & (depth > 0)
+    if not np.any(valid):
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.uint8)
+
+    v, u = np.indices((h, w), dtype=np.float32)
+    z = depth.astype(np.float32)
+    x = (u - intrinsic[0, 2]) * z / intrinsic[0, 0]
+    y = (v - intrinsic[1, 2]) * z / intrinsic[1, 1]
+    cam_points = np.stack((x, y, z, np.ones_like(z)), axis=-1)[valid]
+
+    cam_to_world = np.linalg.inv(extrinsic)
+    world_points = (cam_points @ cam_to_world.T)[:, :3]
+    colors = frame[valid].reshape(-1, 3)
+    finite = np.isfinite(world_points).all(axis=1)
+    return world_points[finite].astype(np.float32), colors[finite].astype(np.uint8)
+
+
+def save_ply(points, colors, output_path):
+    colors = np.clip(colors, 0, 255).astype(np.uint8)
+    points = points.astype(np.float32)
+    vertices = np.column_stack((points, colors))
+    header = "\n".join(
+        [
+            "ply",
+            "format ascii 1.0",
+            f"element vertex {points.shape[0]}",
+            "property float x",
+            "property float y",
+            "property float z",
+            "property uchar red",
+            "property uchar green",
+            "property uchar blue",
+            "end_header",
+        ]
+    )
+    with open(output_path, "w", encoding="utf-8") as file:
+        np.savetxt(file, vertices, fmt="%.6f %.6f %.6f %d %d %d", header=header, comments="")
+
+
+def build_point_cloud(frames, depths, extrinsics, intrinsics, max_frames, max_points):
+    total = min(len(frames), len(depths), len(extrinsics), len(intrinsics))
+    if total == 0:
+        raise gr.Error("No frames are available for point cloud generation.")
+
+    max_frames = max(1, min(int(max_frames), total))
+    max_points = max(1_000, int(max_points))
+    frame_indices = np.linspace(0, total - 1, max_frames, dtype=int)
+    per_frame_points = max(1, max_points // len(frame_indices))
+    rng = np.random.default_rng(0)
+
+    all_points = []
+    all_colors = []
+    for idx in frame_indices:
+        points, colors = frame_to_world_points(depths[idx], frames[idx], intrinsics[idx], extrinsics[idx])
+        if len(points) == 0:
+            continue
+        if len(points) > per_frame_points:
+            selected = rng.choice(len(points), size=per_frame_points, replace=False)
+            points = points[selected]
+            colors = colors[selected]
+        all_points.append(points)
+        all_colors.append(colors)
+
+    if not all_points:
+        raise gr.Error("Could not generate any valid 3D points from this video.")
+
+    points = np.concatenate(all_points, axis=0)
+    colors = np.concatenate(all_colors, axis=0)
+    if len(points) > max_points:
+        selected = rng.choice(len(points), size=max_points, replace=False)
+        points = points[selected]
+        colors = colors[selected]
+
+    points = points - np.median(points, axis=0, keepdims=True)
+    return points, colors
+
+
+def save_point_cloud(frames, depths, extrinsics, intrinsics, output_path, max_frames, max_points):
+    points, colors = build_point_cloud(frames, depths, extrinsics, intrinsics, max_frames, max_points)
+    save_ply(points, colors, output_path)
+
+
 def get_uploaded_path(video_file) -> str:
     if isinstance(video_file, str):
         return video_file
@@ -178,7 +277,7 @@ def copy_input_video(video_file) -> str:
 
 
 @spaces.GPU(duration=180)
-def run_demo(video_file, max_frames, target_fps, input_size, grayscale, fp32):
+def run_demo(video_file, max_frames, target_fps, input_size, point_cloud_frames, point_cloud_points, grayscale, fp32):
     if video_file is None:
         raise gr.Error("Please upload a video first.")
 
@@ -190,6 +289,7 @@ def run_demo(video_file, max_frames, target_fps, input_size, grayscale, fp32):
     temp_video = copy_input_video(video_file)
     output_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
     output_depth = tempfile.NamedTemporaryFile(delete=False, suffix=".npz").name
+    output_point_cloud = tempfile.NamedTemporaryFile(delete=False, suffix=".ply").name
 
     model = load_model("vitl")
     model.to(device)
@@ -201,7 +301,7 @@ def run_demo(video_file, max_frames, target_fps, input_size, grayscale, fp32):
             target_fps=requested_fps,
             max_res=1280,
         )
-        depths, fps = model.infer_video_depth(
+        depths, extrinsics, intrinsics, fps = model.infer_video_geometry(
             frames,
             fps,
             input_size=input_size,
@@ -209,6 +309,15 @@ def run_demo(video_file, max_frames, target_fps, input_size, grayscale, fp32):
             fp32=bool(fp32 or device == "cpu"),
         )
         save_combined_video(frames, depths, output_video, fps=fps, grayscale=grayscale)
+        save_point_cloud(
+            frames,
+            depths,
+            extrinsics,
+            intrinsics,
+            output_point_cloud,
+            max_frames=point_cloud_frames,
+            max_points=point_cloud_points,
+        )
         np.savez_compressed(output_depth, depth=depths.astype(np.float32), fps=np.array(fps))
     finally:
         model.to("cpu")
@@ -218,7 +327,7 @@ def run_demo(video_file, max_frames, target_fps, input_size, grayscale, fp32):
         if os.path.exists(temp_video):
             os.remove(temp_video)
 
-    return output_video, output_video, output_depth
+    return output_video, output_video, output_depth, output_point_cloud
 
 
 with gr.Blocks(title="GemDepth Demo") as demo:
@@ -227,7 +336,7 @@ with gr.Blocks(title="GemDepth Demo") as demo:
         # GemDepth Video Depth Demo
 
         Upload a short video file to generate a side-by-side source/depth visualization.
-        The predicted depth array is also available as a compressed `.npz` file.
+        The predicted depth array and point cloud are available as downloadable files.
         """
     )
 
@@ -260,6 +369,20 @@ with gr.Blocks(title="GemDepth Demo") as demo:
                 value=420,
                 label="Inference size",
             )
+            point_cloud_frames_input = gr.Slider(
+                minimum=1,
+                maximum=64,
+                step=1,
+                value=DEFAULT_POINT_CLOUD_FRAMES,
+                label="Point cloud sampled frames",
+            )
+            point_cloud_points_input = gr.Slider(
+                minimum=10_000,
+                maximum=500_000,
+                step=10_000,
+                value=DEFAULT_POINT_CLOUD_POINTS,
+                label="Max point cloud points",
+            )
             grayscale_input = gr.Checkbox(value=False, label="Use grayscale depth")
             fp32_input = gr.Checkbox(value=False, label="Force FP32 inference")
             run_button = gr.Button("Run GemDepth", variant="primary")
@@ -268,6 +391,7 @@ with gr.Blocks(title="GemDepth Demo") as demo:
             video_output = gr.Video(label="Combined result", format="mp4")
             result_file_output = gr.File(label="Result MP4")
             depth_output = gr.File(label="Depth NPZ")
+            point_cloud_file_output = gr.File(label="Point Cloud PLY")
 
     run_button.click(
         fn=run_demo,
@@ -276,10 +400,17 @@ with gr.Blocks(title="GemDepth Demo") as demo:
             max_frames_input,
             target_fps_input,
             input_size_input,
+            point_cloud_frames_input,
+            point_cloud_points_input,
             grayscale_input,
             fp32_input,
         ],
-        outputs=[video_output, result_file_output, depth_output],
+        outputs=[
+            video_output,
+            result_file_output,
+            depth_output,
+            point_cloud_file_output,
+        ],
     )
 
 
