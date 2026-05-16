@@ -116,7 +116,7 @@ which require about 15GB GPU memory. You can adjust these parameters according t
 We provide an interactive Gradio interface for you to easily test GemDepth on your own videos without writing any code.
 
 ```bash
-pip install -r requirements_demo.txt
+pip install -r demo/requirements.txt
 python demo/app.py
 ```
 Our Gradio-based interface allows you to upload videos, run video depth prediction and pointcloud reconstruction, and interactively explore the 3D scene in your browser.
