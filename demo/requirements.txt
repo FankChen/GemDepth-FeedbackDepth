@@ -1,0 +1,17 @@
+gradio
+spaces
+huggingface_hub
+torch==2.3.1
+torchvision==0.18.1
+numpy
+opencv-python-headless
+pillow
+tqdm
+einops
+easydict
+matplotlib
+imageio
+imageio-ffmpeg
+decord
+scipy
+safetensors
