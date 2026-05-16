@@ -69,6 +69,28 @@ python evaluation/inference/run_video.py --input_dir ./assets/example_videos --o
 # video depth & pointcloud output
 python evaluation/inference/run_video_pointcloud.py --input_dir ./assets/example_videos --output_dir ./assets/example_result  
 ```
+Tips: If GPU memory is insufficient, you can adjust the infer settings in `model/gemdepth.py`. The default settings are:
+```bash
+INFER_LEN = 32
+OVERLAP = 10
+KEYFRAMES = [0, 12, 24, 25, 26, 27, 28, 29, 30, 31]
+INTERP_LEN = 8
+```
+which require about 44GB GPU memory. You can reduce them as follows:
+```bash
+INFER_LEN = 16
+OVERLAP = 6
+KEYFRAMES = [0, 6, 12, 13, 14, 15]
+INTERP_LEN = 4
+```
+which require about 25GB GPU memory, or:
+```bash
+INFER_LEN = 8
+OVERLAP = 4
+KEYFRAMES = [0, 3, 6, 7]
+INTERP_LEN = 2
+```
+which require about 15GB GPU memory. You can adjust these parameters according to your GPU memory.
 
 ## ✏️ Training Data
 * [TartanAir](https://github.com/castacks/tartanair_tools)
@@ -127,5 +149,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py --config-name st
 ## stage2
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py --config-name stage2
 ```
+Tips: If GPU memory is insufficient, you can adjust `seq_len` in the config file.
 
 
