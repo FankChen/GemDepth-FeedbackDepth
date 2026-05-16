@@ -1,7 +1,7 @@
 <div align="center">
 <h2 align="center"> GemDepth: Geometry-Embedded Features for 3D-Consistent Video Depth </h2>
 
-[**Yuecheng liu**](https://github.com/Yuecheng919/)<sup>1</sup>, [**Junda Cheng**](https://github.com/Junda24)<sup>1*</sup>, [**Wenjing Liao**](https://github.com/waldeinsamkeits)<sup>1,2</sup>, [**Hanrui Cheng**](https://github.com/MarcelRay0312)<sup>1,2</sup>, [**Yuzhou Wang**](https://github.com/YuzhouWang999)<sup>1</sup>, [**Xin Yang**](https://sites.google.com/view/xinyang/home)<sup>1,3</sup>
+[**Yuecheng liu**](https://github.com/Yuecheng919/)<sup>1</sup>, [**Junda Cheng**](https://github.com/Junda24)<sup>1*</sup>, [**Longliang Liu**](https://github.com/longliangLiu)<sup>1,2</sup>, [**Wenjing Liao**](https://github.com/waldeinsamkeits)<sup>1,2</sup>, [**Hanrui Cheng**](https://github.com/MarcelRay0312)<sup>1,2</sup>, [**Yuzhou Wang**](https://github.com/YuzhouWang999)<sup>1</sup>, [**Xin Yang**](https://sites.google.com/view/xinyang/home)<sup>1,3</sup>
 <br><br>
 <sup>*</sup>Corresponding Author
 <br>
