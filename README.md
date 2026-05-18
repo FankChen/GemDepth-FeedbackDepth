@@ -20,6 +20,7 @@
 </div>
 
 ## 📢 News
+- **[2026.05.18]** 🤗🤗🤗 Evaluation datasets released on Hugging Face.
 - **[2026.05.16]** 🤗🤗🤗 Hugging Face Gradio demos released.
 - **[2026.05.16]** Add GPU memory adjustment schemes for inference and training.
 - **[2026.05.15]** 🤗🤗🤗Pre-trained weights released on Hugging Face.
@@ -140,7 +141,13 @@ Our Gradio-based interface allows you to upload videos, run video depth predicti
 ## ✈️ Evaluation
 
 ### Prepare Evaluation Datasets
-Follow [VideoDepthAnything](https://github.com/DepthAnything/Video-Depth-Anything/tree/main), download datasets from the following links:
+| Datasets      |                                               Link                                                |
+|:----:|:-------------------------------------------------------------------------------------------------:|
+| Sintel| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/tree/main/sintel.tar.gz?download=true) |
+
+You can directly download the evaluation datasets via the link above, or follow the preprocessing steps below.
+
+Follow [VideoDepthAnything](https://github.com/DepthAnything/Video-Depth-Anything/tree/main), download raw datasets from the following links:
 [Sintel](http://sintel.is.tue.mpg.de/), [KITTI](https://www.cvlibs.net/datasets/kitti/), [Bonn](https://www.ipb.uni-bonn.de/data/rgbd-dynamic-dataset/index.html), [ScanNet](http://www.scan-net.org/)
 
 ```bash
