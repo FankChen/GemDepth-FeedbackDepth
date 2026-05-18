@@ -143,10 +143,10 @@ Our Gradio-based interface allows you to upload videos, run video depth predicti
 ### Prepare Evaluation Datasets
 | Datasets      |                                               Link                                                |
 |:----:|:-------------------------------------------------------------------------------------------------:|
-| Sintel| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/tree/main/sintel.tar.gz?download=true) |
-| KITTI| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/tree/main/kitti.tar.gz?download=true) |
-| Bonn| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/tree/main/bonn.tar.gz?download=true) |
-| Scannet| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/tree/main/scannet.tar.gz?download=true) |
+| Sintel| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/sintel.tar.gz?download=true) |
+| KITTI| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/kitti.tar.gz?download=true) |
+| Bonn| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/bonn.tar.gz?download=true) |
+| Scannet| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/scannet.tar.gz?download=true) |
 
 You can directly download the evaluation datasets via the link above, or follow the preprocessing steps below.
 
