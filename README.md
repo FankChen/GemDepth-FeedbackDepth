@@ -150,7 +150,7 @@ Our Gradio-based interface allows you to upload videos, run video depth predicti
 
 You can directly download the evaluation datasets via the link above, or follow the preprocessing steps below.
 
-Follow [VideoDepthAnything](https://github.com/DepthAnything/Video-Depth-Anything/tree/main), download raw datasets from the following links:
+Follow [VideoDepthAnything](https://github.com/DepthAnything/Video-Depth-Anything/), download raw datasets from the following links:
 [Sintel](http://sintel.is.tue.mpg.de/), [KITTI](https://www.cvlibs.net/datasets/kitti/), [Bonn](https://www.ipb.uni-bonn.de/data/rgbd-dynamic-dataset/index.html), [ScanNet](http://www.scan-net.org/)
 
 ```bash
@@ -191,4 +191,20 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py --config-name st
 ```
 Tips: If GPU memory is insufficient, you can adjust `seq_len` in the config file.
 
+## ✈️ Citation
 
+If you find our works useful in your research, please consider citing our papers:
+
+```bibtex
+
+@inproceedings{Liu2026GemDepthGF,
+  title={GemDepth: Geometry-Embedded Features for 3D-Consistent Video Depth},
+  author={Yuecheng Liu and Junda Cheng and Longliang Liu and Wenjing Liao and Hanrui Cheng and Yuzhou Wang and Xin Yang},
+  year={2026},
+  url={https://api.semanticscholar.org/CorpusID:288258595}
+}
+
+```
+# Acknowledgements
+
+This project is based on [VideoDepthAnything](https://github.com/DepthAnything/Video-Depth-Anything/) and [DepthAnythingV2](https://github.com/DepthAnything/Depth-Anything-V2). We thank the original authors for their excellent works.
