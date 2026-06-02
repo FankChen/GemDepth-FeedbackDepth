@@ -1,0 +1,20 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env/
+
+# Checkpoints and outputs
+checkpoint/
+jobs/
+output_eval/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
