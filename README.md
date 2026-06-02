@@ -132,11 +132,14 @@ Our Gradio-based interface allows you to upload videos, run video depth predicti
 ## ✏️ Training Data
 * [TartanAir](https://github.com/castacks/tartanair_tools)
 * [VKITTI](https://europe.naverlabs.com/research/computer-vision/proxy-virtual-worlds-vkitti-1)
-* [VKITTI2](https://europe.naverlabs.com/proxy-virtual-worlds-vkitti-2)
+* [VKITTI2](https://europe.naverlabs.com/proxy-virtual-worlds/vkitti-2)
 * [PointOdyssey](https://github.com/y-zheng18/point_odyssey)
 * [MVS-Synth](https://phuang17.github.io/DeepMVS/mvs-synth.html)
 * [Dynamic Replica](https://github.com/facebookresearch/dynamic_stereo)
 * [IRS](https://github.com/HKBU-HPML/IRS)
+
+## 📌 GemDepth Reproduction Progress
+- See [GEMDepth_REPRO.md](./GEMDepth_REPRO.md) for the current reproduction plan, progress, and next steps.
 
 ## ✈️ Evaluation
 
