@@ -1,0 +1,33 @@
+#!/bin/bash -l
+#BSUB -J BH-000425-08-05-GemDepth-Single-A100
+#BSUB -o jobs/gemdepth_single_a100.%J.stdout
+#BSUB -e jobs/gemdepth_single_a100.%J.stderr
+#BSUB -q batch_h200
+#BSUB -W 72:00
+#BSUB -n 8
+#BSUB -M 80000
+#BSUB -gpu "num=1:aff=no"
+#BSUB -U resv_cr_tfx_h200
+#BSUB -m rng-dl01-w24n01
+
+# Single-GPU two-arm controlled experiment (frozen backbone, head-only fine-tune on VKITTI).
+#
+# Usage (set ARM before submitting, or edit the line below):
+#   ARM=baseline bsub < scripts/train_single_a100.bsub
+#   ARM=errormap bsub < scripts/train_single_a100.bsub
+#   ARM=errormap RESUME=-resume bsub < scripts/train_single_a100.bsub
+set -e
+module purge
+module load conda/4.8.5
+module load cuda/12.4.0
+
+ROOT=/home/izi2sgh/MYDATA/quanjie/liren/depth_baselines/GemDepth
+cd "$ROOT"
+mkdir -p jobs logs checkpoint
+
+ARM=${ARM:-baseline}
+RESUME=${RESUME:-}
+
+echo "[$(date)] submit single-A100 arm=$ARM"
+bash scripts/train_single_a100.sh "$ARM" "$RESUME"
+echo "[$(date)] single-A100 arm=$ARM finished"

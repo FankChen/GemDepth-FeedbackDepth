@@ -20,6 +20,10 @@ if __name__ == '__main__':
     parser.add_argument('--datasets', type=str, nargs='+', default=['kitti'])
     parser.add_argument('--input_size', type=int, default=518)
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
+    parser.add_argument('--ckpt', type=str, default='./checkpoint/gemdepth.pth',
+                        help='Path to the model checkpoint (model-only state dict).')
+    parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap'],
+                        help='DPT head variant; must match the checkpoint being loaded.')
 
     args = parser.parse_args()
     for dataset in args.datasets:
@@ -30,8 +34,8 @@ if __name__ == '__main__':
             'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
             'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         }
-        gemdepth = GemDepth(**model_configs[args.encoder])
-        checkpoint = torch.load("./checkpoint/gemdepth.pth", map_location='cpu',weights_only=False)
+        gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type)
+        checkpoint = torch.load(args.ckpt, map_location='cpu',weights_only=False)
         gemdepth.load_state_dict(checkpoint, strict=True)
         gemdepth = gemdepth.to(DEVICE).eval()
         json_data = path_json[dataset]

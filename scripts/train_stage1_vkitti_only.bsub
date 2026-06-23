@@ -1,0 +1,58 @@
+#!/bin/bash -l
+#BSUB -J BH-000425-08-05-GemDepth-Stage1-VKITTI
+#BSUB -o jobs/gemdepth_stage1_vkitti.%J.stdout
+#BSUB -e jobs/gemdepth_stage1_vkitti.%J.stderr
+#BSUB -q batch_h200
+#BSUB -W 168:00
+#BSUB -n 16
+#BSUB -M 120000
+#BSUB -gpu "num=8:aff=no"
+#BSUB -U resv_cr_tfx_h200
+#BSUB -m rng-dl01-w24n01
+
+# GemDepth Stage1 — VKITTI only (minimal viable training).
+# 8 GPUs, 50k steps, seq_len=32, bf16 mixed precision.
+# Supports auto-resume: if checkpoint_dir contains checkpoints, will resume from latest.
+#
+# Usage:
+#   bsub < scripts/train_stage1_vkitti_only.bsub             # fresh start
+#   bsub < scripts/train_stage1_vkitti_only.bsub -resume      # auto-resume
+
+set -e
+module purge
+module load conda/4.8.5
+module load cuda/12.4.0
+
+PY=/home/izi2sgh/MYDATA/quanjie/liren/envs/gemdepth/bin/python
+ROOT=/home/izi2sgh/MYDATA/quanjie/liren/depth_baselines/GemDepth
+cd $ROOT
+mkdir -p jobs logs/stage1_vkitti
+
+VKITTI_ROOT=/home/izi2sgh/MYDATA/quanjie/liren/datasets/vkitti_1.3.1/
+
+echo "[$(date)] start stage1 (VKITTI only)" && nvidia-smi | head -15
+
+# Build CLI args for train.py
+CLI_ARGS=(
+    --config-name stage1
+    dataset.train.data_dirs="['$VKITTI_ROOT']"
+    num_gpus=8
+    total_step=50000
+    training.checkpoint_dir="./checkpoint/gemdepth_stage1_vkitti"
+    training.log_dir="./logs/stage1_vkitti"
+)
+
+# Add resume if flag passed
+if [ "$1" == "-resume" ] || [ "$1" == "--resume" ]; then
+    CLI_ARGS+=(resume=true)
+    echo "[config] Auto-resume enabled"
+fi
+
+$PY -m accelerate.commands.launch \
+    --num_processes 8 \
+    --mixed_precision bf16 \
+    train.py \
+    "${CLI_ARGS[@]}"
+echo "[$(date)] stage1 (VKITTI only) done"
+
+

@@ -1,0 +1,82 @@
+#!/bin/bash -l
+#BSUB -J BH-000425-08-05-GemDepth-Download-TartanAir
+#BSUB -o jobs/tartanair_download.%J.stdout
+#BSUB -e jobs/tartanair_download.%J.stderr
+#BSUB -q batch_a100
+#BSUB -W 48:00
+#BSUB -n 4
+#BSUB -M 16000
+
+# Download & extract TartanAir dataset for GemDepth training.
+# Downloads the "multifolder" split (all environments, 120GB compressed).
+# Output: $TARTAN_ROOT/*/*/*/{image_left,depth_left,pose_left.txt}
+
+set -e
+module purge
+module load conda/4.8.5
+
+TARTAN_ROOT=/home/izi2sgh/MYDATA/quanjie/liren/datasets/tartanair
+mkdir -p $TARTAN_ROOT $TARTAN_ROOT/raw
+cd $TARTAN_ROOT/raw
+
+echo "[$(date)] Starting TartanAir download..."
+
+# Download the "multifolder" split from TartanAir v2.
+# Using the official download link — adjust if needed.
+# TartanAir provides a download script; here we use wget for the key archives.
+
+# ---------------------------------------------------------------------------
+# Option A: Download individual environment archives (recommended for limited space).
+# We pick the most useful scenes for depth training.
+# ---------------------------------------------------------------------------
+ENVS=(
+    "abandonedfactory"
+    "abandonedfactory_night"
+    "amusement"
+    "cave"
+    "city"
+    "coast"
+    "countryside"
+    "endofworld"
+    "gascola"
+    "hospital"
+    "japanesealley"
+    "neighborhood"
+    "ocean"
+    "office"
+    "oldtown"
+    "seafront"
+    "seasidetown"
+    "seasonsforest"
+    "soulcity"
+    "westerndesert"
+)
+
+BASE_URL="https://tartanair.blob.core.windows.net/tartanair-public"
+
+for env in "${ENVS[@]}"; do
+    echo "[$(date)] Downloading $env ..."
+    wget -c --timeout=30 --tries=5 \
+        "$BASE_URL/Data/$env/Data.tar.gz" \
+        -O "$TARTAN_ROOT/raw/${env}.tar.gz" 2>&1 || echo "[WARN] $env download failed, continuing..."
+done
+
+echo "[$(date)] All downloads complete. Starting extraction..."
+
+# Extract each archive
+for tar in "$TARTAN_ROOT/raw/"*.tar.gz; do
+    env_name=$(basename "$tar" .tar.gz)
+    echo "[$(date)] Extracting $env_name ..."
+    tar -xzf "$tar" -C "$TARTAN_ROOT" --checkpoint=.10000 2>&1 || echo "[WARN] $env_name extract failed, continuing..."
+    rm -f "$tar"  # clean up raw archive
+done
+
+echo "[$(date)] TartanAir download & extraction done!"
+echo "[$(date)] Contents:"
+ls -la "$TARTAN_ROOT" | head -30
+
+# ---------------------------------------------------------------------------
+# Option B (fallback): if the above URLs don't work, use the official script:
+#   git clone https://github.com/castacks/tartanair_tools.git
+#   python tartanair_tools/download_training.py --output-dir $TARTAN_ROOT
+# ---------------------------------------------------------------------------
