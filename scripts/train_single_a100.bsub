@@ -28,6 +28,10 @@ mkdir -p jobs logs checkpoint
 ARM=${ARM:-baseline}
 RESUME=${RESUME:-}
 
+# Cluster-specific: inject the gemdepth env interpreter (the portable .sh defaults to
+# `python`, which would resolve to base conda after `module load conda`).
+export PY=${PY:-/home/izi2sgh/MYDATA/quanjie/liren/envs/gemdepth/bin/python}
+
 echo "[$(date)] submit single-A100 arm=$ARM"
 bash scripts/train_single_a100.sh "$ARM" "$RESUME"
 echo "[$(date)] single-A100 arm=$ARM finished"
