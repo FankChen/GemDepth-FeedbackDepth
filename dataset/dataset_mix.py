@@ -80,39 +80,66 @@ class DepthVideoDataset(Dataset):
         print(data_dirs)
         for data_dir in data_dirs:
             if 'vkitti' in data_dir:
-                print("vkitti")
-                depth_paths=sorted(glob.glob(data_dir + 'vkitti_1.3.1_depthgt'+'/*'))
-                depth_paths = [path for path in depth_paths if os.path.isdir(path)]
-                image_paths=sorted(glob.glob(data_dir + 'vkitti_1.3.1_rgb'+'/*'))
-                image_paths = [path for path in image_paths if os.path.isdir(path)]
-                pose_dir = os.path.join(data_dir, 'vkitti_1.3.1_extrinsicsgt')
-                assert len(depth_paths)==len(image_paths)
-                scenes=['15-deg-left','15-deg-right','30-deg-left','30-deg-right','clone','fog','overcast','sunset','rain','morning']
-                for scene in scenes:
-                    pose_paths = sorted(
-                    [f for f in glob.glob(os.path.join(pose_dir, f'*{scene}*.txt'))],
-                    key=lambda x: int(re.match(r'.*?(\d+)', os.path.basename(x)).group(1))
-                                       )
-                    for k in range(len(depth_paths)):
-                        depth_names = sorted(os.listdir(os.path.join(depth_paths[k], scene)))
-                        image_names = sorted([file for file in os.listdir(os.path.join(image_paths[k], scene)) if file.endswith('.png')])
-                        pose_names = pose_paths[k]
-                        assert len(image_names) == len(depth_names)
-                        image_num = len(image_names)
-                        seq_num = image_num -seq_len + 1   
-                        if mode == 'train':
-                            start_idx = 0
-                            end_idx = round(seq_num )
-                        else:
-                            start_idx = round(seq_num * 0.9)+1
-                            end_idx = seq_num
-                        for i in range(start_idx, end_idx):
-                            set_paths = []
-                            for j in range(seq_len):
-                                image_path = os.path.join(image_paths[k], scene, image_names[i + j])
-                                depth_path = os.path.join(depth_paths[k], scene, depth_names[i + j])
-                                set_paths.append([image_path, depth_path,pose_names])
-                            self.vkitti_data_paths.append(['vkitti', set_paths])     
+                print("vkitti (2.0.3)")
+                # VKITTI 2.0.3 layout (wrapper-agnostic: works whether tars were
+                # extracted with or without a top-level vkitti_2.0.3_* folder):
+                #   <...>/<Scene>/<variation>/frames/rgb/Camera_0/rgb_XXXXX.jpg
+                #   <...>/<Scene>/<variation>/frames/depth/Camera_0/depth_XXXXX.png
+                #   <...>/<Scene>/<variation>/extrinsic.txt
+                rgb_suffix = os.path.join('frames', 'rgb', 'Camera_0')
+                rgb_cam_dirs = sorted(glob.glob(
+                    os.path.join(data_dir, '**', rgb_suffix), recursive=True))
+                for rgb_dir in rgb_cam_dirs:
+                    if not rgb_dir.endswith(rgb_suffix):
+                        continue
+                    base = rgb_dir[:-len(rgb_suffix)]            # <...>/<Scene>/<variation>/
+                    trimmed = base.rstrip(os.sep)
+                    variation = os.path.basename(trimmed)
+                    scene = os.path.basename(os.path.dirname(trimmed))
+
+                    depth_dir = os.path.join(base, 'frames', 'depth', 'Camera_0')
+                    if not os.path.isdir(depth_dir):
+                        cand = glob.glob(os.path.join(data_dir, '**', scene, variation,
+                                                      'frames', 'depth', 'Camera_0'),
+                                         recursive=True)
+                        depth_dir = cand[0] if cand else None
+                    extr_file = os.path.join(base, 'extrinsic.txt')
+                    if not os.path.isfile(extr_file):
+                        cand = glob.glob(os.path.join(data_dir, '**', scene, variation,
+                                                      'extrinsic.txt'), recursive=True)
+                        extr_file = cand[0] if cand else None
+                    if depth_dir is None or extr_file is None:
+                        continue
+
+                    pose_by_frame = self._load_vkitti2_extrinsics(extr_file)
+                    rgb_by_frame = {}
+                    for fn in os.listdir(rgb_dir):
+                        if fn.endswith('.jpg') or fn.endswith('.png'):
+                            fr = int(os.path.splitext(fn)[0].split('_')[-1])
+                            rgb_by_frame[fr] = os.path.join(rgb_dir, fn)
+                    depth_by_frame = {}
+                    for fn in os.listdir(depth_dir):
+                        if fn.endswith('.png'):
+                            fr = int(os.path.splitext(fn)[0].split('_')[-1])
+                            depth_by_frame[fr] = os.path.join(depth_dir, fn)
+
+                    frames = sorted(set(rgb_by_frame) & set(depth_by_frame) & set(pose_by_frame))
+                    if len(frames) < seq_len:
+                        continue
+                    seq_num = len(frames) - seq_len + 1
+                    if mode == 'train':
+                        start_idx = 0
+                        end_idx = round(seq_num)
+                    else:
+                        start_idx = round(seq_num * 0.9) + 1
+                        end_idx = seq_num
+                    for i in range(start_idx, end_idx):
+                        set_paths = []
+                        for j in range(seq_len):
+                            fr = frames[i + j]
+                            set_paths.append([rgb_by_frame[fr], depth_by_frame[fr],
+                                              pose_by_frame[fr]])
+                        self.vkitti_data_paths.append(['vkitti', set_paths])
 
             if 'tartanair' in data_dir:
                 print("tartanair_true")
@@ -197,20 +224,10 @@ class DepthVideoDataset(Dataset):
                         depth = cv2.imread(depth_path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)/100
                         depth = np.expand_dims(depth, axis=-1)
                         depth = depth.astype(np.float32)
-                        mask=depth >0
-                        depth[depth > self.max_depth_outer]=self.max_depth_outer
-                        filename = os.path.basename(image_path)         
-                        target_line_idx = int(os.path.splitext(filename)[0]) 
-                        with open(pose, 'r') as f:
-                            next(f)  
-                            for i, line in enumerate(f):
-                                if i == target_line_idx:
-                                    values = list(map(float, line.split()))[1:]  
-                                    rotation_translation = np.array(values[:12]).reshape(3, 4)
-                                    homogeneous = np.array(values[12:])
-                                    pose = np.vstack([rotation_translation, homogeneous.reshape(1, 4)])
-                                    pose = pose.astype(np.float32)
-                                    break  
+                        depth[depth >= 655] = 0.0  # VKITTI2 sky/invalid sentinel 65535 -> mark invalid
+                        mask = depth > 0
+                        depth[depth > self.max_depth_outer] = self.max_depth_outer
+                        pose = np.asarray(pose, dtype=np.float32)  # 4x4 world->camera (camera 0)
                     if label == 'TartanAir':
                         depth = np.load(depth_path).astype(np.float32)[..., None]
                         mask=depth >0
@@ -289,6 +306,30 @@ class DepthVideoDataset(Dataset):
 
     def __len__(self):
         return len(self.data_paths) // 4 * 4
+
+    def _load_vkitti2_extrinsics(self, path):
+        # VKITTI 2.0.3 extrinsic.txt:
+        #   line 0 = header, then rows: frame cameraID <matrix values ...>
+        # Returns {frame: 4x4 world->camera float32} for camera 0 only.
+        pose_by_frame = {}
+        with open(path, 'r') as f:
+            lines = f.readlines()
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            frame = int(float(parts[0]))
+            cam = int(float(parts[1]))
+            if cam != 0:
+                continue
+            vals = list(map(float, parts[2:]))
+            if len(vals) >= 16:
+                M = np.array(vals[:16], dtype=np.float32).reshape(4, 4)
+            else:
+                M = np.eye(4, dtype=np.float32)
+                M[:3, :4] = np.array(vals[:12], dtype=np.float32).reshape(3, 4)
+            pose_by_frame[frame] = M.astype(np.float32)
+        return pose_by_frame
 
     def get_K(self, K, inputs):
         inv_K = np.linalg.inv(K)

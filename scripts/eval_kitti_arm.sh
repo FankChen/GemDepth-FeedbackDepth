@@ -18,9 +18,11 @@ case "$ARM" in
 esac
 [ -n "$CKPT_OVERRIDE" ] && CKPT="$CKPT_OVERRIDE"
 
-PY=/home/izi2sgh/MYDATA/quanjie/liren/envs/gemdepth/bin/python
-ROOT=/home/izi2sgh/MYDATA/quanjie/liren/depth_baselines/GemDepth
-EVAL_ROOT=/home/izi2sgh/MYDATA/quanjie/liren/datasets/gemdepth_eval
+# Portable: PY defaults to `python` on PATH (activate env first; override with PY=...).
+# ROOT is script-relative; EVAL_ROOT (benchmark data) overridable via env var.
+PY=${PY:-python}
+ROOT=${ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}
+EVAL_ROOT=${EVAL_ROOT:-"$ROOT/../../datasets/gemdepth_eval"}
 OUT_ROOT=$ROOT/output_eval/$ARM
 JSON=$EVAL_ROOT/kitti/kitti_video.json
 

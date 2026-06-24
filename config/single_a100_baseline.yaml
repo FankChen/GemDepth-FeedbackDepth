@@ -20,7 +20,7 @@ optimizer:
 dataset:
   train:
     mode: train
-    data_dirs: ['/home/izi2sgh/MYDATA/quanjie/liren/datasets/vkitti_1.3.1/']
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
     crop_size: 518
     seq_len: 16
 

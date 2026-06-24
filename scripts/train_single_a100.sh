@@ -18,8 +18,10 @@ case "$ARM" in
     *) echo "Unknown arm: $ARM (use 'baseline' or 'errormap')" && exit 1 ;;
 esac
 
-PY=/home/izi2sgh/MYDATA/quanjie/liren/envs/gemdepth/bin/python
-ROOT=/home/izi2sgh/MYDATA/quanjie/liren/depth_baselines/GemDepth
+# Portable: PY defaults to the `python` on PATH (activate your env first); override
+# with PY=/path/to/python. ROOT is resolved relative to this script's location.
+PY=${PY:-python}
+ROOT=${ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}
 cd "$ROOT"
 mkdir -p jobs logs checkpoint
 
