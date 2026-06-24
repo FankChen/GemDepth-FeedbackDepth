@@ -7,8 +7,6 @@
 #BSUB -n 8
 #BSUB -M 80000
 #BSUB -gpu "num=1:aff=no"
-#BSUB -U resv_cr_tfx_h200
-#BSUB -m rng-dl01-w24n01
 
 # Single-GPU two-arm controlled experiment (frozen backbone, head-only fine-tune on VKITTI).
 #
