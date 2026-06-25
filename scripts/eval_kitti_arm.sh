@@ -10,11 +10,16 @@ set -e
 
 ARM=${1:-baseline}
 CKPT_OVERRIDE=${2:-}
+ERROR_MODALITIES=""
 
 case "$ARM" in
-    baseline) HEAD_TYPE=temporal; CKPT=./checkpoint/single_a100_baseline/final_model.pth ;;
-    errormap) HEAD_TYPE=errormap; CKPT=./checkpoint/single_a100_errormap/final_model.pth ;;
-    *) echo "Unknown arm: $ARM (use 'baseline' or 'errormap')" && exit 1 ;;
+    baseline)    HEAD_TYPE=temporal;        CKPT=./checkpoint/single_a100_baseline/final_model.pth ;;
+    errormap)    HEAD_TYPE=errormap;        CKPT=./checkpoint/single_a100_errormap/final_model.pth ;;
+    em_rgb)      HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=rgb;     CKPT=./checkpoint/single_a100_em_rgb/final_model.pth ;;
+    em_feat)     HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=feat;    CKPT=./checkpoint/single_a100_em_feat/final_model.pth ;;
+    em_hog)      HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=hog;     CKPT=./checkpoint/single_a100_em_hog/final_model.pth ;;
+    em_rgbfeat)  HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=rgbfeat; CKPT=./checkpoint/single_a100_em_rgbfeat/final_model.pth ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|em_rgb|em_feat|em_hog|em_rgbfeat)" && exit 1 ;;
 esac
 [ -n "$CKPT_OVERRIDE" ] && CKPT="$CKPT_OVERRIDE"
 
@@ -39,6 +44,7 @@ $PY evaluation/inference/infer.py \
     --input_size 518 \
     --encoder vitl \
     --head_type "$HEAD_TYPE" \
+    ${ERROR_MODALITIES:+--error_modalities "$ERROR_MODALITIES"} \
     --ckpt "$CKPT"
 
 $PY evaluation/eval/eval.py \

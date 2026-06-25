@@ -13,9 +13,13 @@ ARM=${1:-baseline}
 RESUME_FLAG=${2:-}
 
 case "$ARM" in
-    baseline) CONFIG=single_a100_baseline ;;
-    errormap) CONFIG=single_a100_errormap ;;
-    *) echo "Unknown arm: $ARM (use 'baseline' or 'errormap')" && exit 1 ;;
+    baseline)    CONFIG=single_a100_baseline ;;
+    errormap)    CONFIG=single_a100_errormap ;;
+    em_rgb)      CONFIG=single_a100_em_rgb ;;
+    em_feat)     CONFIG=single_a100_em_feat ;;
+    em_hog)      CONFIG=single_a100_em_hog ;;
+    em_rgbfeat)  CONFIG=single_a100_em_rgbfeat ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|em_rgb|em_feat|em_hog|em_rgbfeat)" && exit 1 ;;
 esac
 
 # Portable: PY defaults to the `python` on PATH (activate your env first); override

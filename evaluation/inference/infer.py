@@ -22,8 +22,11 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
     parser.add_argument('--ckpt', type=str, default='./checkpoint/gemdepth.pth',
                         help='Path to the model checkpoint (model-only state dict).')
-    parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap'],
+    parser.add_argument('--head_type', type=str, default='temporal',
+                        choices=['temporal', 'errormap', 'errormap_coattn'],
                         help='DPT head variant; must match the checkpoint being loaded.')
+    parser.add_argument('--error_modalities', type=str, default='rgbfeat',
+                        help='Error modalities for the errormap_coattn head (rgb|feat|hog|rgbfeat).')
 
     args = parser.parse_args()
     for dataset in args.datasets:
@@ -34,7 +37,8 @@ if __name__ == '__main__':
             'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
             'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         }
-        gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type)
+        gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type,
+                            error_modalities=args.error_modalities)
         checkpoint = torch.load(args.ckpt, map_location='cpu',weights_only=False)
         gemdepth.load_state_dict(checkpoint, strict=True)
         gemdepth = gemdepth.to(DEVICE).eval()

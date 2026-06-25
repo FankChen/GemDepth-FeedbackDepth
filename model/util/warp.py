@@ -87,31 +87,36 @@ def _inverse_warp(depth_t, img_s, inv_K_t, K_s, ext_t, ext_s, eps=1e-6):
     return warped, valid
 
 
-def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0):
-    """Compute a per-pixel photometric error map via inverse warping of neighbour frames.
+def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0):
+    """Generic temporal-reprojection error map for an arbitrary per-pixel signal.
+
+    Warps each neighbour's ``signal`` into the target frame using the (differentiable)
+    depth + camera geometry, then measures the residual against the target signal. The
+    signal can be raw RGB (photometric error), decoder features (feature error), HOG
+    descriptors, etc. — the only difference between experiment arms is what is fed here.
 
     Uses the minimum-reprojection trick (monodepth2): for every target frame we warp
-    each available neighbour and keep, per pixel, the smallest photometric residual.
+    each available neighbour and keep, per pixel, the smallest residual.
 
     Args:
-        images: (B,T,C,H,W) frames at the current stage resolution.
+        signal: (B,T,C,H,W) per-pixel signal at the current stage resolution.
         depth:  (B,T,1,H,W) positive metric depth of every frame.
         K:      (B,T,3,3) intrinsics at (H,W).
         extrinsics: (B,T,4,4) world->camera extrinsics (OpenCV).
         offsets: temporal neighbour offsets to warp from.
     Returns:
-        err:   (B,T,1,H,W) photometric error (0 where no valid neighbour).
+        err:   (B,T,1,H,W) error (0 where no valid neighbour).
         valid: (B,T,1,H,W) float mask of frames/pixels with a valid neighbour.
     """
-    B, T, C, H, W = images.shape
-    device = images.device
-    dtype = images.dtype
+    B, T, C, H, W = signal.shape
+    device = signal.device
+    dtype = signal.dtype
 
     K = K.to(dtype)
     extrinsics = extrinsics.to(dtype)
     inv_K = torch.inverse(K)
 
-    photo_stack = []
+    err_stack = []
     valid_stack = []
     for o in offsets:
         t0 = max(0, -o)
@@ -123,30 +128,38 @@ def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-
         n = int(idx_t.numel())
         N = B * n
 
-        img_t = images[:, idx_t].reshape(N, C, H, W)
-        img_s = images[:, idx_s].reshape(N, C, H, W)
+        sig_t = signal[:, idx_t].reshape(N, C, H, W)
+        sig_s = signal[:, idx_s].reshape(N, C, H, W)
         d_t = depth[:, idx_t].reshape(N, 1, H, W)
         invKt = inv_K[:, idx_t].reshape(N, 3, 3)
         Ks = K[:, idx_s].reshape(N, 3, 3)
         Tt = extrinsics[:, idx_t].reshape(N, 4, 4)
         Ts = extrinsics[:, idx_s].reshape(N, 4, 4)
 
-        warped, valid = _inverse_warp(d_t, img_s, invKt, Ks, Tt, Ts, eps=eps)
-        photo = (img_t - warped).abs().mean(dim=1, keepdim=True)  # (N,1,H,W)
-        photo = photo * valid + big * (1.0 - valid)
+        warped, valid = _inverse_warp(d_t, sig_s, invKt, Ks, Tt, Ts, eps=eps)
+        residual = (sig_t - warped).abs().mean(dim=1, keepdim=True)  # (N,1,H,W)
+        residual = residual * valid + big * (1.0 - valid)
 
-        full_photo = images.new_full((B, T, 1, H, W), big)
-        full_valid = images.new_zeros((B, T, 1, H, W))
-        full_photo[:, idx_t] = photo.reshape(B, n, 1, H, W)
+        full_err = signal.new_full((B, T, 1, H, W), big)
+        full_valid = signal.new_zeros((B, T, 1, H, W))
+        full_err[:, idx_t] = residual.reshape(B, n, 1, H, W)
         full_valid[:, idx_t] = valid.reshape(B, n, 1, H, W)
-        photo_stack.append(full_photo)
+        err_stack.append(full_err)
         valid_stack.append(full_valid)
 
-    if len(photo_stack) == 0:
-        zeros = images.new_zeros((B, T, 1, H, W))
+    if len(err_stack) == 0:
+        zeros = signal.new_zeros((B, T, 1, H, W))
         return zeros, zeros
 
-    photo = torch.stack(photo_stack, dim=0).min(dim=0).values  # (B,T,1,H,W)
+    err = torch.stack(err_stack, dim=0).min(dim=0).values  # (B,T,1,H,W)
     valid = torch.stack(valid_stack, dim=0).max(dim=0).values
-    err = photo * valid
+    err = err * valid
     return err, valid
+
+
+def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0):
+    """Photometric (RGB) reprojection error map. Thin wrapper over :func:`signal_error_map`.
+
+    Kept for backward compatibility with the v1 error-map head.
+    """
+    return signal_error_map(images, depth, K, extrinsics, offsets=offsets, eps=eps, big=big)
