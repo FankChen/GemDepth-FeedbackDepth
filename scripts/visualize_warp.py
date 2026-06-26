@@ -127,8 +127,7 @@ def load_clip(root, scene, variation, start, count, height):
     dep = torch.from_numpy(np.stack(rs_dep)).unsqueeze(1).float()                 # T,1,H,W
     ext = torch.from_numpy(np.stack(exts)).float()                                # T,4,4
     Kt = torch.from_numpy(K)[None].repeat(T, 1, 1)                                # T,3,3
-    disp_rgb = [im.astype(np.float32) / 255.0 for im in rs_rgb]                    # list HWC [0,1]
-    return sig[None], dep[None], Kt[None], ext[None], disp_rgb
+    return sig[None], dep[None], Kt[None], ext[None]
 
 
 # ------------------------------------------------------------------------------------ display
@@ -142,8 +141,28 @@ def to_disp(chw):
     return np.clip((g - lo) / (hi - lo + 1e-6), 0.0, 1.0)
 
 
-def save_records(records, out_dir, disp_rgb, frame_base, denorm_rgb=False):
-    """Write one multi-panel PNG per captured warp."""
+def _flow_arrow(fig, spec, label_top, label_bottom):
+    """Draw a left-to-right flow arrow (with two stacked labels) inside ``spec``."""
+    ax = fig.add_subplot(spec)
+    ax.axis("off")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.annotate("", xy=(0.92, 0.5), xytext=(0.08, 0.5),
+                arrowprops=dict(arrowstyle="-|>", lw=2.2, color="black"))
+    ax.text(0.5, 0.60, label_top, ha="center", va="bottom", fontsize=9)
+    ax.text(0.5, 0.42, label_bottom, ha="center", va="top", fontsize=7, color="dimgray")
+
+
+def save_records(records, out_dir, frame_base, denorm_rgb=False):
+    """Write one flow-diagram PNG per captured warp.
+
+    The four left tiles form a 2x2 square; the error map sits on the right::
+
+        source --+
+                 +-- warp -->  warped --+
+        depth  --+                      +-- |target-warped| -->  error map
+                              target  --+
+    """
     os.makedirs(out_dir, exist_ok=True)
     n_saved = 0
     for r in records:
@@ -152,56 +171,73 @@ def save_records(records, out_dir, disp_rgb, frame_base, denorm_rgb=False):
         offset = r["offset"]
         idx_t = r["idx_t"].tolist()
         idx_s = r["idx_s"].tolist()
-        tgt = r["target"][0]          # (n,C,H,W)
+        src = r["source"][0]          # (n,C,H,W)
+        tgt = r["target"][0]
         wrp = r["warped"][0]
         err = r["error"][0, :, 0]     # (n,H,W)
-        val = r["valid"][0, :, 0]
         is_rgb = tgt.shape[1] == 3 and tag.endswith("rgb")
 
         if denorm_rgb and is_rgb:
+            src = src * IMAGENET_STD + IMAGENET_MEAN
             tgt = tgt * IMAGENET_STD + IMAGENET_MEAN
             wrp = wrp * IMAGENET_STD + IMAGENET_MEAN
 
-        depth = r.get("depth", None)  # (1,T,1,h,w) in-model only
+        depth = r.get("depth", None)  # (1,T,1,h,w)
 
         for j in range(tgt.shape[0]):
             ti, si = idx_t[j], idx_s[j]
-            t_img = to_disp(tgt[j])
-            w_img = to_disp(wrp[j])
-            panels = [(t_img, f"target t={frame_base + ti}", "img")]
-            if disp_rgb is not None:
-                panels.append((disp_rgb[si], f"source t={frame_base + si}", "img"))
-            panels.append((w_img, f"warped {frame_base + si}->{frame_base + ti}", "img"))
-            if is_rgb:
-                panels.append((np.clip(0.5 * t_img + 0.5 * w_img, 0, 1), "overlay t/warped", "img"))
-            panels.append((err[j].numpy(), "|error|", "err"))
-            panels.append((val[j].numpy(), "valid", "mask"))
-            if depth is not None:
-                panels.append((depth[0, ti, 0].numpy(), f"depth t={frame_base + ti}", "depth"))
+            e = err[j].numpy()
+            hh, ww = e.shape
+            aspect = ww / hh
+            row_h = 2.3
+            arrow_w = max(0.55, 0.16 * aspect)
+            wratios = [aspect, arrow_w, aspect, arrow_w, aspect]
+            fig = plt.figure(figsize=(sum(wratios) * row_h, 2 * row_h))
+            gs = fig.add_gridspec(2, 5, width_ratios=wratios, height_ratios=[1, 1],
+                                  wspace=0.06, hspace=0.18)
 
-            fig, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.2))
-            if len(panels) == 1:
-                axes = [axes]
-            for ax, (img, title, kind) in zip(axes, panels):
-                if kind == "err":
-                    im = ax.imshow(img, cmap="magma")
-                    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                elif kind == "mask":
-                    ax.imshow(img, cmap="gray", vmin=0, vmax=1)
-                elif kind == "depth":
-                    im = ax.imshow(img, cmap="turbo")
-                    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                else:
-                    ax.imshow(img)
-                ax.set_title(title, fontsize=8)
-                ax.axis("off")
+            # left 2x2 square: source/depth (col 0) and warped/target (col 2)
+            ax_src = fig.add_subplot(gs[0, 0])
+            ax_dep = fig.add_subplot(gs[1, 0])
+            ax_wrp = fig.add_subplot(gs[0, 2])
+            ax_tgt = fig.add_subplot(gs[1, 2])
+            ax_err = fig.add_subplot(gs[:, 4])
+
+            ax_src.imshow(to_disp(src[j]))
+            ax_src.set_title(f"source  t={frame_base + si}", fontsize=9)
+
+            if depth is not None:
+                im_d = ax_dep.imshow(depth[0, ti, 0].numpy(), cmap="turbo")
+                fig.colorbar(im_d, ax=ax_dep, fraction=0.046, pad=0.02)
+                ax_dep.set_title(f"depth  t={frame_base + ti}", fontsize=9)
+            else:
+                ax_dep.text(0.5, 0.5, "no depth", ha="center", va="center",
+                            transform=ax_dep.transAxes)
+                ax_dep.set_title("depth", fontsize=9)
+
+            ax_wrp.imshow(to_disp(wrp[j]))
+            ax_wrp.set_title(f"warped  {frame_base + si}->{frame_base + ti}", fontsize=9)
+
+            ax_tgt.imshow(to_disp(tgt[j]))
+            ax_tgt.set_title(f"target (GT)  t={frame_base + ti}", fontsize=9)
+
+            im_e = ax_err.imshow(e, cmap="magma")
+            fig.colorbar(im_e, ax=ax_err, fraction=0.046, pad=0.02)
+            ax_err.set_title("error map", fontsize=9)
+
+            for ax in (ax_src, ax_dep, ax_wrp, ax_tgt, ax_err):
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+            _flow_arrow(fig, gs[:, 1], "warp", "depth + pose")
+            _flow_arrow(fig, gs[:, 3], "residual", "| target - warped |")
+
             fig.suptitle(
-                f"{tag}   t={frame_base + ti} <- t={frame_base + si}  (offset {offset:+d})",
-                fontsize=10,
+                f"{tag}    t={frame_base + ti} <- t={frame_base + si}   (offset {offset:+d})",
+                fontsize=11,
             )
-            fig.tight_layout(rect=(0, 0, 1, 0.96))
             fname = f"{safe_tag}_t{frame_base + ti:03d}_from{frame_base + si:03d}.png"
-            fig.savefig(os.path.join(out_dir, fname), dpi=120)
+            fig.savefig(os.path.join(out_dir, fname), dpi=120, bbox_inches="tight")
             plt.close(fig)
             n_saved += 1
     return n_saved
@@ -210,7 +246,7 @@ def save_records(records, out_dir, disp_rgb, frame_base, denorm_rgb=False):
 # --------------------------------------------------------------------------------------- modes
 def run_gt_mode(args):
     scene, variation = find_sequence(args.vkitti_root, args.scene, args.variation)
-    sig, dep, K, ext, disp_rgb = load_clip(
+    sig, dep, K, ext = load_clip(
         args.vkitti_root, scene, variation, args.start, args.frames, args.height
     )
     records = []
@@ -218,7 +254,7 @@ def run_gt_mode(args):
     # Attach the GT depth so each panel also shows what drove the warp.
     for r in records:
         r["depth"] = dep
-    n = save_records(records, args.out, disp_rgb, args.start)
+    n = save_records(records, args.out, args.start)
     print(f"[GT] {scene}/{variation} frames {args.start}..{args.start + args.frames - 1}: "
           f"{len(records)} warps -> {n} panels in {args.out}")
 
@@ -249,7 +285,7 @@ def run_model_mode(args):
     with torch.no_grad():
         model.infer_video_depth(videos, 1, input_size=args.input_size, device=device, fp32=True)
     records = model.head.capture_warps
-    n = save_records(records, args.out, None, args.start, denorm_rgb=True)
+    n = save_records(records, args.out, args.start, denorm_rgb=True)
     print(f"[model] {args.head_type}/{args.error_modalities}: {len(records)} warps -> "
           f"{n} panels in {args.out}")
 

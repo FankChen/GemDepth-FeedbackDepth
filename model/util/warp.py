@@ -151,6 +151,7 @@ def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, bi
                 'idx_t': idx_t.detach().cpu(),
                 'idx_s': idx_s.detach().cpu(),
                 'target': sig_t.detach().reshape(B, n, C, H, W).cpu(),
+                'source': sig_s.detach().reshape(B, n, C, H, W).cpu(),
                 'warped': warped.detach().reshape(B, n, C, H, W).cpu(),
                 'error': (residual * valid).detach().reshape(B, n, 1, H, W).cpu(),
                 'valid': valid.detach().reshape(B, n, 1, H, W).cpu(),
