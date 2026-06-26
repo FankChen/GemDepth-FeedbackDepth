@@ -4,7 +4,7 @@
 # -----------------------------------------------------------------------------
 # 用法:
 #   bash scripts/run_arms.sh baseline errormap                 # 顺序跑这两个臂
-#   bash scripts/run_arms.sh all                               # 顺序跑全部 6 个臂
+#   bash scripts/run_arms.sh all                               # 顺序跑全部 7 个臂
 #   GPUS="0 1" bash scripts/run_arms.sh all                    # 多卡: 轮流分配到 GPU 0/1 并行后台跑
 #
 # 说明:
@@ -18,7 +18,7 @@ ROOT=${ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}
 cd "$ROOT"
 mkdir -p logs jobs
 
-ALL_ARMS=(baseline errormap em_rgb em_feat em_hog em_rgbfeat)
+ALL_ARMS=(baseline errormap em_rgb em_feat em_hog em_rgbfeat em_refine)
 
 # 解析臂列表
 ARMS=()

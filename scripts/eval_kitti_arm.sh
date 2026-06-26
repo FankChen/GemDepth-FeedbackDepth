@@ -19,7 +19,8 @@ case "$ARM" in
     em_feat)     HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=feat;    CKPT=./checkpoint/single_a100_em_feat/final_model.pth ;;
     em_hog)      HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=hog;     CKPT=./checkpoint/single_a100_em_hog/final_model.pth ;;
     em_rgbfeat)  HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=rgbfeat; CKPT=./checkpoint/single_a100_em_rgbfeat/final_model.pth ;;
-    *) echo "Unknown arm: $ARM (baseline|errormap|em_rgb|em_feat|em_hog|em_rgbfeat)" && exit 1 ;;
+    em_refine)   HEAD_TYPE=errormap_refine; CKPT=./checkpoint/single_a100_em_refine/final_model.pth ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|em_rgb|em_feat|em_hog|em_rgbfeat|em_refine)" && exit 1 ;;
 esac
 [ -n "$CKPT_OVERRIDE" ] && CKPT="$CKPT_OVERRIDE"
 

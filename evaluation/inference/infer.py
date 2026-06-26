@@ -23,7 +23,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt', type=str, default='./checkpoint/gemdepth.pth',
                         help='Path to the model checkpoint (model-only state dict).')
     parser.add_argument('--head_type', type=str, default='temporal',
-                        choices=['temporal', 'errormap', 'errormap_coattn'],
+                        choices=['temporal', 'errormap', 'errormap_coattn', 'errormap_refine'],
                         help='DPT head variant; must match the checkpoint being loaded.')
     parser.add_argument('--error_modalities', type=str, default='rgbfeat',
                         help='Error modalities for the errormap_coattn head (rgb|feat|hog|rgbfeat).')
