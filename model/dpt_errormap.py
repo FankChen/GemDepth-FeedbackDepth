@@ -35,6 +35,9 @@ class DPTHeadErrorMap(DPTHeadTemporal):
         self.error_stages = tuple(error_stages)
         self.warp_offsets = tuple(warp_offsets)
         self.aux_depths = []
+        # When set to a list, every warp performed in _inject is recorded for visualisation
+        # (see scripts/visualize_warp.py). Default None -> no capture, no behaviour change.
+        self.capture_warps = None
 
         self.depth_heads = nn.ModuleDict()
         self.error_encoders = nn.ModuleDict()
@@ -77,7 +80,14 @@ class DPTHeadErrorMap(DPTHeadTemporal):
         K = scale_intrinsics(intrinsics.detach().float(), (H0, W0), (h, w))
         ext = extrinsics.detach().float()
 
-        err, valid = photometric_error_map(imgs, depth_bt, K, ext, offsets=self.warp_offsets)
+        if self.capture_warps is not None:
+            n0 = len(self.capture_warps)
+            err, valid = photometric_error_map(imgs, depth_bt, K, ext, offsets=self.warp_offsets,
+                                               capture=self.capture_warps, tag=f'{key}/rgb')
+            for rec in self.capture_warps[n0:]:
+                rec['depth'] = depth_bt.detach().cpu()
+        else:
+            err, valid = photometric_error_map(imgs, depth_bt, K, ext, offsets=self.warp_offsets)
         err_in = torch.cat([err, valid], dim=2).reshape(BT, 2, h, w)
         err_feat = self.error_encoders[key](err_in.to(path_feat.dtype))
         return path_feat + err_feat

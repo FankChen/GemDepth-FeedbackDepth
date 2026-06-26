@@ -12,6 +12,7 @@ venv/
 checkpoint/
 jobs/
 output_eval/
+output_viz/
 
 # Logs
 *.log

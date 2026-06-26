@@ -87,7 +87,8 @@ def _inverse_warp(depth_t, img_s, inv_K_t, K_s, ext_t, ext_s, eps=1e-6):
     return warped, valid
 
 
-def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0):
+def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0,
+                     capture=None, tag=''):
     """Generic temporal-reprojection error map for an arbitrary per-pixel signal.
 
     Warps each neighbour's ``signal`` into the target frame using the (differentiable)
@@ -104,6 +105,10 @@ def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, bi
         K:      (B,T,3,3) intrinsics at (H,W).
         extrinsics: (B,T,4,4) world->camera extrinsics (OpenCV).
         offsets: temporal neighbour offsets to warp from.
+        capture: optional list. When provided, one record per offset is appended with the
+            (detached, CPU) target / warped / error / valid tensors so a debug script can
+            visualise every warp. Has no effect on the returned values or on training.
+        tag: string label attached to each captured record (e.g. ``'s4/rgb'``).
     Returns:
         err:   (B,T,1,H,W) error (0 where no valid neighbour).
         valid: (B,T,1,H,W) float mask of frames/pixels with a valid neighbour.
@@ -138,6 +143,19 @@ def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, bi
 
         warped, valid = _inverse_warp(d_t, sig_s, invKt, Ks, Tt, Ts, eps=eps)
         residual = (sig_t - warped).abs().mean(dim=1, keepdim=True)  # (N,1,H,W)
+
+        if capture is not None:
+            capture.append({
+                'tag': tag,
+                'offset': int(o),
+                'idx_t': idx_t.detach().cpu(),
+                'idx_s': idx_s.detach().cpu(),
+                'target': sig_t.detach().reshape(B, n, C, H, W).cpu(),
+                'warped': warped.detach().reshape(B, n, C, H, W).cpu(),
+                'error': (residual * valid).detach().reshape(B, n, 1, H, W).cpu(),
+                'valid': valid.detach().reshape(B, n, 1, H, W).cpu(),
+            })
+
         residual = residual * valid + big * (1.0 - valid)
 
         full_err = signal.new_full((B, T, 1, H, W), big)
@@ -157,9 +175,11 @@ def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, bi
     return err, valid
 
 
-def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0):
+def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0,
+                          capture=None, tag=''):
     """Photometric (RGB) reprojection error map. Thin wrapper over :func:`signal_error_map`.
 
     Kept for backward compatibility with the v1 error-map head.
     """
-    return signal_error_map(images, depth, K, extrinsics, offsets=offsets, eps=eps, big=big)
+    return signal_error_map(images, depth, K, extrinsics, offsets=offsets, eps=eps, big=big,
+                            capture=capture, tag=tag)
