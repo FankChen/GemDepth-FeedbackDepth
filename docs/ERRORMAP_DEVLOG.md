@@ -18,9 +18,17 @@ geometry is temporally inconsistent.
 Training data: **VKITTI 2.0.3** (frozen DINOv2 ViT-L backbone, only the DPT head is fine-tuned).
 Test data: **KITTI** (Eigen video split). Lower is better for AbsRel / RMSE; higher is better for δ<1.25.
 
+> **与论文对比须注意：** 本项目是「VKITTI 微调 head → KITTI 测试」（合成→真实迁移，且只训 head），而论文是大数据
+> **zero-shot**。两者设置不同，不能直接抢 SOTA；论文 KITTI 值仅作参考上限。我们的 baseline（无 GEM/ASTT）与 VDA 基准
+> 持平，符合预期。
+
 | Model version | Head | Error modality | Train | Test | AbsRel ↓ | RMSE ↓ | δ<1.25 ↑ | Notes |
 |---|---|---|---|---|---|---|---|---|
-| baseline | temporal (original) | — | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | control arm |
+| **baseline (ours)** | temporal (original) | — | VKITTI | KITTI | **0.0679** | **3.167** | **0.957** | 初始基线；head-only 微调 10k 步 |
+| _VDA (paper, ref)_ | — | — | zero-shot | KITTI | 0.071 | n/a | 0.959 | 论文表 zero-shot，同设备 |
+| _GemDepth-DAV2 (paper)_ | — | — | zero-shot | KITTI | 0.055 | n/a | 0.970 | 论文上限(含 GEM/ASTT) |
+| _GemDepth-VDA (paper)_ | — | — | zero-shot | KITTI | 0.051 | n/a | 0.978 | 论文上限(含 GEM/ASTT) |
+| errormap-v1 | errormap (additive) | RGB | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | zero-init additive injection |
 | errormap-v1 | errormap (additive) | RGB | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | zero-init additive injection |
 | coattn-rgb | errormap_coattn (方案C) | RGB | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | — |
 | coattn-feat | errormap_coattn (方案C) | feature | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | — |
@@ -32,6 +40,15 @@ _Update each row's metrics after running `scripts/eval_kitti_arm.sh <arm>`._
 ---
 
 ## Timeline
+
+### 2026-06-29 — baseline 微调复现，首个初始 SOTA 行
+
+- **Model version:** `baseline` (head_type `temporal`)。从预训 `gemdepth.pth` head-only 微调 10k 步。
+- **Train:** VKITTI 2.0.3；**Test:** KITTI Eigen video split。
+- **Result:** AbsRel **0.0679** / RMSE **3.167** / δ<1.25 **0.957**（batch_a100 评测，job 12511433）。
+- **与论文对比（注意 train/test 不同）:** 我们=VKITTI微调head→KITTI；论文=zero-shot。我们 0.0679/0.957 与 VDA
+  0.071/0.959 持平，距 GemDepth 本体(0.051–0.055/0.97–0.98) 的 GEM/ASTT 增益还有空间 — 作为所有 error-map 实验起点。
+- **Conclusion:** baseline 复现到位，作为初始参照；后续 error-map 臂均在此基线上递增。
 
 ### 2026-06-25 — 方案C: bidirectional co-attention error-map head + 4 controlled arms
 
