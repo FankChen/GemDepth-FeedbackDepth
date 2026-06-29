@@ -8,12 +8,11 @@
 #BSUB -M 80000
 #BSUB -gpu "num=1:aff=no"
 
-# Single-GPU two-arm controlled experiment (frozen backbone, head-only fine-tune on VKITTI).
+# Single-GPU baseline experiment (frozen backbone, head-only fine-tune on VKITTI).
 #
 # Usage (set ARM before submitting, or edit the line below):
 #   ARM=baseline bsub < scripts/train_single_a100.bsub
-#   ARM=errormap bsub < scripts/train_single_a100.bsub
-#   ARM=errormap RESUME=-resume bsub < scripts/train_single_a100.bsub
+#   ARM=baseline RESUME=-resume bsub < scripts/train_single_a100.bsub
 set -e
 module purge
 module load conda/4.8.5

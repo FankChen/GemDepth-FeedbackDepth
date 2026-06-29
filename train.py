@@ -18,26 +18,6 @@ import glob
 import re
 
 
-def compute_aux_depth_loss(aux_depths, depth_gt, mask):
-    """Masked multi-scale L1 supervision for the error-map head's intermediate depths.
-
-    aux_depths: list of tensors shaped (B,T,1,h,w) or (B*T,1,h,w).
-    depth_gt / mask: (B,T,1,H,W).
-    """
-    gt = depth_gt.flatten(0, 1).float()
-    m = mask.flatten(0, 1).float()
-    total = gt.new_zeros(())
-    for d in aux_depths:
-        if d.dim() == 5:
-            d = d.flatten(0, 1)
-        h, w = d.shape[-2:]
-        gt_s = F.interpolate(gt, size=(h, w), mode='nearest')
-        m_s = F.interpolate(m, size=(h, w), mode='nearest')
-        diff = (d.float() - gt_s).abs() * m_s
-        total = total + diff.sum() / m_s.sum().clamp(min=1.0)
-    return total / max(len(aux_depths), 1)
-
-
 def find_latest_ckpt(checkpoint_dir: str) -> str | None:
     """Find the latest checkpoint in the directory (by step number)."""
     ckpt_dir = Path(checkpoint_dir)
@@ -144,8 +124,7 @@ def main(cfg):
         'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
     }
     head_type = OmegaConf.select(cfg, 'model.head_type', default='temporal')
-    error_modalities = OmegaConf.select(cfg, 'model.error_modalities', default='rgbfeat')
-    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type, error_modalities=error_modalities).to(accelerator.device)
+    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type).to(accelerator.device)
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load
@@ -157,13 +136,8 @@ def main(cfg):
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
             if len(unexpected) > 0:
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
-            if head_type not in ('errormap', 'errormap_coattn'):
-                assert len(missing) == 0 and len(unexpected) == 0, \
-                    f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
-            else:
-                allowed = ('depth_heads', 'error_encoders', 'modality_encoders', 'coattn')
-                non_em_missing = [m for m in missing if not any(a in m for a in allowed)]
-                assert len(non_em_missing) == 0, f"Unexpected missing keys beyond error-map modules: {non_em_missing}"
+            assert len(missing) == 0 and len(unexpected) == 0, \
+                f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
     else:
         print(f"[init] WARNING: No pretrained weights found at {cfg.model.video_path}, training from scratch!")
     
@@ -247,7 +221,6 @@ def main(cfg):
         print(f"[resume] No checkpoint found, starting from step 0")
     
     invariant_loss_func = VideoDepthLoss(pose_flag = cfg.pose_flag)
-    aux_depth_weight = float(OmegaConf.select(cfg, 'training.aux_depth_weight', default=0.0))
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") 
@@ -267,12 +240,6 @@ def main(cfg):
                     depth_pred,pose_enc_list,extrinsic_pred,intrinsic_pred= model(image)
                 loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred) 
                 loss=loss_dict['total_loss']
-                if aux_depth_weight > 0:
-                    head = accelerator.unwrap_model(model).head
-                    aux_depths = getattr(head, 'aux_depths', None)
-                    if aux_depths:
-                        aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
-                        loss = loss + aux_depth_weight * aux_loss
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), 1.0)

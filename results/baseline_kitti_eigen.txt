@@ -1,0 +1,7 @@
+GemDepth baseline (temporal head) — fine-tuned, KITTI Eigen test
+checkpoint: checkpoint/single_a100_baseline/final_model.pth  (head_only, 10000 steps)
+eval: full A100 (job 12511433), 2026-06-26
+
+abs_relative_difference: 0.067926
+rmse_linear:             3.167435
+delta1_acc:              0.957104

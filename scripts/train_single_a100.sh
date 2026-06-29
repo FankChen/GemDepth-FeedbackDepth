@@ -1,12 +1,11 @@
 #!/bin/bash -l
-# Single-GPU (A100) launcher for the two-arm controlled experiment.
+# Single-GPU (A100) launcher for the baseline arm.
 #
-#   ./scripts/train_single_a100.sh baseline            # control arm (original DPT head)
-#   ./scripts/train_single_a100.sh errormap            # method arm (error-map DPT head)
+#   ./scripts/train_single_a100.sh baseline            # original temporal DPT head
 #   ./scripts/train_single_a100.sh baseline -resume    # auto-resume from latest checkpoint
 #
-# Both arms freeze everything except the DPT head and fine-tune on VKITTI from the
-# pretrained GemDepth weights. Only the head differs between arms.
+# Freezes everything except the DPT head and fine-tunes on VKITTI from the
+# pretrained GemDepth weights.
 set -e
 
 ARM=${1:-baseline}
@@ -14,12 +13,7 @@ RESUME_FLAG=${2:-}
 
 case "$ARM" in
     baseline)    CONFIG=single_a100_baseline ;;
-    errormap)    CONFIG=single_a100_errormap ;;
-    em_rgb)      CONFIG=single_a100_em_rgb ;;
-    em_feat)     CONFIG=single_a100_em_feat ;;
-    em_hog)      CONFIG=single_a100_em_hog ;;
-    em_rgbfeat)  CONFIG=single_a100_em_rgbfeat ;;
-    *) echo "Unknown arm: $ARM (baseline|errormap|em_rgb|em_feat|em_hog|em_rgbfeat)" && exit 1 ;;
+    *) echo "Unknown arm: $ARM (baseline)" && exit 1 ;;
 esac
 
 # Portable: PY defaults to the `python` on PATH (activate your env first); override

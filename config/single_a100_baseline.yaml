@@ -8,7 +8,6 @@ training:
   log_dir: ./logs/single_a100_baseline
   freeze_mode: head_only      # only the DPT head is trainable
   grad_accum: 4               # effective batch = batch_size * grad_accum
-  aux_depth_weight: 0.0       # baseline head has no auxiliary depths
 
 optimizer:
   kind: adamw

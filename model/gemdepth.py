@@ -13,8 +13,6 @@ from functools import partial
 from model.tools.pos_embed import  get_1d_sincos_pos_embed_from_grid,RoPE2D
 from model.dinov2 import DINOv2
 from model.dpt_temporal import DPTHeadTemporal
-from model.dpt_errormap import DPTHeadErrorMap
-from model.dpt_errormap_coattn import DPTHeadErrorMapCoAttn
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
 from model.utils.util import compute_scale_and_shift, get_interpolate_frames
 from model.tools.geometry import GlobalRepresentationEncoder,normalize_pose_translations,transform_pose_using_quats_and_trans_2_to_1
@@ -53,8 +51,7 @@ class GemDepth(nn.Module):
         ffn_bias=True,
         qk_norm=True,
         init_values=0.01,
-        head_type='temporal',
-        error_modalities='rgbfeat'
+        head_type='temporal'
     ):
         super(GemDepth, self).__init__()
 
@@ -143,11 +140,7 @@ class GemDepth(nn.Module):
         self.patch_start_idx = 1 + num_register_tokens
         self.camera_head = CameraHead(dim_in=2*embed_dim) 
         self.head_type = head_type
-        if head_type == 'errormap':
-            self.head = DPTHeadErrorMap(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
-        elif head_type == 'errormap_coattn':
-            self.head = DPTHeadErrorMapCoAttn(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, error_modalities=error_modalities)
-        elif head_type == 'temporal':
+        if head_type == 'temporal':
             self.head = DPTHeadTemporal(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
@@ -165,7 +158,6 @@ class GemDepth(nn.Module):
         pos=[]
         image_ids=[]
         B, T, C, H, W = x.shape
-        input_images = x
         frame_idx = 0
         global_idx = 0
         patch_h, patch_w = H // 14, W // 14
@@ -274,11 +266,7 @@ class GemDepth(nn.Module):
         
         #dpt_head
         with torch.autocast("cuda", enabled=False):
-            if self.head_type in ('errormap', 'errormap_coattn'):
-                depth = self.head(features_attn, patch_h, patch_w, T,
-                                  images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
-            else:
-                depth = self.head(features_attn, patch_h, patch_w,T)
+            depth = self.head(features_attn, patch_h, patch_w, T)
             depth = F.interpolate(depth, size=(H, W), mode="bilinear", align_corners=True)
             depth = F.relu(depth)
         return depth.squeeze(1).unflatten(0, (B, T)),pose_enc_list, extrinsic,intrinsic
