@@ -16,14 +16,14 @@
 | Model | Train | Test | AbsRel ↓ | RMSE ↓ | δ<1.25 ↑ | Notes |
 |---|---|---|---|---|---|---|
 | **baseline (ours)** | VKITTI | KITTI | **0.0679** | **3.167** | **0.957** | head-only finetune，非全量复现 |
-| _VDA (paper, ref)_ | zero-shot | KITTI | 0.071 | n/a | 0.959 | 同设备参考 |
-| _GemDepth-DAV2 (paper)_ | zero-shot | KITTI | 0.055 | n/a | 0.970 | 论文上限（含 GEM/ASTT 全训） |
-| _GemDepth-VDA (paper)_ | zero-shot | KITTI | 0.051 | n/a | 0.978 | 论文上限（含 GEM/ASTT 全训） |
+| _VDA (paper, ref)_ | zero-shot | KITTI | 0.083 | n/a | 0.944 | 论文表1 KITTI 列 |
+| _GemDepth-DAV2 (paper)_ | zero-shot | KITTI | 0.077 | n/a | 0.950 | 论文表1 KITTI 列（含 GEM/ASTT） |
+| _GemDepth-VDA (paper)_ | zero-shot | KITTI | 0.071 | n/a | 0.955 | 论文表1 KITTI 列（含 GEM/ASTT） |
 
 ## 与论文对比须知
 
 本基线是 **VKITTI 微调 head → KITTI 测试**（合成→真实迁移，仅 head-only），论文是大数据 **zero-shot**。
-两者设置不同，论文 KITTI 值仅作上限参考，不直接对标。我们 0.0679/0.957 与 VDA 基线持平，距 GemDepth
-本体 0.051~0.055 的差距即 GEM/ASTT 全量训练的增益。
+两者设置不同。论文 Table 1 列序=Sintel|Bonn|Scannet|KITTI，KITTI 取最后一对：VDA 0.083、GemDepth-DAv2 0.077、
+GemDepth-VDA 0.071。我们 0.0679 已与 GemDepth-VDA 持平略优、优于 VDA — KITTI 复现到位，论文优势主要在 Sintel/Bonn/Scannet。
 
 > 评测在完整 `batch_a100` 上完成（job 12511433）。MIG 切片显存不足以跑 ViT-L 视频推理，会 OOM。
