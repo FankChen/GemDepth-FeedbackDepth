@@ -24,11 +24,11 @@ Test data: **KITTI** (Eigen video split). Lower is better for AbsRel / RMSE; hig
 
 | Model version | Head | Error modality | Train | Test | AbsRel ↓ | RMSE ↓ | δ<1.25 ↑ | Notes |
 |---|---|---|---|---|---|---|---|---|
-| **baseline (ours)** | temporal (original) | — | VKITTI | KITTI | **0.0679** | **3.167** | **0.957** | 初始基线；head-only 微调 10k 步 |
+| pretrained (ours, zero-shot) | temporal (original) | — | — | KITTI | 0.0677 | 3.106 | 0.9585 | 预训练权重直接评测，未微调（本协议锚点） |
+| **baseline (ours)** | temporal (original) | — | VKITTI | KITTI | **0.0679** | **3.167** | **0.957** | 初始基线；head-only 微调 10k 步（≈预训练，无退化） |
 | _VDA (paper, ref)_ | — | — | zero-shot | KITTI | 0.071 | n/a | 0.959 | 论文表 zero-shot，同设备 |
 | _GemDepth-DAV2 (paper)_ | — | — | zero-shot | KITTI | 0.055 | n/a | 0.970 | 论文上限(含 GEM/ASTT) |
 | _GemDepth-VDA (paper)_ | — | — | zero-shot | KITTI | 0.051 | n/a | 0.978 | 论文上限(含 GEM/ASTT) |
-| errormap-v1 | errormap (additive) | RGB | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | zero-init additive injection |
 | errormap-v1 | errormap (additive) | RGB | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | zero-init additive injection |
 | coattn-rgb | errormap_coattn (方案C) | RGB | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | — |
 | coattn-feat | errormap_coattn (方案C) | feature | VKITTI | KITTI | _pending_ | _pending_ | _pending_ | — |
