@@ -41,6 +41,6 @@ echo "[$(date)] Start evaluation"
 $GEMDEPTH_PY evaluation/eval/eval.py \
     --infer_path $OUT_ROOT \
     --benchmark_path $EVAL_ROOT \
-    --datasets bonn
+    --datasets bonn_500
 
 echo "[$(date)] Bonn eval done"
