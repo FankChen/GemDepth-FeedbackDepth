@@ -87,3 +87,28 @@ _Update each row's metrics after running `scripts/eval_kitti_arm.sh <arm>`._
 - **Model version:** `baseline` (head_type `temporal`).
 - **Change:** none (control). Frozen DINOv2 ViT-L backbone + original temporal DPT head.
 - **Effect / Conclusion:** reference point for all error-map experiments.
+
+---
+
+## Warp 不足分析 + 设计（对标 SOTA, 2026-06-29）
+
+现有 warp = `_inverse_warp`(depth1 反投影 → 相对位姿 → grid_sample) + `signal_error_map`(±1 邻帧 L1·mean(C)、min-reprojection、无效填 big=1.0、pose/K detach、末层零初始化)。逐项对标 SOTA 找差距：
+
+| # | 不足 | 现状 | SOTA 做法 | 引用 |
+|---|---|---|---|---|
+| 1 | 残差度量太脆弱 | 纯 L1 `|tgt-warp|.mean(C)` | 0.85·SSIM+0.15·L1；census 变换抗光照；feature-metric 收敛盆 | monodepth2 / UnFlow / feat-metric |
+| 2 | 遮挡只靠 min | 仅 min over ±1 | min-reproj + auto-mask 剔除静态/违例像素；fwd-bwd 一致性遮挡 | monodepth2 / UnFlow |
+| 3 | 动态物体 | 静态假设, 动区=噪声误导 | motion seg + 独立流分离动/静 | Dynamo-Depth |
+| 4 | 单次 warp 信息薄 | 每级 1 次残差 | plane-sweep cost volume / 4D 相关体迭代 lookup | ManyDepth / RAFT |
+| 5 | depth1 噪声驱动 warp | 小 conv 即出粗深度 | GRU 多步迭代细化 | RAFT |
+| 6 | 尺度不一致 | 相对深度×真实位姿→投影偏移 | 评测域 affine 对齐已抵消, 训练域未对齐 | (本仓 eval) |
+| 7 | 仅 ±1 短基线 | offsets=(-1,1) | 多帧 ±2/关键帧 + min | ManyDepth |
+
+**设计优先级（低成本→高收益）：**
+1. **残差升级**（改 `signal_error_map`）：`0.85·(1-SSIM)/2 + 0.15·L1`，可选 census；不动结构、零风险。
+2. **auto-mask + fwd-bwd 遮挡**：识别移动/遮挡像素，clean error map。
+3. **cost-volume mini**：depth1 周围多假设 plane-sweep, 残差堆成 volume 喂 head（替代单残差）。
+4. **GRU 迭代细化**：复用本仓 DenseGRU 思路, depth1→depth2 改 2~3 步。
+5. **不确定性加权**：head 出 σ, err 按 1/σ 加权。
+
+候选 next-arm：先 1，再 2，作为 coattn 之上的受控增量。
