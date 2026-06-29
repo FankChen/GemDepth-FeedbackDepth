@@ -21,7 +21,7 @@ OUT_ROOT=$GEMDEPTH_ROOT/output_eval
 mkdir -p $OUT_ROOT $GEMDEPTH_ROOT/jobs
 cd $GEMDEPTH_ROOT
 
-JSON=$EVAL_ROOT/scannet/scannet.json
+JSON=$EVAL_ROOT/scannet/scannet_video_500.json
 
 echo "[$(date)] Start ScanNet inference"
 echo "JSON     = $JSON"

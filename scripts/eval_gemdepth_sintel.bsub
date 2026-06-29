@@ -21,7 +21,7 @@ OUT_ROOT=$GEMDEPTH_ROOT/output_eval
 mkdir -p $OUT_ROOT $GEMDEPTH_ROOT/jobs
 cd $GEMDEPTH_ROOT
 
-JSON=$EVAL_ROOT/sintel/sintel.json
+JSON=$EVAL_ROOT/sintel/sintel_video.json
 
 echo "[$(date)] Start Sintel inference"
 echo "JSON     = $JSON"
