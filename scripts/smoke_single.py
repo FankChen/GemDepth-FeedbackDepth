@@ -53,28 +53,31 @@ def test_forward_and_aux(warp_signal='rgb'):
           f"n_aux={len(head.aux_depths)} (expect 1)")
 
     loss = depth.float().mean() + sum(a.float().mean() for a in head.aux_depths)
+    # z1 (aux) must be a differentiable function of the ORIGINAL output_conv path.
+    assert head.aux_depths[0].requires_grad, "z1 aux is detached from the graph"
     loss.backward()
-    g_fuse = head.fuse_block[-1].weight.grad
-    g_d1 = head.depth_head1[0].weight.grad
-    assert g_fuse is not None and g_fuse.abs().sum() > 0, "fuse_block last conv no grad"
-    assert g_d1 is not None and g_d1.abs().sum() > 0, "depth_head1 no grad"
-    print(f"[single/{warp_signal}] gradients reach fuse_block / depth_head1 OK")
+    g_refine = head.refine_head[-1].weight.grad
+    assert g_refine is not None and g_refine.abs().sum() > 0, "refine_head last conv no grad"
+    print(f"[single/{warp_signal}] gradients reach refine_head; z1 aux in-graph OK")
 
 
 def test_error_encoder_learnable():
-    """At zero-init the error_encoder grad is masked by fuse_block's zero last conv.
-    Perturb that conv and confirm the error_encoder -> fuse path carries gradient."""
+    """At zero-init the error_encoder grad is masked by refine_head's zero last conv.
+    Give refine_head non-zero weights + positive biases (keeps both ReLUs active) and confirm
+    the error_encoder -> refine_head path then carries gradient."""
     in_ch, feats, out_ch = 64, 64, [48, 96, 192, 384]
     head = DPTHeadErrorMapSingle(in_ch, feats, False, out_ch, False, num_frames=4)
     with torch.no_grad():
-        head.fuse_block[-1].weight.normal_(0, 0.02)  # simulate a partially-trained fuse block
+        for idx in (0, 2, 4):                       # the three Conv2d layers in refine_head
+            head.refine_head[idx].weight.normal_(0, 0.05)
+            head.refine_head[idx].bias.fill_(0.5)   # positive bias keeps the ReLUs active
     head.train()
     out_features, images, ext, K, B, T, ph, pw = _fake_inputs(in_ch)
     depth = head(out_features, ph, pw, T, images=images, extrinsics=ext, intrinsics=K)
     depth.float().mean().backward()
-    g_enc = head.error_encoder[0].weight.grad
-    assert g_enc is not None and g_enc.abs().sum() > 0, "error_encoder no grad after perturbing fuse"
-    print("[single] error_encoder -> fuse path is learnable OK")
+    g_enc = head.error_encoder[-1].weight.grad
+    assert g_enc is not None and g_enc.abs().sum() > 0, "error_encoder no grad after activating refine_head"
+    print("[single] error_encoder -> refine_head path is learnable OK")
 
 
 def test_zero_init_equivalence():

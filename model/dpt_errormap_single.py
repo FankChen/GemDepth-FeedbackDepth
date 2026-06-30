@@ -1,23 +1,20 @@
 # Single-stage error-map DPT head (user-specified design, 2026-06-30).
 #
-# For every frame of the clip, at the FINAL DPT decoder stage (path_1) ONLY:
-#   1. z1      = depth_head1(path_1)                 # coarse per-frame depth -> auxiliary loss
-#   2. e1,valid = reprojection error map: warp the t-1 / t+1 neighbours into the current frame
+# The ORIGINAL temporal DPT head is run to completion FIRST, so the warp operates on the real
+# full-resolution output depth (not a hidden intermediate feature). For every frame:
+#   1. feat = interpolate(output_conv1(path_1), x14)   # penultimate full-res feature (features//2 ch)
+#   2. z1   = output_conv2(feat)                        # ORIGINAL full-res depth   -> auxiliary loss
+#   3. e1,valid = reprojection error map: warp the t-1 / t+1 neighbours into the current frame
 #                 using z1 + GEM pose (detached), keep the per-pixel min residual (monodepth2)
-#   3. refined = path_1 + fuse(concat[path_1, enc(e1)])   # fuse last conv zero-init => identity at init
-#   4. z'1     = output_conv(refined)                # FINAL per-frame depth -> main loss
+#   4. z'1  = z1 + refine_head(concat[feat, enc(e1)])   # refined full-res depth   -> main loss
 #
-# Differences vs the 4-stage dpt_errormap_refine.py:
-#   * injects ONCE at path_1 (not s4/s3/s2/s1);
-#   * the refined feature is routed through the ORIGINAL output_conv, so z'1 IS the model's
-#     final depth (refine.py decodes depth2 with a separate auxiliary head instead);
-#   * only one auxiliary depth (z1) is produced.
+# Both depths are supervised: z1 (auxiliary) and z'1 (main / the inference output).
 #
-# ``warp_signal`` selects what is warped and differenced:
-#   * 'rgb'  (default): photometric error on the (downsampled) input frames;
-#   * 'feat'          : feature-metric error on the path_1 decoder feature itself.
+# ``warp_signal`` selects what is warped and differenced to form the error map:
+#   * 'rgb'  (default): photometric error on the (full-res) input frames;
+#   * 'feat'          : feature-metric error on the penultimate decoder feature ``feat``.
 #
-# Stability: the last conv of ``fuse_block`` is zero-initialised, so at init ``refined == path_1``
+# Stability: the last conv of ``refine_head`` is zero-initialised, so at init ``z'1 == z1``
 # exactly and the head reproduces the baseline temporal head — head-only fine-tuning from the
 # pretrained GemDepth weights starts as a no-op.
 
@@ -27,19 +24,6 @@ import torch.nn.functional as F
 
 from .dpt_temporal import DPTHeadTemporal
 from .util.warp import signal_error_map, scale_intrinsics
-
-
-def _make_depth_head(features):
-
-    """Small conv stack mapping a stage feature (features ch) to a positive depth map."""
-    return nn.Sequential(
-        nn.Conv2d(features, features // 2, kernel_size=3, stride=1, padding=1),
-        nn.ReLU(True),
-        nn.Conv2d(features // 2, 32, kernel_size=3, stride=1, padding=1),
-        nn.ReLU(True),
-        nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0),
-        nn.Softplus(),
-    )
 
 
 class DPTHeadErrorMapSingle(DPTHeadTemporal):
@@ -64,67 +48,69 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         # When set to a list, the warp is recorded for visualisation; default None -> no capture.
         self.capture_warps = None
 
-        # z1: coarse depth that drives the warp and is auxiliary-supervised.
-        self.depth_head1 = _make_depth_head(features)
-        # Encode the 2-channel error map (residual + valid) up to ``features`` so the concat is balanced.
+        # The penultimate full-res feature ``feat`` has ``features // 2`` channels (output_conv1).
+        feat_ch = features // 2
+        # Encode the 2-channel error map (residual + valid) up to ``feat_ch`` so the concat is balanced.
         self.error_encoder = nn.Sequential(
-            nn.Conv2d(2, features // 2, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(2, max(feat_ch // 2, 1), kernel_size=3, stride=1, padding=1),
             nn.ReLU(True),
-            nn.Conv2d(features // 2, features, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(max(feat_ch // 2, 1), feat_ch, kernel_size=3, stride=1, padding=1),
         )
-        # Concat[path_feat, err_feat] (2*features) -> correction (features); last conv zero-init
-        # so the correction starts at 0 => identity at init.
-        fuse = nn.Sequential(
-            nn.Conv2d(2 * features, features, kernel_size=3, stride=1, padding=1),
+        # Concat[feat, err_feat] (2*feat_ch) -> a 1-channel depth correction; last conv zero-init
+        # so the correction starts at 0 => z'1 == z1 at init (reproduces the baseline head).
+        refine = nn.Sequential(
+            nn.Conv2d(2 * feat_ch, feat_ch, kernel_size=3, stride=1, padding=1),
             nn.ReLU(True),
-            nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(feat_ch, 32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(True),
+            nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0),
         )
-        nn.init.zeros_(fuse[-1].weight)
-        nn.init.zeros_(fuse[-1].bias)
-        self.fuse_block = fuse
+        nn.init.zeros_(refine[-1].weight)
+        nn.init.zeros_(refine[-1].bias)
+        self.refine_head = refine
 
-    def _inject(self, path_feat, images, extrinsics, intrinsics, B, T):
-        """z1 -> warp t±1 neighbours -> concat-fuse the error map -> refined feature."""
+    def _refine(self, z1, feat, images, extrinsics, intrinsics, B, T):
+        """warp t±1 neighbours with z1 -> error map -> concat with feat -> depth correction.
+
+        ``z1``   : (BT,1,Hf,Wf) the original full-res output depth (drives the warp geometry).
+        ``feat`` : (BT,feat_ch,Hf,Wf) the penultimate full-res feature (mixed with the error map).
+        Returns z'1 = z1 + refine_head(concat[feat, enc(err)]); == z1 at init (zero-init).
+        """
         if images is None or extrinsics is None or intrinsics is None:
-            return path_feat
+            return z1
 
-        BT, _, h, w = path_feat.shape
-        z1 = self.depth_head1(path_feat.float())                   # (BT,1,h,w), > 0
-        self.aux_depths.append(z1.reshape(B, T, 1, h, w))
-        #先从输入特征解出 z1，形状 (BT,1,h,w)，并存入 self.aux_depths供辅助损失使用。
+        BT, _, Hf, Wf = z1.shape
+        depth_bt = z1.reshape(B, T, 1, Hf, Wf)
+        # Scale intrinsics from the input-image resolution to the full output resolution, and
+        # detach the GEM pose/camera so the warp does not back-propagate into them.
         H0, W0 = images.shape[-2:]
-        depth_bt = z1.reshape(B, T, 1, h, w)
-        K = scale_intrinsics(intrinsics.detach().float(), (H0, W0), (h, w))
+        K = scale_intrinsics(intrinsics.detach().float(), (H0, W0), (Hf, Wf))
         ext = extrinsics.detach().float()
-        #把内参从原图分辨率里缩放到特征图分辨率，并把外参 detach 出来，准备做重投影。
+
+        # The per-frame signal that is warped and differenced to form the error map.
         if self.warp_signal == 'feat':
-            signal = path_feat.reshape(B, T, -1, h, w).float()     # feature-metric error
+            signal = feat.reshape(B, T, -1, Hf, Wf).float()        # feature-metric error
             tag = 'single/feat'
         else:
-            imgs = F.interpolate(images.flatten(0, 1).float(), size=(h, w),
+            imgs = F.interpolate(images.flatten(0, 1).float(), size=(Hf, Wf),
                                  mode='bilinear', align_corners=False)
-            signal = imgs.reshape(B, T, imgs.shape[1], h, w)       # photometric error
+            signal = imgs.reshape(B, T, imgs.shape[1], Hf, Wf)     # photometric error
             tag = 'single/rgb'
-        #目前搞了两种 warp 信号：'feat' 直接用 path_feat 做 feature-metric error；'rgb' 用原图做 photometric error。
-        #后续要改实验方法可以在这改
 
         if self.capture_warps is not None:
             n0 = len(self.capture_warps)
-            #可视化
             err, valid = signal_error_map(signal, depth_bt, K, ext, offsets=self.warp_offsets,
                                           capture=self.capture_warps, tag=tag)
-            #核心wrap操作
             for rec in self.capture_warps[n0:]:
                 rec['depth'] = depth_bt.detach().cpu()
         else:
             err, valid = signal_error_map(signal, depth_bt, K, ext, offsets=self.warp_offsets)
 
-        err_in = torch.cat([err, valid], dim=2).reshape(BT, 2, h, w)
-        err_feat = self.error_encoder(err_in.to(path_feat.dtype))
-        #errmap和原特征 concat 后送入 fuse_block 做残差修正，得到 refined 特征。
-        fused = torch.cat([path_feat, err_feat], dim=1)            # (BT, 2*features, h, w)
-        refined = path_feat + self.fuse_block(fused)               
-        return refined
+        err_in = torch.cat([err, valid], dim=2).reshape(BT, 2, Hf, Wf)
+        err_feat = self.error_encoder(err_in.to(feat.dtype))
+        # errmap 编码后与全分辨率特征 feat 拼接，卷出 1 通道深度修正量，残差叠加到 z1。
+        fused = torch.cat([feat, err_feat], dim=1)                 # (BT, 2*feat_ch, Hf, Wf)
+        return z1 + self.refine_head(fused)                        # zero-init -> z'1 == z1 at init
 
     def forward(self, out_features, patch_h, patch_w, frame_length,
                 images=None, extrinsics=None, intrinsics=None,
@@ -170,13 +156,17 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn, mode, size=layer_1_rn.shape[2:])
         path_1 = self.scratch.refinenet1(path_2, layer_1_rn, mode)
 
-        #目前只在 path_1 做 errormap 注入，path_2/3/4还没有做。后续可以在这里加上 path_2/3/4 的注入。
-        path_1 = self._inject(path_1, images, extrinsics, intrinsics, B, T)
-
-        out = self.scratch.output_conv1(path_1)
-        out = F.interpolate(out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True)
-        ori_type = out.dtype
+        # --- run the ORIGINAL head to completion: feat (penultimate, full-res) -> z1 (depth) ---
+        feat = self.scratch.output_conv1(path_1)
+        feat = F.interpolate(feat, (int(patch_h * 14), int(patch_w * 14)),
+                             mode="bilinear", align_corners=True)
+        ori_type = feat.dtype
         with torch.autocast(device_type="cuda", enabled=False):
-            out = self.scratch.output_conv2(out.float())
+            feat = feat.float()
+            z1 = self.scratch.output_conv2(feat)                   # (BT,1,Hf,Wf) ORIGINAL depth
+            Hf, Wf = z1.shape[-2:]
+            self.aux_depths.append(z1.reshape(B, T, 1, Hf, Wf))    # z1 -> auxiliary supervision
+            # --- error-map refine on the real output depth -> z'1 (main / inference output) ---
+            z_refined = self._refine(z1, feat, images, extrinsics, intrinsics, B, T)
 
-        return out.to(ori_type)
+        return z_refined.to(ori_type)
