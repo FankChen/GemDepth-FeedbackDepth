@@ -112,3 +112,24 @@ _Update each row's metrics after running `scripts/eval_kitti_arm.sh <arm>`._
 5. **不确定性加权**：head 出 σ, err 按 1/σ 加权。
 
 候选 next-arm：先 1，再 2，作为 coattn 之上的受控增量。
+
+---
+
+## errormap_single 实现（单层 path_1 注入, 2026-06-30）
+
+用户指定的单阶段结构，区别于 4 级 `errormap_refine`：**只在 DPT decoder 最终特征层 `path_1` 注入一次**，精化后的特征走**原 `output_conv`** 出最终深度（refine 是另起辅助头解码 depth2）。
+
+数据流（每帧 t）：`path_1 → depth_head1 → z1`（粗深度, 辅助监督）；`z1 + GEM 位姿(detach)` 反投影 → 反向 warp t±1 邻帧 min-reprojection → `e1,valid` → `error_encoder`(2ch→256ch) → `err_feat`；`refined = path_1 + fuse_block(concat[path_1, err_feat])`（fuse 末层 conv 零初始化）；`原 output_conv(refined) → z'1`（最终深度, 主监督）。
+
+关键设计点：
+
+- **warp 信号** `warp_signal`：`rgb`（光度残差，默认）/ `feat`（对 `path_1` 特征做 feature-metric 残差）。可作 rgb vs feat 受控双臂。
+- **identity-at-init**：`fuse_block` 末层 conv 零初始化 ⇒ 初始 `refined == path_1` ⇒ 精确复现 baseline temporal 头（head-only 微调从 no-op 起步）。CPU smoke `max_diff = 0.00e+00` 验证。
+- **位姿 detach**：warp 用 GEM 估计位姿与 K，`detach()` 不回传。
+- **辅助监督**：`z1` 进 `head.aux_depths`（仅 1 个），`training.aux_depth_weight` 加权；主损失监督 `z'1`。
+
+接线：`head_type=errormap_single` + `model.warp_signal`。train.py 放宽缺失键前缀（`depth_head`/`error_encoder`/`fuse_block`），infer.py 加 `--warp_signal`。config `single_a100_em_single.yaml`；arm `em_single`（train/eval 脚本）。
+
+smoke `scripts/smoke_single.py`：forward+backward（rgb/feat 均通）、aux=1、梯度达 `depth_head1`/`fuse_block`、`error_encoder→fuse` 通路可学、零初始化等价 baseline。`ALL OK`。
+
+这是"几何 warp 注入"的最小受控单层版，作为后续残差升级（SSIM/census）、auto-mask、cost-volume 的承载结构；下一步可在 `signal_error_map` 内做残差升级而不改本结构。

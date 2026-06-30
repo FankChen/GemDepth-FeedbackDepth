@@ -23,10 +23,12 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt', type=str, default='./checkpoint/gemdepth.pth',
                         help='Path to the model checkpoint (model-only state dict).')
     parser.add_argument('--head_type', type=str, default='temporal',
-                        choices=['temporal', 'errormap', 'errormap_coattn', 'errormap_refine'],
+                        choices=['temporal', 'errormap', 'errormap_coattn', 'errormap_refine', 'errormap_single'],
                         help='DPT head variant; must match the checkpoint being loaded.')
     parser.add_argument('--error_modalities', type=str, default='rgbfeat',
                         help='Error modalities for the errormap_coattn head (rgb|feat|hog|rgbfeat).')
+    parser.add_argument('--warp_signal', type=str, default='rgb', choices=['rgb', 'feat'],
+                        help='Signal warped for the errormap_single head (rgb|feat).')
 
     args = parser.parse_args()
     for dataset in args.datasets:
@@ -38,7 +40,7 @@ if __name__ == '__main__':
             'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         }
         gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type,
-                            error_modalities=args.error_modalities)
+                            error_modalities=args.error_modalities, warp_signal=args.warp_signal)
         checkpoint = torch.load(args.ckpt, map_location='cpu',weights_only=False)
         gemdepth.load_state_dict(checkpoint, strict=True)
         gemdepth = gemdepth.to(DEVICE).eval()

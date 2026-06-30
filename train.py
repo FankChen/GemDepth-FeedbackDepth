@@ -145,7 +145,8 @@ def main(cfg):
     }
     head_type = OmegaConf.select(cfg, 'model.head_type', default='temporal')
     error_modalities = OmegaConf.select(cfg, 'model.error_modalities', default='rgbfeat')
-    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type, error_modalities=error_modalities).to(accelerator.device)
+    warp_signal = OmegaConf.select(cfg, 'model.warp_signal', default='rgb')
+    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type, error_modalities=error_modalities, warp_signal=warp_signal).to(accelerator.device)
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load
@@ -157,11 +158,11 @@ def main(cfg):
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
             if len(unexpected) > 0:
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
-            if head_type not in ('errormap', 'errormap_coattn', 'errormap_refine'):
+            if head_type not in ('errormap', 'errormap_coattn', 'errormap_refine', 'errormap_single'):
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:
-                allowed = ('depth_heads', 'error_encoders', 'modality_encoders', 'coattn', 'fuse_blocks')
+                allowed = ('depth_head', 'error_encoder', 'modality_encoder', 'coattn', 'fuse_block')
                 non_em_missing = [m for m in missing if not any(a in m for a in allowed)]
                 assert len(non_em_missing) == 0, f"Unexpected missing keys beyond error-map modules: {non_em_missing}"
     else:

@@ -11,6 +11,7 @@ set -e
 ARM=${1:-baseline}
 CKPT_OVERRIDE=${2:-}
 ERROR_MODALITIES=""
+WARP_SIGNAL=""
 
 case "$ARM" in
     baseline)    HEAD_TYPE=temporal;        CKPT=./checkpoint/single_a100_baseline/final_model.pth ;;
@@ -20,7 +21,8 @@ case "$ARM" in
     em_hog)      HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=hog;     CKPT=./checkpoint/single_a100_em_hog/final_model.pth ;;
     em_rgbfeat)  HEAD_TYPE=errormap_coattn; ERROR_MODALITIES=rgbfeat; CKPT=./checkpoint/single_a100_em_rgbfeat/final_model.pth ;;
     em_refine)   HEAD_TYPE=errormap_refine; CKPT=./checkpoint/single_a100_em_refine/final_model.pth ;;
-    *) echo "Unknown arm: $ARM (baseline|errormap|em_rgb|em_feat|em_hog|em_rgbfeat|em_refine)" && exit 1 ;;
+    em_single)   HEAD_TYPE=errormap_single; WARP_SIGNAL=rgb; CKPT=./checkpoint/single_a100_em_single/final_model.pth ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|em_rgb|em_feat|em_hog|em_rgbfeat|em_refine|em_single)" && exit 1 ;;
 esac
 [ -n "$CKPT_OVERRIDE" ] && CKPT="$CKPT_OVERRIDE"
 
@@ -46,6 +48,7 @@ $PY evaluation/inference/infer.py \
     --encoder vitl \
     --head_type "$HEAD_TYPE" \
     ${ERROR_MODALITIES:+--error_modalities "$ERROR_MODALITIES"} \
+    ${WARP_SIGNAL:+--warp_signal "$WARP_SIGNAL"} \
     --ckpt "$CKPT"
 
 $PY evaluation/eval/eval.py \
