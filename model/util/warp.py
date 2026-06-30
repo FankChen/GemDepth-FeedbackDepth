@@ -87,6 +87,95 @@ def _inverse_warp(depth_t, img_s, inv_K_t, K_s, ext_t, ext_s, eps=1e-6):
     return warped, valid
 
 
+def signal_error_map(signal, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0,
+                     capture=None, tag=''):
+    """Generic temporal-reprojection error map for an arbitrary per-pixel signal.
+
+    Warps each neighbour's ``signal`` into the target frame using the (differentiable)
+    depth + camera geometry, then measures the residual against the target signal. The
+    signal can be raw RGB (photometric error), decoder features (feature error), etc. —
+    the only difference between experiment arms is what is fed here.
+
+    Uses the minimum-reprojection trick (monodepth2): for every target frame we warp
+    each available neighbour and keep, per pixel, the smallest residual.
+
+    Args:
+        signal: (B,T,C,H,W) per-pixel signal at the current stage resolution.
+        depth:  (B,T,1,H,W) positive metric depth of every frame.
+        K:      (B,T,3,3) intrinsics at (H,W).
+        extrinsics: (B,T,4,4) world->camera extrinsics (OpenCV).
+        offsets: temporal neighbour offsets to warp from.
+        capture: optional list. When provided, one record per offset is appended with the
+            (detached, CPU) target / warped / error / valid tensors so a debug script can
+            visualise every warp. Has no effect on the returned values or on training.
+        tag: string label attached to each captured record (e.g. ``'single/rgb'``).
+    Returns:
+        err:   (B,T,1,H,W) error (0 where no valid neighbour).
+        valid: (B,T,1,H,W) float mask of frames/pixels with a valid neighbour.
+    """
+    B, T, C, H, W = signal.shape
+    device = signal.device
+    dtype = signal.dtype
+
+    K = K.to(dtype)
+    extrinsics = extrinsics.to(dtype)
+    inv_K = torch.inverse(K)
+
+    err_stack = []
+    valid_stack = []
+    for o in offsets:
+        t0 = max(0, -o)
+        t1 = min(T, T - o)
+        if t1 <= t0:
+            continue
+        idx_t = torch.arange(t0, t1, device=device)
+        idx_s = idx_t + o
+        n = int(idx_t.numel())
+        N = B * n
+
+        sig_t = signal[:, idx_t].reshape(N, C, H, W)
+        sig_s = signal[:, idx_s].reshape(N, C, H, W)
+        d_t = depth[:, idx_t].reshape(N, 1, H, W)
+        invKt = inv_K[:, idx_t].reshape(N, 3, 3)
+        Ks = K[:, idx_s].reshape(N, 3, 3)
+        Tt = extrinsics[:, idx_t].reshape(N, 4, 4)
+        Ts = extrinsics[:, idx_s].reshape(N, 4, 4)
+
+        warped, valid = _inverse_warp(d_t, sig_s, invKt, Ks, Tt, Ts, eps=eps)
+        residual = (sig_t - warped).abs().mean(dim=1, keepdim=True)  # (N,1,H,W)
+
+        if capture is not None:
+            capture.append({
+                'tag': tag,
+                'offset': int(o),
+                'idx_t': idx_t.detach().cpu(),
+                'idx_s': idx_s.detach().cpu(),
+                'target': sig_t.detach().reshape(B, n, C, H, W).cpu(),
+                'source': sig_s.detach().reshape(B, n, C, H, W).cpu(),
+                'warped': warped.detach().reshape(B, n, C, H, W).cpu(),
+                'error': (residual * valid).detach().reshape(B, n, 1, H, W).cpu(),
+                'valid': valid.detach().reshape(B, n, 1, H, W).cpu(),
+            })
+
+        residual = residual * valid + big * (1.0 - valid)
+
+        full_err = signal.new_full((B, T, 1, H, W), big)
+        full_valid = signal.new_zeros((B, T, 1, H, W))
+        full_err[:, idx_t] = residual.reshape(B, n, 1, H, W)
+        full_valid[:, idx_t] = valid.reshape(B, n, 1, H, W)
+        err_stack.append(full_err)
+        valid_stack.append(full_valid)
+
+    if len(err_stack) == 0:
+        zeros = signal.new_zeros((B, T, 1, H, W))
+        return zeros, zeros
+
+    err = torch.stack(err_stack, dim=0).min(dim=0).values  # (B,T,1,H,W)
+    valid = torch.stack(valid_stack, dim=0).max(dim=0).values
+    err = err * valid
+    return err, valid
+
+
 def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-6, big=1.0):
     """Compute a per-pixel photometric error map via inverse warping of neighbour frames.
 

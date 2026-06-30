@@ -10,11 +10,13 @@ set -e
 
 ARM=${1:-baseline}
 CKPT_OVERRIDE=${2:-}
+WARP_SIGNAL=""
 
 case "$ARM" in
-    baseline) HEAD_TYPE=temporal; CKPT=./checkpoint/single_a100_baseline/final_model.pth ;;
-    errormap) HEAD_TYPE=errormap; CKPT=./checkpoint/single_a100_errormap/final_model.pth ;;
-    *) echo "Unknown arm: $ARM (use 'baseline' or 'errormap')" && exit 1 ;;
+    baseline)  HEAD_TYPE=temporal;        CKPT=./checkpoint/single_a100_baseline/final_model.pth ;;
+    errormap)  HEAD_TYPE=errormap;        CKPT=./checkpoint/single_a100_errormap/final_model.pth ;;
+    em_single) HEAD_TYPE=errormap_single; WARP_SIGNAL=rgb; CKPT=./checkpoint/single_a100_em_single/final_model.pth ;;
+    *) echo "Unknown arm: $ARM (use 'baseline' | 'errormap' | 'em_single')" && exit 1 ;;
 esac
 [ -n "$CKPT_OVERRIDE" ] && CKPT="$CKPT_OVERRIDE"
 
@@ -39,6 +41,7 @@ $PY evaluation/inference/infer.py \
     --input_size 518 \
     --encoder vitl \
     --head_type "$HEAD_TYPE" \
+    ${WARP_SIGNAL:+--warp_signal "$WARP_SIGNAL"} \
     --ckpt "$CKPT"
 
 $PY evaluation/eval/eval.py \
