@@ -30,6 +30,7 @@ from .util.warp import signal_error_map, scale_intrinsics
 
 
 def _make_depth_head(features):
+
     """Small conv stack mapping a stage feature (features ch) to a positive depth map."""
     return nn.Sequential(
         nn.Conv2d(features, features // 2, kernel_size=3, stride=1, padding=1),
@@ -90,12 +91,12 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         BT, _, h, w = path_feat.shape
         z1 = self.depth_head1(path_feat.float())                   # (BT,1,h,w), > 0
         self.aux_depths.append(z1.reshape(B, T, 1, h, w))
-
+        #先从输入特征解出 z1，形状 (BT,1,h,w)，并存入 self.aux_depths供辅助损失使用。
         H0, W0 = images.shape[-2:]
         depth_bt = z1.reshape(B, T, 1, h, w)
         K = scale_intrinsics(intrinsics.detach().float(), (H0, W0), (h, w))
         ext = extrinsics.detach().float()
-
+        #把内参从原图分辨率里缩放到特征图分辨率，并把外参 detach 出来，准备做重投影。
         if self.warp_signal == 'feat':
             signal = path_feat.reshape(B, T, -1, h, w).float()     # feature-metric error
             tag = 'single/feat'
@@ -104,11 +105,15 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
                                  mode='bilinear', align_corners=False)
             signal = imgs.reshape(B, T, imgs.shape[1], h, w)       # photometric error
             tag = 'single/rgb'
+        #目前搞了两种 warp 信号：'feat' 直接用 path_feat 做 feature-metric error；'rgb' 用原图做 photometric error。
+        #后续要改实验方法可以在这改
 
         if self.capture_warps is not None:
             n0 = len(self.capture_warps)
+            #可视化
             err, valid = signal_error_map(signal, depth_bt, K, ext, offsets=self.warp_offsets,
                                           capture=self.capture_warps, tag=tag)
+            #核心wrap操作
             for rec in self.capture_warps[n0:]:
                 rec['depth'] = depth_bt.detach().cpu()
         else:
@@ -116,9 +121,9 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
 
         err_in = torch.cat([err, valid], dim=2).reshape(BT, 2, h, w)
         err_feat = self.error_encoder(err_in.to(path_feat.dtype))
-
+        #errmap和原特征 concat 后送入 fuse_block 做残差修正，得到 refined 特征。
         fused = torch.cat([path_feat, err_feat], dim=1)            # (BT, 2*features, h, w)
-        refined = path_feat + self.fuse_block(fused)               # zero-init -> identity at init
+        refined = path_feat + self.fuse_block(fused)               
         return refined
 
     def forward(self, out_features, patch_h, patch_w, frame_length,
@@ -165,7 +170,7 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn, mode, size=layer_1_rn.shape[2:])
         path_1 = self.scratch.refinenet1(path_2, layer_1_rn, mode)
 
-        # ---- single-stage error-map injection at the final decoder feature ----
+        #目前只在 path_1 做 errormap 注入，path_2/3/4还没有做。后续可以在这里加上 path_2/3/4 的注入。
         path_1 = self._inject(path_1, images, extrinsics, intrinsics, B, T)
 
         out = self.scratch.output_conv1(path_1)
