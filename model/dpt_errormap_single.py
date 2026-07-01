@@ -6,9 +6,10 @@
 #   2. z1   = output_conv2(feat)                        # ORIGINAL full-res depth   -> auxiliary loss
 #   3. e1,valid = reprojection error map: warp the t-1 / t+1 neighbours into the current frame
 #                 using z1 + GEM pose (detached), keep the per-pixel min residual (monodepth2)
-#   4. z'1  = z1 + refine_head(concat[feat, enc(e1)])   # refined full-res depth   -> main loss
+#   4. z'1  = z1.detach() + refine_head(concat[feat, enc(e1)])   # refined depth -> main loss
 #
-# Both depths are supervised: z1 (auxiliary) and z'1 (main / the inference output).
+# z1 is DETACHED in step 4 (and in the warp geometry), so the MAIN loss trains only the refine
+# modules; z1 itself is supervised solely by its own auxiliary loss. z'1 is the main / inference output.
 #
 # ``warp_signal`` selects what is warped and differenced to form the error map:
 #   * 'rgb'  (default): photometric error on the (full-res) input frames;
@@ -74,13 +75,17 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
 
         ``z1``   : (BT,1,Hf,Wf) the original full-res output depth (drives the warp geometry).
         ``feat`` : (BT,feat_ch,Hf,Wf) the penultimate full-res feature (mixed with the error map).
-        Returns z'1 = z1 + refine_head(concat[feat, enc(err)]); == z1 at init (zero-init).
+        z1 is DETACHED here (warp + residual), so the main loss trains only the refine modules;
+        z1 itself is supervised solely by its auxiliary loss. Returns z'1 == z1 at init (zero-init).
         """
         if images is None or extrinsics is None or intrinsics is None:
             return z1
 
         BT, _, Hf, Wf = z1.shape
-        depth_bt = z1.reshape(B, T, 1, Hf, Wf)
+        # Detach z1 everywhere it feeds z'1 (warp geometry below + residual at the end) so the
+        # MAIN loss never updates z1 -- z1 is trained ONLY by its own auxiliary loss.
+        z1_det = z1.detach()
+        depth_bt = z1_det.reshape(B, T, 1, Hf, Wf)
         # Scale intrinsics from the input-image resolution to the full output resolution, and
         # detach the GEM pose/camera so the warp does not back-propagate into them.
         H0, W0 = images.shape[-2:]
@@ -110,7 +115,10 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         err_feat = self.error_encoder(err_in.to(feat.dtype))
         # errmap 编码后与全分辨率特征 feat 拼接，卷出 1 通道深度修正量，残差叠加到 z1。
         fused = torch.cat([feat, err_feat], dim=1)                 # (BT, 2*feat_ch, Hf, Wf)
-        return z1 + self.refine_head(fused)                        # zero-init -> z'1 == z1 at init
+        # 只在「预测 delta z」的最后一步用 fp32（同 output_conv2）；上面的 warp/编码跟随外层混合精度。
+        with torch.autocast(device_type="cuda", enabled=False):
+            delta = self.refine_head(fused.float())
+        return z1_det + delta                                       # z1 detached => main loss trains only refine; == z1 at init
 
     def forward(self, out_features, patch_h, patch_w, frame_length,
                 images=None, extrinsics=None, intrinsics=None,
@@ -161,12 +169,12 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         feat = F.interpolate(feat, (int(patch_h * 14), int(patch_w * 14)),
                              mode="bilinear", align_corners=True)
         ori_type = feat.dtype
+        # 只有「预测 z1」的最后一层(output_conv2)用 fp32 保精度(同 baseline)；其余保持外层混合精度。
         with torch.autocast(device_type="cuda", enabled=False):
-            feat = feat.float()
-            z1 = self.scratch.output_conv2(feat)                   # (BT,1,Hf,Wf) ORIGINAL depth
-            Hf, Wf = z1.shape[-2:]
-            self.aux_depths.append(z1.reshape(B, T, 1, Hf, Wf))    # z1 -> auxiliary supervision
-            # --- error-map refine on the real output depth -> z'1 (main / inference output) ---
-            z_refined = self._refine(z1, feat, images, extrinsics, intrinsics, B, T)
+            z1 = self.scratch.output_conv2(feat.float())           # (BT,1,Hf,Wf) ORIGINAL depth
+        Hf, Wf = z1.shape[-2:]
+        self.aux_depths.append(z1.reshape(B, T, 1, Hf, Wf))        # z1 -> auxiliary supervision
+        # --- error-map refine on the real output depth -> z'1 (main / inference output) ---
+        z_refined = self._refine(z1, feat, images, extrinsics, intrinsics, B, T)
 
         return z_refined.to(ori_type)

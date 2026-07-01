@@ -80,6 +80,24 @@ def test_error_encoder_learnable():
     print("[single] error_encoder -> refine_head path is learnable OK")
 
 
+def test_z1_detached_from_main():
+    """z1 is detached in _refine, so the MAIN loss (on z'1) must NOT reach output_conv2 (which
+    produces z1). z1 is trained only by its own auxiliary loss."""
+    in_ch, feats, out_ch = 64, 64, [48, 96, 192, 384]
+    head = DPTHeadErrorMapSingle(in_ch, feats, False, out_ch, False, num_frames=4)
+    with torch.no_grad():
+        for idx in (0, 2, 4):                       # activate refine so the main loss has a real path
+            head.refine_head[idx].weight.normal_(0, 0.05)
+            head.refine_head[idx].bias.fill_(0.5)
+    head.train()
+    out_features, images, ext, K, B, T, ph, pw = _fake_inputs(in_ch)
+    depth = head(out_features, ph, pw, T, images=images, extrinsics=ext, intrinsics=K)  # z'1 (main)
+    depth.float().mean().backward()
+    g_oc2 = head.scratch.output_conv2[0].weight.grad
+    assert g_oc2 is None or g_oc2.abs().sum() == 0, "z1 NOT detached: main loss reached output_conv2"
+    print("[single] z1 detached: main loss does not reach output_conv2 OK")
+
+
 def test_zero_init_equivalence():
     in_ch, feats, out_ch = 64, 64, [48, 96, 192, 384]
     head = DPTHeadErrorMapSingle(in_ch, feats, False, out_ch, False, num_frames=4)
@@ -104,5 +122,6 @@ if __name__ == '__main__':
     test_forward_and_aux('rgb')
     test_forward_and_aux('feat')
     test_error_encoder_learnable()
+    test_z1_detached_from_main()
     test_zero_init_equivalence()
     print("ALL OK")
