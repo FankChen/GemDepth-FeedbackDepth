@@ -13,7 +13,9 @@
 #
 # ``warp_signal`` selects what is warped and differenced to form the error map:
 #   * 'rgb'  (default): photometric error on the (full-res) input frames;
-#   * 'feat'          : feature-metric error on the penultimate decoder feature ``feat``.
+#   * 'feat'          : feature-metric error on the penultimate decoder feature ``feat``;
+#   * 'hog'           : feature error on a dense HOG descriptor of the frames;
+#   * 'rgbfeat'       : rgb-error and feat-error streams concatenated (4ch) then encoded.
 #
 # Stability: the last conv of ``refine_head`` is zero-initialised, so at init ``z'1 == z1``
 # exactly and the head reproduces the baseline temporal head — head-only fine-tuning from the
@@ -25,6 +27,7 @@ import torch.nn.functional as F
 
 from .dpt_temporal import DPTHeadTemporal
 from .util.warp import signal_error_map, scale_intrinsics
+from .util.hog import hog_feature_map
 
 
 class DPTHeadErrorMapSingle(DPTHeadTemporal):
@@ -42,18 +45,24 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
     ):
         super().__init__(in_channels, features, use_bn, out_channels, use_clstoken, num_frames, pe)
 
-        assert warp_signal in ('rgb', 'feat'), f"warp_signal must be 'rgb' or 'feat', got {warp_signal}"
+        assert warp_signal in ('rgb', 'feat', 'rgbfeat', 'hog'), \
+            f"warp_signal must be one of rgb|feat|rgbfeat|hog, got {warp_signal}"
         self.warp_offsets = tuple(warp_offsets)
         self.warp_signal = warp_signal
+        self.hog_nbins = 9
         self.aux_depths = []
         # When set to a list, the warp is recorded for visualisation; default None -> no capture.
         self.capture_warps = None
 
         # The penultimate full-res feature ``feat`` has ``features // 2`` channels (output_conv1).
         feat_ch = features // 2
-        # Encode the 2-channel error map (residual + valid) up to ``feat_ch`` so the concat is balanced.
+        # Each warped signal yields a 2-channel error map (residual + valid). Single-stream arms
+        # (rgb|feat|hog) feed 2ch; 'rgbfeat' concatenates the rgb-error and feat-error streams (4ch).
+        n_streams = 2 if warp_signal == 'rgbfeat' else 1
+        err_in_ch = 2 * n_streams
+        # Encode the error map up to ``feat_ch`` so the concat with ``feat`` is balanced.
         self.error_encoder = nn.Sequential(
-            nn.Conv2d(2, max(feat_ch // 2, 1), kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(err_in_ch, max(feat_ch // 2, 1), kernel_size=3, stride=1, padding=1),
             nn.ReLU(True),
             nn.Conv2d(max(feat_ch // 2, 1), feat_ch, kernel_size=3, stride=1, padding=1),
         )
@@ -69,6 +78,30 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         nn.init.zeros_(refine[-1].weight)
         nn.init.zeros_(refine[-1].bias)
         self.refine_head = refine
+
+    def _build_signals(self, feat, images, B, T, Hf, Wf):
+        """Return [(signal, tag), ...] to warp, per ``warp_signal`` arm.
+
+        Each signal is (B,T,C,H,W) at output resolution; ``signal_error_map`` collapses any C
+        into a 1-channel residual, so every stream yields a 2ch (residual+valid) error map:
+          * rgb     : input frames (photometric)                    -> 1 stream
+          * feat    : penultimate decoder feature (feature-metric)  -> 1 stream
+          * hog     : dense HOG descriptor of the frames            -> 1 stream
+          * rgbfeat : rgb and feat streams together                 -> 2 streams (4ch)
+        """
+        def _imgs():
+            im = F.interpolate(images.flatten(0, 1).float(), size=(Hf, Wf),
+                               mode='bilinear', align_corners=False)
+            return im.reshape(B, T, im.shape[1], Hf, Wf)
+
+        streams = []
+        if self.warp_signal in ('rgb', 'rgbfeat'):
+            streams.append((_imgs(), 'single/rgb'))
+        if self.warp_signal in ('feat', 'rgbfeat'):
+            streams.append((feat.reshape(B, T, -1, Hf, Wf).float(), 'single/feat'))
+        if self.warp_signal == 'hog':
+            streams.append((hog_feature_map(_imgs(), nbins=self.hog_nbins).float(), 'single/hog'))
+        return streams
 
     def _refine(self, z1, feat, images, extrinsics, intrinsics, B, T):
         """warp t±1 neighbours with z1 -> error map -> concat with feat -> depth correction.
@@ -92,26 +125,24 @@ class DPTHeadErrorMapSingle(DPTHeadTemporal):
         K = scale_intrinsics(intrinsics.detach().float(), (H0, W0), (Hf, Wf))
         ext = extrinsics.detach().float()
 
-        # The per-frame signal that is warped and differenced to form the error map.
-        if self.warp_signal == 'feat':
-            signal = feat.reshape(B, T, -1, Hf, Wf).float()        # feature-metric error
-            tag = 'single/feat'
-        else:
-            imgs = F.interpolate(images.flatten(0, 1).float(), size=(Hf, Wf),
-                                 mode='bilinear', align_corners=False)
-            signal = imgs.reshape(B, T, imgs.shape[1], Hf, Wf)     # photometric error
-            tag = 'single/rgb'
+        # Build the per-frame signal(s) to warp+difference (see ``_build_signals``). Each stream
+        # yields a 2ch (residual+valid) map; 'rgbfeat' stacks rgb-error and feat-error -> 4ch.
+        streams = self._build_signals(feat, images, B, T, Hf, Wf)
 
-        if self.capture_warps is not None:
-            n0 = len(self.capture_warps)
-            err, valid = signal_error_map(signal, depth_bt, K, ext, offsets=self.warp_offsets,
-                                          capture=self.capture_warps, tag=tag)
-            for rec in self.capture_warps[n0:]:
-                rec['depth'] = depth_bt.detach().cpu()
-        else:
-            err, valid = signal_error_map(signal, depth_bt, K, ext, offsets=self.warp_offsets)
+        err_parts = []
+        for signal, tag in streams:
+            if self.capture_warps is not None:
+                n0 = len(self.capture_warps)
+                err, valid = signal_error_map(signal, depth_bt, K, ext, offsets=self.warp_offsets,
+                                              capture=self.capture_warps, tag=tag)
+                for rec in self.capture_warps[n0:]:
+                    rec['depth'] = depth_bt.detach().cpu()
+            else:
+                err, valid = signal_error_map(signal, depth_bt, K, ext, offsets=self.warp_offsets)
+            err_parts.append(err)
+            err_parts.append(valid)
 
-        err_in = torch.cat([err, valid], dim=2).reshape(BT, 2, Hf, Wf)
+        err_in = torch.cat(err_parts, dim=2).reshape(BT, 2 * len(streams), Hf, Wf)
         err_feat = self.error_encoder(err_in.to(feat.dtype))
         # errmap 编码后与全分辨率特征 feat 拼接，卷出 1 通道深度修正量，残差叠加到 z1。
         fused = torch.cat([feat, err_feat], dim=1)                 # (BT, 2*feat_ch, Hf, Wf)

@@ -7,7 +7,8 @@ Validates:
   3. Gradients reach depth_head1 (via the aux loss) and fuse_block (via the main path).
   4. The error_encoder -> fuse path is learnable: once fuse_block's last conv is perturbed
      away from zero, gradients reach error_encoder too.
-  5. The 'feat' (feature-metric) warp variant also runs forward/backward.
+  5. All four warp signals (rgb | feat | rgbfeat | hog) run forward/backward and
+     preserve zero-init equivalence to the baseline temporal head.
 
 Run:
     cd /home/izi2sgh/MYDATA/quanjie/liren/depth_baselines/GemDepth
@@ -98,9 +99,10 @@ def test_z1_detached_from_main():
     print("[single] z1 detached: main loss does not reach output_conv2 OK")
 
 
-def test_zero_init_equivalence():
+def test_zero_init_equivalence(warp_signal='rgb'):
     in_ch, feats, out_ch = 64, 64, [48, 96, 192, 384]
-    head = DPTHeadErrorMapSingle(in_ch, feats, False, out_ch, False, num_frames=4)
+    head = DPTHeadErrorMapSingle(in_ch, feats, False, out_ch, False, num_frames=4,
+                                 warp_signal=warp_signal)
     base = DPTHeadTemporal(in_ch, feats, False, out_ch, False, num_frames=4)
     # Copy the shared (temporal) weights so only the error-map modules differ.
     missing, unexpected = base.load_state_dict(head.state_dict(), strict=False)
@@ -114,14 +116,15 @@ def test_zero_init_equivalence():
         d_base = base(out_features, ph, pw, T)
     max_diff = (d_single - d_base).abs().max().item()
     assert torch.allclose(d_single, d_base, atol=1e-5), f"not equivalent, max_diff={max_diff}"
-    print(f"[single] zero-init equivalence to baseline OK (max_diff={max_diff:.2e})")
+    print(f"[single/{warp_signal}] zero-init equivalence to baseline OK (max_diff={max_diff:.2e})")
 
 
 if __name__ == '__main__':
     torch.manual_seed(0)
-    test_forward_and_aux('rgb')
-    test_forward_and_aux('feat')
+    for sig in ('rgb', 'feat', 'rgbfeat', 'hog'):
+        test_forward_and_aux(sig)
     test_error_encoder_learnable()
     test_z1_detached_from_main()
-    test_zero_init_equivalence()
+    for sig in ('rgb', 'feat', 'rgbfeat', 'hog'):
+        test_zero_init_equivalence(sig)
     print("ALL OK")

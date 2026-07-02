@@ -1,0 +1,48 @@
+# Single-A100 error-map arm: warp_signal = RGB (photometric reprojection error).
+# em_single v3 head; part of the controlled "error-map signal" ablation
+# (rgb | feat | rgbfeat | hog). ONLY warp_signal differs across the four arms.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_em_single_rgb
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_em_single_rgb
+  freeze_mode: head_only      # only the DPT head (incl. error-map modules) is trainable
+  grad_accum: 4               # effective batch = batch_size * grad_accum
+  aux_depth_weight: 0.1       # supervise the coarse z1 map
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  video_path: "./checkpoint/gemdepth.pth"
+  head_type: errormap_single
+  warp_signal: rgb            # photometric error on the input frames
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 10000
+project_name: video_single_a100_em_single_rgb
+resume: false

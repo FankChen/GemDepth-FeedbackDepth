@@ -24,8 +24,8 @@ if __name__ == '__main__':
                         help='Path to the model checkpoint (model-only state dict).')
     parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap', 'errormap_single'],
                         help='DPT head variant; must match the checkpoint being loaded.')
-    parser.add_argument('--warp_signal', type=str, default='rgb', choices=['rgb', 'feat'],
-                        help='Signal warped for the errormap_single head (rgb|feat).')
+    parser.add_argument('--warp_signal', type=str, default='rgb', choices=['rgb', 'feat', 'rgbfeat', 'hog'],
+                        help='Signal warped for the errormap_single head (rgb|feat|rgbfeat|hog).')
 
     args = parser.parse_args()
     for dataset in args.datasets:
