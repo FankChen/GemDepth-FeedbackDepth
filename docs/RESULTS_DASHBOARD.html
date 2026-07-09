@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GemDepth Error-Map 实验看板</title>
+<style>
+  :root{--good:#1a9850;--bad:#d73027;--base:#2166ac;--bg:#f7f9fc;--line:#dce3ec;}
+  *{box-sizing:border-box;}
+  body{font-family:-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+       margin:0;padding:24px;background:var(--bg);color:#1a2330;line-height:1.5;}
+  h1{font-size:22px;margin:0 0 4px;}
+  h2{font-size:16px;margin:28px 0 10px;border-left:4px solid var(--base);padding-left:8px;}
+  .sub{color:#5a6a7a;font-size:13px;margin-bottom:8px;}
+  table{border-collapse:collapse;width:100%;background:#fff;font-size:13px;
+        box-shadow:0 1px 3px rgba(0,0,0,.06);border-radius:6px;overflow:hidden;}
+  th,td{padding:7px 10px;text-align:center;border-bottom:1px solid var(--line);}
+  th{background:#eef2f7;font-weight:600;}
+  td.name{text-align:left;font-weight:500;}
+  tr.base{background:#eaf1fb;}
+  tr.base td.name{color:var(--base);font-weight:700;}
+  .best{color:var(--good);font-weight:700;}
+  .worst{color:var(--bad);}
+  .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:10px;background:#e6ebf2;color:#42506a;margin-left:6px;}
+  .bar-wrap{background:#fff;border-radius:6px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+  .bar-row{display:flex;align-items:center;margin:5px 0;font-size:12px;}
+  .bar-row .lbl{width:190px;flex:none;color:#3a4657;}
+  .bar-row .track{flex:1;background:#eef2f7;border-radius:4px;height:16px;position:relative;}
+  .bar-row .fill{height:16px;border-radius:4px;}
+  .bar-row .val{width:56px;flex:none;text-align:right;font-variant-numeric:tabular-nums;}
+  .baseline-line{color:var(--base);font-weight:600;}
+  .concl{background:#fff;border-radius:6px;padding:14px 18px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+  .concl li{margin:5px 0;}
+  .foot{color:#8896a5;font-size:12px;margin-top:24px;}
+  code{background:#eef2f7;padding:1px 5px;border-radius:4px;font-size:12px;}
+</style>
+</head>
+<body>
+<h1>GemDepth Error-Map 实验看板</h1>
+<div class="sub">分支 <code>feat/exp-errormap-signals</code> · 更新 2026-07-09 · 协议：<b>head_only + VKITTI 2.0.3 + 10k step</b>，唯一变量 = DPT head / warp signal</div>
+
+<div class="concl">
+<b>核心结论（D1 诊断闭环）：</b>error-map 4 臂在 <b>KITTI（真实域）和 VKITTI held-out（合成同域）双双劣于 temporal baseline ~0.012 AbsRel</b>。
+baseline 同域 0.0690 ≈ 真实域 0.0677（泛化极稳）。→ <b>排除域迁移过拟合 &amp; 训练 setting</b>，病根为 <b>error-map 结构本身没增益</b>（<code>z'1=z1+delta</code> 的 delta 净有害）。下一步走结构改进（多尺度迭代 delta-d）。
+</div>
+
+<h2>① KITTI Eigen（真实域，测试基准）</h2>
+<div class="sub">对照基准 = temporal baseline lr1e-5（AbsRel 0.0677）。error-map 目标：追平/超过它。</div>
+<table>
+<tr><th>模型</th><th>head</th><th>warp signal</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>备注</th></tr>
+<tr><td class="name">baseline lr1e-4</td><td>temporal</td><td>—</td><td>0.0712</td><td>3.327</td><td>0.9499</td><td>lr 偏大</td></tr>
+<tr><td class="name">baseline lr5e-5</td><td>temporal</td><td>—</td><td>0.0691</td><td>3.249</td><td>0.9542</td><td></td></tr>
+<tr class="base"><td class="name">baseline lr1e-5</td><td>temporal</td><td>—</td><td class="best">0.0676</td><td>3.167</td><td class="best">0.9571</td><td>最优 · 对照基准</td></tr>
+<tr><td class="name">baseline lr1e-6</td><td>temporal</td><td>—</td><td>0.0681</td><td>3.158</td><td>0.9573</td><td></td></tr>
+<tr><td class="name">em_single rgb</td><td>errormap_single</td><td>rgb</td><td class="worst">0.0883</td><td>4.098</td><td class="worst">0.9230</td><td>最差</td></tr>
+<tr><td class="name">em_single feat</td><td>errormap_single</td><td>feat</td><td>0.0847</td><td>4.010</td><td>0.9278</td><td>4 臂 AbsRel 最优</td></tr>
+<tr><td class="name">em_single rgbfeat</td><td>errormap_single</td><td>rgbfeat</td><td>0.0863</td><td class="best">3.757</td><td>0.9300</td><td>4 臂 RMSE/δ1 最优</td></tr>
+<tr><td class="name">em_single hog</td><td>errormap_single</td><td>hog</td><td>0.0873</td><td>4.075</td><td>0.9232</td><td></td></tr>
+</table>
+
+<h2>② VKITTI held-out（合成同域，D1 分水岭）</h2>
+<div class="sub">同域探针：训练 VKITTI → 测试 VKITTI val（每序列后 10%）。若 error-map 同域也劣于 baseline，则病根为结构而非域迁移。</div>
+<table>
+<tr><th>模型</th><th>warp signal</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>vs KITTI(域gap)</th></tr>
+<tr class="base"><td class="name">baseline</td><td>—</td><td class="best">0.0690</td><td>4.606</td><td class="best">0.9516</td><td>+0.001</td></tr>
+<tr><td class="name">em_single rgb</td><td>rgb</td><td>0.0808</td><td>5.150</td><td>0.9284</td><td>+0.008</td></tr>
+<tr><td class="name">em_single feat</td><td>feat</td><td>0.0816</td><td>5.292</td><td>0.9245</td><td>+0.003</td></tr>
+<tr><td class="name">em_single rgbfeat</td><td>rgbfeat</td><td>0.0795</td><td>5.041</td><td>0.9342</td><td>+0.007</td></tr>
+<tr><td class="name">em_single hog</td><td>hog</td><td class="worst">0.0832</td><td>5.296</td><td class="worst">0.9219</td><td>+0.004</td></tr>
+</table>
+
+<h2>③ AbsRel 对比（越短越好，蓝=baseline 参考线 0.0677）</h2>
+<div class="bar-wrap">
+<div class="sub">KITTI（真实域）</div>
+<div class="bar-row"><span class="lbl baseline-line">baseline lr1e-5</span><span class="track"><span class="fill" style="width:38.7%;background:var(--base)"></span></span><span class="val">0.0676</span></div>
+<div class="bar-row"><span class="lbl">em_feat</span><span class="track"><span class="fill" style="width:48.5%;background:#f4a582"></span></span><span class="val">0.0847</span></div>
+<div class="bar-row"><span class="lbl">em_rgbfeat</span><span class="track"><span class="fill" style="width:49.4%;background:#f4a582"></span></span><span class="val">0.0863</span></div>
+<div class="bar-row"><span class="lbl">em_hog</span><span class="track"><span class="fill" style="width:50.0%;background:#f4a582"></span></span><span class="val">0.0873</span></div>
+<div class="bar-row"><span class="lbl">em_rgb</span><span class="track"><span class="fill" style="width:50.5%;background:var(--bad)"></span></span><span class="val">0.0883</span></div>
+<div class="sub" style="margin-top:12px">VKITTI held-out（合成同域）</div>
+<div class="bar-row"><span class="lbl baseline-line">baseline</span><span class="track"><span class="fill" style="width:39.5%;background:var(--base)"></span></span><span class="val">0.0690</span></div>
+<div class="bar-row"><span class="lbl">em_rgbfeat</span><span class="track"><span class="fill" style="width:45.5%;background:#f4a582"></span></span><span class="val">0.0795</span></div>
+<div class="bar-row"><span class="lbl">em_rgb</span><span class="track"><span class="fill" style="width:46.2%;background:#f4a582"></span></span><span class="val">0.0808</span></div>
+<div class="bar-row"><span class="lbl">em_feat</span><span class="track"><span class="fill" style="width:46.7%;background:#f4a582"></span></span><span class="val">0.0816</span></div>
+<div class="bar-row"><span class="lbl">em_hog</span><span class="track"><span class="fill" style="width:47.6%;background:var(--bad)"></span></span><span class="val">0.0832</span></div>
+</div>
+
+<h2>④ 收敛行为（AbsRel over steps）</h2>
+<table>
+<tr><th>模型</th><th>step 6000</th><th>step 8000</th><th>step 10000</th><th>final</th><th>观察</th></tr>
+<tr class="base"><td class="name">baseline lr1e-5</td><td class="best">0.0674</td><td>0.0676</td><td>0.0677</td><td>0.0676</td><td>早收敛，6k 已最优（10k 略过训）</td></tr>
+<tr><td class="name">em_single feat</td><td>0.0866</td><td>0.0858</td><td>0.0850</td><td>0.0847</td><td>训满才最好（一直在学，但没转化成泛化）</td></tr>
+</table>
+
+<h2>⑤ 关键发现</h2>
+<div class="concl"><ul>
+<li><b>baseline 泛化极稳</b>：KITTI 0.0677 ≈ VKITTI 0.0690，几乎无域 gap。</li>
+<li><b>error-map 4 臂两域全劣</b>：比 baseline 差 ~0.011–0.016 AbsRel，KITTI 与 VKITTI 一致 → 结构问题，非域迁移。</li>
+<li><b>域 gap 很小</b>（val→kitti 仅 +0.003–0.008）→ 进一步排除"合成→真实"是主因。</li>
+<li><b>em_rgbfeat 最稳</b>：VKITTI AbsRel/δ1 + KITTI RMSE/δ1 皆 4 臂最优；em_rgb 最差。</li>
+<li><b>收敛相反</b>：baseline 6k 收敛，error-map 训满才好 → refine 分支在过拟合训练序列，未带来泛化增益。</li>
+</ul></div>
+
+<div class="foot">数据来源：output_eval/*/results.txt（阿里云 DSW）· 记录同步 docs/ERRORMAP_DEVLOG.md · KITTI=Eigen 110 帧，lstsq scale/shift 对齐。</div>
+</body>
+</html>
