@@ -1,0 +1,48 @@
+# From-scratch control: NO pretrained gemdepth.pth => random init (incl. DINOv2 backbone,
+# since its weights live inside gemdepth.pth). Train the FULL model on VKITTI. This is an
+# ablation showing the value of GemDepth pretraining (expected: much worse than finetune/zero-shot).
+# seq_len reduced to 8 to fit full-model training (backbone + optimizer states) in memory.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_scratch
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_scratch
+  freeze_mode: full           # train everything, incl. DINOv2 backbone (from scratch)
+  grad_accum: 4
+  aux_depth_weight: 0.0
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4              # larger lr than finetune (random init)
+  other_lr: 1.0e-4
+  weight_decay: 0.05
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 8
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 8
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  video_path: ""              # empty => skip pretrained load => train from scratch
+  head_type: temporal
+  warp_signal: rgb
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 10000
+project_name: video_single_a100_scratch
+resume: false

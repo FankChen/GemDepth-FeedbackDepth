@@ -168,10 +168,10 @@ def main(cfg):
     else:
         print(f"[init] WARNING: No pretrained weights found at {cfg.model.video_path}, training from scratch!")
     
-    model.pretrained.requires_grad_(False)
-
     # --- Optional freeze: restrict trainable params (e.g. only the DPT head) ---
     freeze_mode = OmegaConf.select(cfg, 'training.freeze_mode', default='default')
+    if freeze_mode != 'full':
+        model.pretrained.requires_grad_(False)   # freeze DINOv2 backbone (unless training full from scratch)
     if freeze_mode == 'head_only':
         for p in model.parameters():
             p.requires_grad_(False)
@@ -188,6 +188,12 @@ def main(cfg):
         if accelerator.is_main_process:
             n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
             print(f"[freeze] non_backbone: all but DINOv2 backbone trainable ({n_train/1e6:.2f}M params)")
+    elif freeze_mode == 'full':
+        for p in model.parameters():
+            p.requires_grad_(True)
+        if accelerator.is_main_process:
+            n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print(f"[freeze] full: entire model trainable incl. backbone ({n_train/1e6:.2f}M params)")
     elif freeze_mode not in (None, 'default'):
         raise ValueError(f"Unknown training.freeze_mode={freeze_mode}")
 
