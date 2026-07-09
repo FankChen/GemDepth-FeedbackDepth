@@ -39,6 +39,49 @@ def compute_aux_depth_loss(aux_depths, depth_gt, mask):
     return total / max(len(aux_depths), 1)
 
 
+def compute_deep_sup_loss(layer_depths, depth_gt, mask):
+    """Per-layer deep supervision in DISPARITY space with per-sample scale+shift alignment.
+
+    The per-layer heads predict disparity-like maps (same semantics as the main output). We align
+    each to GT disparity (1/depth) via a closed-form per-sample scale+shift (detached, so only the
+    prediction gets gradient) then take a masked L1. This keeps supervision in the same
+    scale-invariant space as the main VideoDepthLoss, instead of comparing a small disparity value
+    against metric depth (which blew the loss up to ~10 and dominated the gradient).
+
+    layer_depths: list of (B,T,1,h,w) or (B*T,1,h,w) predicted disparity maps.
+    depth_gt / mask: (B,T,1,H,W) metric depth.
+    """
+    gt = depth_gt.flatten(0, 1).float()
+    m = (mask.flatten(0, 1) > 0).float()
+    gt_disp = torch.where(gt > 1e-3, 1.0 / gt.clamp(min=1e-3), torch.zeros_like(gt))
+    total = gt.new_zeros(())
+    n = 0
+    for d in layer_depths:
+        if d.dim() == 5:
+            d = d.flatten(0, 1)
+        d = d.float()
+        h, w = d.shape[-2:]
+        g = F.interpolate(gt_disp, size=(h, w), mode='nearest')
+        mm = F.interpolate(m, size=(h, w), mode='nearest')
+        BT = d.shape[0]
+        dd = d.reshape(BT, -1)
+        gg = g.reshape(BT, -1)
+        ww = mm.reshape(BT, -1)
+        with torch.no_grad():
+            sw = ww.sum(1).clamp(min=1.0)
+            md = (ww * dd).sum(1) / sw
+            mg = (ww * gg).sum(1) / sw
+            vd = (ww * dd * dd).sum(1) / sw - md * md
+            cov = (ww * dd * gg).sum(1) / sw - md * mg
+            scale = cov / vd.clamp(min=1e-6)
+            shift = mg - scale * md
+        d_al = scale.view(BT, 1, 1, 1) * d + shift.view(BT, 1, 1, 1)
+        diff = (d_al - g).abs() * mm
+        total = total + diff.sum() / mm.sum().clamp(min=1.0)
+        n += 1
+    return total / max(n, 1)
+
+
 def find_latest_ckpt(checkpoint_dir: str) -> str | None:
     """Find the latest checkpoint in the directory (by step number)."""
     ckpt_dir = Path(checkpoint_dir)
@@ -297,7 +340,7 @@ def main(cfg):
                     head = accelerator.unwrap_model(model).head
                     layer_depths = getattr(head, 'layer_depths', None)
                     if layer_depths:
-                        ds_loss = compute_aux_depth_loss(layer_depths, depth_gt, mask)
+                        ds_loss = compute_deep_sup_loss(layer_depths, depth_gt, mask)
                         loss = loss + deep_sup_weight * ds_loss
                         loss_dict['deep_sup_loss'] = ds_loss.detach()
                 if cycle_weight > 0:
