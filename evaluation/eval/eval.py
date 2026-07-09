@@ -213,6 +213,18 @@ def main():
             args.b = 720
             args.c = 0
             args.d = 1280
+        elif dataset == 'vkitti':
+            # VKITTI 2.0.3 held-out (val) — synthetic KITTI-like, resolution 1242x375.
+            # Same-domain probe for the error-map arms (train VKITTI -> test VKITTI val).
+            args.json_file = os.path.join(args.benchmark_path,'vkitti/vkitti_video.json')
+            args.root_path = os.path.join(args.benchmark_path,'vkitti')
+            args.max_depth_eval = 80.0
+            args.min_depth_eval = 0.1
+            args.max_eval_len = 200
+            args.a = 0
+            args.b = 375
+            args.c = 0
+            args.d = 1242
         with open(args.json_file, 'r') as fs:
             path_json = json.load(fs)
         json_data = path_json[dataset]

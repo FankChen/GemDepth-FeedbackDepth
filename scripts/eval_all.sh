@@ -36,12 +36,14 @@ json_of() { case "$1" in
   sintel)  echo "sintel/sintel_video.json" ;;
   bonn)    echo "bonn/bonn_video_500.json" ;;
   scannet) echo "scannet/scannet_video_500.json" ;;
+  vkitti)  echo "vkitti/vkitti_video.json" ;;
 esac ; }
 evalkey_of() { case "$1" in
   kitti)   echo "kitti" ;;
   sintel)  echo "sintel" ;;
   bonn)    echo "bonn_500" ;;
   scannet) echo "scannet_500" ;;
+  vkitti)  echo "vkitti" ;;
 esac ; }
 
 if [ ! -f "$CKPT" ]; then echo "ERROR: ckpt not found: $CKPT" >&2; exit 1; fi
