@@ -27,7 +27,12 @@ echo ""
 
 i=0
 for gpu in "${FREE[@]}"; do
-    [ $i -lt ${#ARMS[@]} ] || { echo "(no more arms in queue; $((${#FREE[@]}-i)) GPU(s) left idle)"; break; }
+    # skip arms already running (avoid duplicate launch of the same config)
+    while [ $i -lt ${#ARMS[@]} ] && ps -eo cmd | grep -q -- "config-name single_a100_${ARMS[$i]}\$"; do
+        echo "[skip] '${ARMS[$i]}' already running"
+        i=$((i + 1))
+    done
+    [ $i -lt ${#ARMS[@]} ] || { echo "(no more arms to launch; $((${#FREE[@]}-i)) GPU(s) left idle)"; break; }
     arm=${ARMS[$i]}
     log="jobs/${arm}.log"
     echo "[GPU$gpu] launch '$arm'  ->  $log"

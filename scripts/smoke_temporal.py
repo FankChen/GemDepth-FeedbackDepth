@@ -42,4 +42,9 @@ assert pred_disp.grad is not None and pred_disp.grad.norm().item() > 0, "grad mu
 l2 = geometric_temporal_consistency(depth_m.detach(), K, ext, offsets=(1, 2))
 print(f"[4] multi-offset (1,2) loss = {l2.item():.6e}")
 
+# ---- 5) shared (B,3,3) intrinsics broadcast (real dataset layout) ----
+K33 = K[:, 0].contiguous()  # (B,3,3), one intrinsic shared across frames
+l5 = geometric_temporal_consistency(depth_m.detach(), K33, ext, offsets=(1,))
+print(f"[5] (B,3,3) shared-K loss = {l5.item():.6e} (must not crash)")
+
 print("ALL OK")

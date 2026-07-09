@@ -56,6 +56,8 @@ def geometric_temporal_consistency(depth, K, extrinsics, offsets=(1,), eps=1e-6)
     device, dtype = depth.device, depth.dtype
     K = K.to(dtype)
     ext = extrinsics.to(dtype)
+    if K.dim() == 3:                        # (B,3,3) shared intrinsics -> per-frame (B,T,3,3)
+        K = K.unsqueeze(1).expand(B, T, 3, 3)
     inv_K = torch.inverse(K)
 
     vv, uu = torch.meshgrid(
