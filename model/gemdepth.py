@@ -16,6 +16,7 @@ from model.dpt_temporal import DPTHeadTemporal
 from model.dpt_errormap import DPTHeadErrorMap
 from model.dpt_errormap_single import DPTHeadErrorMapSingle
 from model.dpt_bat_lin import DPTHeadBATLin
+from model.dpt_perlayer import DPTHeadPerLayer
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
 from model.utils.util import compute_scale_and_shift, get_interpolate_frames
 from model.tools.geometry import GlobalRepresentationEncoder,normalize_pose_translations,transform_pose_using_quats_and_trans_2_to_1
@@ -151,6 +152,8 @@ class GemDepth(nn.Module):
             self.head = DPTHeadErrorMapSingle(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal)
         elif head_type == 'batlin':
             self.head = DPTHeadBATLin(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal, scales=tuple(scales))
+        elif head_type == 'perlayer':
+            self.head = DPTHeadPerLayer(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal)
         elif head_type == 'temporal':
             self.head = DPTHeadTemporal(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         else:
@@ -278,7 +281,7 @@ class GemDepth(nn.Module):
         
         #dpt_head
         with torch.autocast("cuda", enabled=False):
-            if self.head_type in ('errormap', 'errormap_single'):
+            if self.head_type in ('errormap', 'errormap_single', 'batlin', 'perlayer'):
                 depth = self.head(features_attn, patch_h, patch_w, T,
                                   images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
             else:

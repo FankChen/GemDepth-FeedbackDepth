@@ -1,0 +1,48 @@
+# Per-layer deep-supervised refine + warp DPT (师兄 idea). Main output = original output_conv
+# (pretrained warm-start == baseline); each of the 4 DPT paths adds refine(z_l) + warp(dz_l),
+# every layer's z_l' supervised (deep supervision). Ablation head, standalone.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_perlayer
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_perlayer
+  freeze_mode: head_only
+  grad_accum: 4
+  aux_depth_weight: 0.0
+  deep_sup_weight: 0.2        # per-layer deep supervision (each path's z_l')
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 4
+
+model:
+  video_path: "./checkpoint/gemdepth.pth"
+  head_type: perlayer
+  warp_signal: feat
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 6000
+project_name: video_single_a100_perlayer
+resume: false

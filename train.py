@@ -159,11 +159,11 @@ def main(cfg):
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
             if len(unexpected) > 0:
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
-            if head_type not in ('errormap', 'errormap_single', 'batlin'):
+            if head_type not in ('errormap', 'errormap_single', 'batlin', 'perlayer'):
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:
-                allowed = ('depth_head', 'error_encoder', 'fuse_block', 'refine_head', 'scale_proj', 'ba_update')
+                allowed = ('depth_head', 'error_encoder', 'fuse_block', 'refine_head', 'scale_proj', 'ba_update', 'sig_proj', 'layer_delta_heads')
                 non_em_missing = [m for m in missing if not any(a in m for a in allowed)]
                 assert len(non_em_missing) == 0, f"Unexpected missing keys beyond error-map modules: {non_em_missing}"
     else:
@@ -266,6 +266,7 @@ def main(cfg):
     aux_depth_weight = float(OmegaConf.select(cfg, 'training.aux_depth_weight', default=0.0))
     cycle_weight = float(OmegaConf.select(cfg, 'training.cycle_weight', default=0.0))
     cycle_offsets = tuple(OmegaConf.select(cfg, 'training.cycle_offsets', default=[1]))
+    deep_sup_weight = float(OmegaConf.select(cfg, 'training.deep_sup_weight', default=0.0))
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") 
@@ -291,6 +292,13 @@ def main(cfg):
                     if aux_depths:
                         aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
                         loss = loss + aux_depth_weight * aux_loss
+                if deep_sup_weight > 0:
+                    head = accelerator.unwrap_model(model).head
+                    layer_depths = getattr(head, 'layer_depths', None)
+                    if layer_depths:
+                        ds_loss = compute_aux_depth_loss(layer_depths, depth_gt, mask)
+                        loss = loss + deep_sup_weight * ds_loss
+                        loss_dict['deep_sup_loss'] = ds_loss.detach()
                 if cycle_weight > 0:
                     ext_stack = torch.stack(extrinsic_gt, dim=1).float()
                     pred_metric = align_pred_metric(depth_pred.float(), depth_gt.float(), mask.float())
