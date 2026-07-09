@@ -145,7 +145,8 @@ def main(cfg):
     }
     head_type = OmegaConf.select(cfg, 'model.head_type', default='temporal')
     warp_signal = OmegaConf.select(cfg, 'model.warp_signal', default='rgb')
-    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type, warp_signal=warp_signal).to(accelerator.device)
+    scales = OmegaConf.select(cfg, 'model.scales', default=['p2', 'p1'])
+    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type, warp_signal=warp_signal, scales=tuple(scales)).to(accelerator.device)
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load
@@ -157,11 +158,11 @@ def main(cfg):
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
             if len(unexpected) > 0:
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
-            if head_type not in ('errormap', 'errormap_single'):
+            if head_type not in ('errormap', 'errormap_single', 'batlin'):
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:
-                allowed = ('depth_head', 'error_encoder', 'fuse_block', 'refine_head')
+                allowed = ('depth_head', 'error_encoder', 'fuse_block', 'refine_head', 'scale_proj', 'ba_update')
                 non_em_missing = [m for m in missing if not any(a in m for a in allowed)]
                 assert len(non_em_missing) == 0, f"Unexpected missing keys beyond error-map modules: {non_em_missing}"
     else:
@@ -179,6 +180,14 @@ def main(cfg):
         if accelerator.is_main_process:
             n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
             print(f"[freeze] head_only: only DPT head trainable ({n_train/1e6:.2f}M params)")
+    elif freeze_mode == 'non_backbone':
+        for p in model.parameters():
+            p.requires_grad_(True)
+        for p in model.pretrained.parameters():
+            p.requires_grad_(False)
+        if accelerator.is_main_process:
+            n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print(f"[freeze] non_backbone: all but DINOv2 backbone trainable ({n_train/1e6:.2f}M params)")
     elif freeze_mode not in (None, 'default'):
         raise ValueError(f"Unknown training.freeze_mode={freeze_mode}")
 

@@ -15,6 +15,7 @@ from model.dinov2 import DINOv2
 from model.dpt_temporal import DPTHeadTemporal
 from model.dpt_errormap import DPTHeadErrorMap
 from model.dpt_errormap_single import DPTHeadErrorMapSingle
+from model.dpt_bat_lin import DPTHeadBATLin
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
 from model.utils.util import compute_scale_and_shift, get_interpolate_frames
 from model.tools.geometry import GlobalRepresentationEncoder,normalize_pose_translations,transform_pose_using_quats_and_trans_2_to_1
@@ -54,7 +55,8 @@ class GemDepth(nn.Module):
         qk_norm=True,
         init_values=0.01,
         head_type='temporal',
-        warp_signal='rgb'
+        warp_signal='rgb',
+        scales=('p2', 'p1'),
     ):
         super(GemDepth, self).__init__()
 
@@ -147,6 +149,8 @@ class GemDepth(nn.Module):
             self.head = DPTHeadErrorMap(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         elif head_type == 'errormap_single':
             self.head = DPTHeadErrorMapSingle(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal)
+        elif head_type == 'batlin':
+            self.head = DPTHeadBATLin(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal, scales=tuple(scales))
         elif head_type == 'temporal':
             self.head = DPTHeadTemporal(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         else:

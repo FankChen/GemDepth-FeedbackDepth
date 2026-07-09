@@ -22,10 +22,12 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
     parser.add_argument('--ckpt', type=str, default='./checkpoint/gemdepth.pth',
                         help='Path to the model checkpoint (model-only state dict).')
-    parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap', 'errormap_single'],
+    parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap', 'errormap_single', 'batlin'],
                         help='DPT head variant; must match the checkpoint being loaded.')
     parser.add_argument('--warp_signal', type=str, default='rgb', choices=['rgb', 'feat', 'rgbfeat', 'hog'],
                         help='Signal warped for the errormap_single head (rgb|feat|rgbfeat|hog).')
+    parser.add_argument('--scales', type=str, nargs='+', default=['p2', 'p1'],
+                        help='Decoder scales for the batlin head (subset of p4 p3 p2 p1, coarse->fine).')
 
     args = parser.parse_args()
     for dataset in args.datasets:
@@ -36,7 +38,7 @@ if __name__ == '__main__':
             'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
             'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         }
-        gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type, warp_signal=args.warp_signal)
+        gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type, warp_signal=args.warp_signal, scales=tuple(args.scales))
         checkpoint = torch.load(args.ckpt, map_location='cpu',weights_only=False)
         gemdepth.load_state_dict(checkpoint, strict=True)
         gemdepth = gemdepth.to(DEVICE).eval()

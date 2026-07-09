@@ -1,0 +1,48 @@
+# Setting probe (B): temporal head + non_backbone unfreeze (everything trainable EXCEPT the
+# frozen DINOv2 backbone). Tests whether unfreezing more than head_only can beat zero-shot on
+# VKITTI finetune — the D1/zero-shot finding was that head_only VKITTI finetune gives ~no gain.
+# Controlled: SAME head as baseline (temporal), only the freeze scope differs. 6000 steps.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_baseline_unfreeze
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_baseline_unfreeze
+  freeze_mode: non_backbone
+  grad_accum: 4
+  aux_depth_weight: 0.0
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  video_path: "./checkpoint/gemdepth.pth"
+  head_type: temporal
+  warp_signal: rgb
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 6000
+project_name: video_single_a100_baseline_unfreeze
+resume: false

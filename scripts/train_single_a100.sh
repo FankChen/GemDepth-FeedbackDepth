@@ -20,7 +20,9 @@ case "$ARM" in
     em_single_feat)    CONFIG=single_a100_em_single_feat ;;
     em_single_rgbfeat) CONFIG=single_a100_em_single_rgbfeat ;;
     em_single_hog)     CONFIG=single_a100_em_single_hog ;;
-    *) echo "Unknown arm: $ARM (baseline|errormap|em_single|em_single_{rgb,feat,rgbfeat,hog})" && exit 1 ;;
+    batlin)            CONFIG=single_a100_batlin ;;
+    baseline_unfreeze) CONFIG=single_a100_baseline_unfreeze ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|em_single|em_single_{rgb,feat,rgbfeat,hog}|batlin|baseline_unfreeze)" && exit 1 ;;
 esac
 
 # Portable: PY defaults to the `python` on PATH (activate your env first); override
