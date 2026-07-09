@@ -4,6 +4,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import DataLoader
 from model.gemdepth import GemDepth
+from model.util.temporal import geometric_temporal_consistency, align_pred_metric
 from dataset.dataset_mix import DepthVideoDataset,safe_collate
 from pathlib import Path
 import hydra
@@ -263,6 +264,8 @@ def main(cfg):
     
     invariant_loss_func = VideoDepthLoss(pose_flag = cfg.pose_flag)
     aux_depth_weight = float(OmegaConf.select(cfg, 'training.aux_depth_weight', default=0.0))
+    cycle_weight = float(OmegaConf.select(cfg, 'training.cycle_weight', default=0.0))
+    cycle_offsets = tuple(OmegaConf.select(cfg, 'training.cycle_offsets', default=[1]))
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") 
@@ -288,6 +291,12 @@ def main(cfg):
                     if aux_depths:
                         aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
                         loss = loss + aux_depth_weight * aux_loss
+                if cycle_weight > 0:
+                    ext_stack = torch.stack(extrinsic_gt, dim=1).float()
+                    pred_metric = align_pred_metric(depth_pred.float(), depth_gt.float(), mask.float())
+                    cyc_loss = geometric_temporal_consistency(pred_metric, intrinsic_gt.float(), ext_stack, offsets=cycle_offsets)
+                    loss = loss + cycle_weight * cyc_loss
+                    loss_dict['cycle_loss'] = cyc_loss.detach()
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), 1.0)

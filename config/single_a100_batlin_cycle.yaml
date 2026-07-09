@@ -1,0 +1,53 @@
+# BAT+Lin + geometric temporal consistency (cycle) loss.
+# Adds explicit multi-view reprojection consistency (model/util/temporal.py) on top of the
+# batlin error-map head. Story: error-map/BAT-Lin trades a small single-frame cost for a large
+# gain in TEMPORAL geometric consistency, optimised explicitly via the cycle loss (GT poses).
+# Differentiated from the existing TemporalGradientMatchingLoss (temporal diff) by enforcing
+# full backproject->transform->project reprojection agreement across neighbour frames.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_batlin_cycle
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_batlin_cycle
+  freeze_mode: head_only
+  grad_accum: 4
+  aux_depth_weight: 0.1       # supervise the warm-start z1
+  cycle_weight: 1.0           # geometric temporal (reprojection) consistency
+  cycle_offsets: [1]          # neighbour frame offsets (can extend to [1, 2])
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  video_path: "./checkpoint/gemdepth.pth"
+  head_type: batlin
+  warp_signal: feat          # main-idea error-map signal (4-arm AbsRel best)
+  scales: [p2, p1]           # coarse->fine; scalable to [p4,p3,p2,p1]
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 6000
+project_name: video_single_a100_batlin_cycle
+resume: false

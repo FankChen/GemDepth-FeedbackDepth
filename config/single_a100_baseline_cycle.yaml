@@ -1,0 +1,49 @@
+# Baseline temporal head + geometric temporal consistency (cycle) loss.
+# Control arm for the cycle-loss ablation: same loss as single_a100_batlin_cycle but on the
+# vanilla temporal DPT head (no error-map / BAT-Lin). Comparing this vs batlin_cycle isolates
+# how much the error-map/BAT-Lin STRUCTURE helps temporal consistency (beyond the loss alone).
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_baseline_cycle
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_baseline_cycle
+  freeze_mode: head_only
+  grad_accum: 4
+  aux_depth_weight: 0.0
+  cycle_weight: 1.0
+  cycle_offsets: [1]
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-5
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  video_path: "./checkpoint/gemdepth.pth"
+  head_type: temporal
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 6000
+project_name: video_single_a100_baseline_cycle
+resume: false
