@@ -29,6 +29,7 @@ case "$ARM" in
     batlin_cycle_4scale) CONFIG=single_a100_batlin_cycle_4scale ;;
     batlin_cycle_o12)  CONFIG=single_a100_batlin_cycle_o12 ;;
     perlayer)          CONFIG=single_a100_perlayer ;;
+    perlayer_refine)   CONFIG=single_a100_perlayer_refine ;;
     perlayer_nb)       CONFIG=single_a100_perlayer_nb ;;
     perlayer_nowarp)   CONFIG=single_a100_perlayer_nowarp ;;
     perlayer_nowarp_nb) CONFIG=single_a100_perlayer_nowarp_nb ;;

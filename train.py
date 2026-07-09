@@ -203,7 +203,7 @@ def main(cfg):
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
             if len(unexpected) > 0:
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
-            if head_type not in ('errormap', 'errormap_single', 'batlin', 'perlayer'):
+            if head_type not in ('errormap', 'errormap_single', 'batlin', 'perlayer', 'perlayer_refine'):
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:
