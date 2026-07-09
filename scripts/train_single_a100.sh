@@ -23,9 +23,14 @@ case "$ARM" in
     batlin)            CONFIG=single_a100_batlin ;;
     batlin_cycle)      CONFIG=single_a100_batlin_cycle ;;
     baseline_cycle)    CONFIG=single_a100_baseline_cycle ;;
+    batlin_4scale)     CONFIG=single_a100_batlin_4scale ;;
+    batlin_rgbfeat)    CONFIG=single_a100_batlin_rgbfeat ;;
+    batlin_hog)        CONFIG=single_a100_batlin_hog ;;
+    batlin_cycle_4scale) CONFIG=single_a100_batlin_cycle_4scale ;;
+    batlin_cycle_o12)  CONFIG=single_a100_batlin_cycle_o12 ;;
     baseline_unfreeze) CONFIG=single_a100_baseline_unfreeze ;;
     scratch)           CONFIG=single_a100_scratch ;;
-    *) echo "Unknown arm: $ARM (baseline|errormap|em_single|em_single_{rgb,feat,rgbfeat,hog}|batlin|batlin_cycle|baseline_cycle|baseline_unfreeze|scratch)" && exit 1 ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|em_single|em_single_{rgb,feat,rgbfeat,hog}|batlin|batlin_cycle|baseline_cycle|batlin_4scale|batlin_rgbfeat|batlin_hog|batlin_cycle_4scale|batlin_cycle_o12|baseline_unfreeze|scratch)" && exit 1 ;;
 esac
 
 # Portable: PY defaults to the `python` on PATH (activate your env first); override
