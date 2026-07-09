@@ -22,6 +22,13 @@
 | em_single rgbfeat | errormap_single | rgbfeat | 0.0863 | **3.757** | **0.9300** | 阿里云 DSW | RMSE/δ1 最优臂 |
 | em_single hog | errormap_single | hog | 0.0873 | 4.075 | 0.9232 | 阿里云 DSW | — |
 
+## Zero-shot vs finetune（同环境阿里云，2026-07-09）
+gemdepth.pth 原始权重直接测（无任何训练）:
+- KITTI  zero-shot: **0.0678** / 3.110 / 0.9585 ；finetune(head_only VKITTI lr1e-5): 0.0676 / 3.167 / 0.9571
+- VKITTI zero-shot: **0.0669** / 4.869 / 0.9512 ；finetune(baseline): 0.0690 / 4.606 / 0.9516
+→ **head_only VKITTI finetune 对 baseline 基本无正收益**：KITTI AbsRel +0.4%(RMSE/δ1 反降)，VKITTI AbsRel **−3.2%**(同域反而变差)。
+→ **真正天花板 = zero-shot 0.0678(KITTI) / 0.0669(VKITTI)**。error-map 4 臂(0.084+)距此更远。问题一半在 finetune 协议(setting)，非只结构 → 后续既改结构(BAT+Lin)也要改 finetune 数据/协议。
+
 ## Baseline LR sweep（temporal head，KITTI，阿里云复现）
 证明环境/数据/评测链路可靠 + 定最优 lr（对照基准即取 lr1e-5）。
 

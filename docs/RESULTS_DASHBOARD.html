@@ -40,14 +40,15 @@
 <div class="sub">分支 <code>feat/exp-errormap-signals</code> · 更新 2026-07-09 · 协议：<b>head_only + VKITTI 2.0.3 + 10k step</b>，唯一变量 = DPT head / warp signal</div>
 
 <div class="concl">
-<b>核心结论（D1 诊断闭环）：</b>error-map 4 臂在 <b>KITTI（真实域）和 VKITTI held-out（合成同域）双双劣于 temporal baseline ~0.012 AbsRel</b>。
-baseline 同域 0.0690 ≈ 真实域 0.0677（泛化极稳）。→ <b>排除域迁移过拟合 &amp; 训练 setting</b>，病根为 <b>error-map 结构本身没增益</b>（<code>z'1=z1+delta</code> 的 delta 净有害）。下一步走结构改进（多尺度迭代 delta-d）。
+<b>核心结论（D1 + zero-shot 诊断）：</b>error-map 4 臂在 <b>KITTI 与 VKITTI held-out 双双劣于 baseline ~0.012 AbsRel</b> → 病根含 <b>error-map 结构没增益</b>（<code>z'1=z1+delta</code> 的 delta 净有害）。<br>
+<b>更关键（zero-shot 对比）：</b>原始 gemdepth.pth <b>无训练</b>就有 KITTI 0.0678 / VKITTI 0.0669；<b>head_only VKITTI finetune 对 baseline 基本无正收益</b>（KITTI AbsRel +0.4%、VKITTI 同域反降 3.2%）。→ <b>真正天花板是 zero-shot</b>，问题一半在 finetune 协议（setting），下一步既改结构（BAT+Lin）也要改 finetune 数据/协议。
 </div>
 
 <h2>① KITTI Eigen（真实域，测试基准）</h2>
 <div class="sub">对照基准 = temporal baseline lr1e-5（AbsRel 0.0677）。error-map 目标：追平/超过它。</div>
 <table>
 <tr><th>模型</th><th>head</th><th>warp signal</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>备注</th></tr>
+<tr class="base"><td class="name">★ zero-shot（gemdepth.pth，无训练）</td><td>temporal</td><td>—</td><td>0.0678</td><td class="best">3.110</td><td class="best">0.9585</td><td>真正天花板参照（同环境）</td></tr>
 <tr><td class="name">baseline lr1e-4</td><td>temporal</td><td>—</td><td>0.0712</td><td>3.327</td><td>0.9499</td><td>lr 偏大</td></tr>
 <tr><td class="name">baseline lr5e-5</td><td>temporal</td><td>—</td><td>0.0691</td><td>3.249</td><td>0.9542</td><td></td></tr>
 <tr class="base"><td class="name">baseline lr1e-5</td><td>temporal</td><td>—</td><td class="best">0.0676</td><td>3.167</td><td class="best">0.9571</td><td>最优 · 对照基准</td></tr>
@@ -62,7 +63,8 @@ baseline 同域 0.0690 ≈ 真实域 0.0677（泛化极稳）。→ <b>排除域
 <div class="sub">同域探针：训练 VKITTI → 测试 VKITTI val（每序列后 10%）。若 error-map 同域也劣于 baseline，则病根为结构而非域迁移。</div>
 <table>
 <tr><th>模型</th><th>warp signal</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>vs KITTI(域gap)</th></tr>
-<tr class="base"><td class="name">baseline</td><td>—</td><td class="best">0.0690</td><td>4.606</td><td class="best">0.9516</td><td>+0.001</td></tr>
+<tr class="base"><td class="name">★ zero-shot（无训练）</td><td>—</td><td class="best">0.0669</td><td>4.869</td><td>0.9512</td><td>−0.001</td></tr>
+<tr><td class="name">baseline (finetune)</td><td>—</td><td>0.0690</td><td class="best">4.606</td><td class="best">0.9516</td><td>+0.001</td></tr>
 <tr><td class="name">em_single rgb</td><td>rgb</td><td>0.0808</td><td>5.150</td><td>0.9284</td><td>+0.008</td></tr>
 <tr><td class="name">em_single feat</td><td>feat</td><td>0.0816</td><td>5.292</td><td>0.9245</td><td>+0.003</td></tr>
 <tr><td class="name">em_single rgbfeat</td><td>rgbfeat</td><td>0.0795</td><td>5.041</td><td>0.9342</td><td>+0.007</td></tr>
