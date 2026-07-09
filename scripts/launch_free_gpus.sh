@@ -27,9 +27,13 @@ echo ""
 
 i=0
 for gpu in "${FREE[@]}"; do
-    # skip arms already running (avoid duplicate launch of the same config)
-    while [ $i -lt ${#ARMS[@]} ] && ps -eo cmd | grep -q -- "config-name single_a100_${ARMS[$i]}\$"; do
-        echo "[skip] '${ARMS[$i]}' already running"
+    # skip arms already running OR already finished (final_model.pth exists)
+    while [ $i -lt ${#ARMS[@]} ] && { ps -eo cmd | grep -q -- "config-name single_a100_${ARMS[$i]}\$" || [ -f "checkpoint/single_a100_${ARMS[$i]}/final_model.pth" ]; }; do
+        if [ -f "checkpoint/single_a100_${ARMS[$i]}/final_model.pth" ]; then
+            echo "[skip] '${ARMS[$i]}' already DONE"
+        else
+            echo "[skip] '${ARMS[$i]}' already running"
+        fi
         i=$((i + 1))
     done
     [ $i -lt ${#ARMS[@]} ] || { echo "(no more arms to launch; $((${#FREE[@]}-i)) GPU(s) left idle)"; break; }
