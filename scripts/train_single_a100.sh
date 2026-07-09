@@ -29,6 +29,11 @@ case "$ARM" in
     batlin_cycle_4scale) CONFIG=single_a100_batlin_cycle_4scale ;;
     batlin_cycle_o12)  CONFIG=single_a100_batlin_cycle_o12 ;;
     perlayer)          CONFIG=single_a100_perlayer ;;
+    perlayer_nowarp)   CONFIG=single_a100_perlayer_nowarp ;;
+    perlayer_rgb)      CONFIG=single_a100_perlayer_rgb ;;
+    perlayer_hog)      CONFIG=single_a100_perlayer_hog ;;
+    perlayer_rgbfeat)  CONFIG=single_a100_perlayer_rgbfeat ;;
+    perlayer_ds05)     CONFIG=single_a100_perlayer_ds05 ;;
     baseline_unfreeze) CONFIG=single_a100_baseline_unfreeze ;;
     scratch)           CONFIG=single_a100_scratch ;;
     *) echo "Unknown arm: $ARM (baseline|errormap|em_single|em_single_{rgb,feat,rgbfeat,hog}|batlin|batlin_cycle|baseline_cycle|batlin_4scale|batlin_rgbfeat|batlin_hog|batlin_cycle_4scale|batlin_cycle_o12|perlayer|baseline_unfreeze|scratch)" && exit 1 ;;

@@ -147,7 +147,8 @@ def main(cfg):
     head_type = OmegaConf.select(cfg, 'model.head_type', default='temporal')
     warp_signal = OmegaConf.select(cfg, 'model.warp_signal', default='rgb')
     scales = OmegaConf.select(cfg, 'model.scales', default=['p2', 'p1'])
-    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type, warp_signal=warp_signal, scales=tuple(scales)).to(accelerator.device)
+    use_warp = bool(OmegaConf.select(cfg, 'model.use_warp', default=True))
+    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type, warp_signal=warp_signal, scales=tuple(scales), use_warp=use_warp).to(accelerator.device)
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load

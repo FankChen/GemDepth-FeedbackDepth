@@ -58,6 +58,7 @@ class GemDepth(nn.Module):
         head_type='temporal',
         warp_signal='rgb',
         scales=('p2', 'p1'),
+        use_warp=True,
     ):
         super(GemDepth, self).__init__()
 
@@ -153,7 +154,7 @@ class GemDepth(nn.Module):
         elif head_type == 'batlin':
             self.head = DPTHeadBATLin(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal, scales=tuple(scales))
         elif head_type == 'perlayer':
-            self.head = DPTHeadPerLayer(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal)
+            self.head = DPTHeadPerLayer(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, warp_signal=warp_signal, use_warp=use_warp)
         elif head_type == 'temporal':
             self.head = DPTHeadTemporal(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         else:
