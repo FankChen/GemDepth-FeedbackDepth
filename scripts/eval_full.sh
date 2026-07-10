@@ -45,10 +45,12 @@ printf '%s\n' "$ARMS_LIST" | while read -r dir head sig warp; do
   mkdir -p "output_eval/$dir"
   echo ""; echo "########## AbsRel: $dir ($head/$sig) ##########"
   OUT="output_eval/$dir" DATASETS="$ABSREL_DATASETS" bash scripts/eval_all.sh "$ckpt" "$head" "$sig" || true
-  echo "########## TAE: $dir ##########"
-  $PY scripts/eval_tae.py --ckpt "$ckpt" --head_type "$head" --warp_signal "$sig" --use_warp "$warp" \
-      --data_dirs "$DATA" --seq_len "$SEQ" --num_seqs "$NUM_TAE" --tag "$dir" 2>/dev/null \
-      | grep "TAE\[" | tee "output_eval/$dir/tae.txt" || true
+  if [ "${SKIP_TAE:-0}" != "1" ]; then
+    echo "########## TAE: $dir ##########"
+    $PY scripts/eval_tae.py --ckpt "$ckpt" --head_type "$head" --warp_signal "$sig" --use_warp "$warp" \
+        --data_dirs "$DATA" --seq_len "$SEQ" --num_seqs "$NUM_TAE" --tag "$dir" 2>/dev/null \
+        | grep "TAE\[" | tee "output_eval/$dir/tae.txt" || true
+  fi
 done
 
 echo ""
