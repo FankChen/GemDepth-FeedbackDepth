@@ -213,7 +213,7 @@ def main(cfg):
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:
-                allowed = ('depth_head', 'error_encoder', 'fuse_block', 'refine_head', 'scale_proj', 'ba_update', 'sig_proj', 'layer_delta_heads', 'refine_p4', 'refine_fine')
+                allowed = ('depth_head', 'error_encoder', 'fuse_block', 'refine_head', 'scale_proj', 'ba_update', 'sig_proj', 'layer_delta_heads', 'refine_p4', 'refine_fine', 'refine_p1_fuse')
                 non_em_missing = [m for m in missing if not any(a in m for a in allowed)]
                 assert len(non_em_missing) == 0, f"Unexpected missing keys beyond error-map modules: {non_em_missing}"
     else:
