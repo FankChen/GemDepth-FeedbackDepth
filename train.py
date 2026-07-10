@@ -198,12 +198,18 @@ def main(cfg):
     if cfg.model.video_path and Path(cfg.model.video_path).exists():
         print(f"[init] Loading pretrained weights from {cfg.model.video_path}")
         checkpoint = torch.load(cfg.model.video_path, map_location='cpu',weights_only=False)
+        backbone_only = bool(OmegaConf.select(cfg, 'model.load_backbone_only', default=False))
+        if backbone_only:
+            checkpoint = {k: v for k, v in checkpoint.items() if k.startswith('pretrained.')}
+            print(f"[init] backbone-only: loading {len(checkpoint)} DINOv2 keys; head/GEM/ASTT random-init (from scratch)")
         missing, unexpected = model.load_state_dict(checkpoint, strict=False)
         if accelerator.is_main_process:
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
             if len(unexpected) > 0:
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
-            if head_type not in ('errormap', 'errormap_single', 'batlin', 'perlayer', 'perlayer_refine', 'perlayer_errmap'):
+            if backbone_only:
+                pass  # head/GEM/ASTT are intentionally random-init -> a large 'missing' set is expected
+            elif head_type not in ('errormap', 'errormap_single', 'batlin', 'perlayer', 'perlayer_refine', 'perlayer_errmap'):
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:

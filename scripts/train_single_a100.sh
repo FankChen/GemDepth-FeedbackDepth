@@ -40,6 +40,7 @@ case "$ARM" in
     perlayer_ds05)     CONFIG=single_a100_perlayer_ds05 ;;
     baseline_unfreeze) CONFIG=single_a100_baseline_unfreeze ;;
     scratch)           CONFIG=single_a100_scratch ;;
+    baseline_scratch_bb) CONFIG=single_a100_baseline_scratch_bb ;;
     *) echo "Unknown arm: $ARM (baseline|errormap|em_single|em_single_{rgb,feat,rgbfeat,hog}|batlin|batlin_cycle|baseline_cycle|batlin_4scale|batlin_rgbfeat|batlin_hog|batlin_cycle_4scale|batlin_cycle_o12|perlayer|baseline_unfreeze|scratch)" && exit 1 ;;
 esac
 
