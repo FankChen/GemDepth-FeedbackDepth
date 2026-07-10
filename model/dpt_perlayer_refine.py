@@ -1,13 +1,11 @@
-# Per-layer PURE-REFINE DPT head (control for DPTHeadPerLayer). 2026-07-09. STANDALONE.
+# Per-layer cascaded PURE-REFINE DPT head. 2026-07-10.
 #
-# Same template as dpt_perlayer.py (original gemdepth DPT, 4 refinenet paths p4->p1), same main
-# output (original output_conv, == baseline), same per-layer deep supervision on z_l'. The ONLY
-# difference: the per-layer residual dz_l is predicted from the decoder FEATURE (a plain learned
-# delta), NOT from a warp / error map. So `perlayer` vs `perlayer_refine` isolates the value of the
-# error-map (geometric) signal versus a pure feature refinement.
-#   step 1 (refine): depth_head_l(path_l)        -> z_l
-#   step 2 (delta) : delta_head_l(feat(path_l))  -> dz_l   (feature-based, zero-init; NO warp)
-#                    => z_l' = relu(z_l + dz_l)
+# Template = original gemdepth DPT backbone (4 refinenet paths p4->p1). Coarse->fine cascade:
+# p4 predicts an initial depth z; each finer layer takes cat(path, upsampled z) and predicts a
+# residual, z = relu(up(z) + residual). EVERY layer's z is a real depth prediction with its OWN
+# single-frame loss (4 losses total, via train.py compute_deep_sup_loss), and the FINEST z is the
+# FINAL output -- so each layer's loss directly optimises the output depth (nothing frozen out).
+# NO warp / error map here (that is the perlayer_errmap head, method arm).
 
 import torch
 import torch.nn as nn
@@ -31,43 +29,34 @@ class DPTHeadPerLayerRefine(DPTHeadTemporal):
     ):
         super().__init__(in_channels, features, use_bn, out_channels, use_clstoken, num_frames, pe)
 
-        self.layer_depths = []       # z_l' = z_l + dz_l per layer (deep supervision target)
-        self.layer_depths_pre = []   # z_l (refine only) per layer (ablation)
+        self.layer_depths = []       # z per layer (4 deep-supervision targets, coarse->fine)
 
         sig_ch = 32
-        # step 1: per-layer refine head (path feat -> non-negative coarse depth z_l). Softplus end.
-        self.layer_depth_heads = nn.ModuleDict({
+        # Coarsest layer p4: path feature -> initial depth (Softplus keeps it > 0).
+        self.refine_p4 = nn.Sequential(
+            nn.Conv2d(features, features // 2, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(True),
+            nn.Conv2d(features // 2, sig_ch, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(True),
+            nn.Conv2d(sig_ch, 1, kernel_size=1, stride=1, padding=0),
+            nn.Softplus(),
+        )
+        # Finer layers p3,p2,p1: cat(path, upsampled prev depth) -> residual added onto prev depth.
+        self.refine_fine = nn.ModuleDict({
             s: nn.Sequential(
-                nn.Conv2d(features, features // 2, kernel_size=3, stride=1, padding=1),
+                nn.Conv2d(features + 1, features // 2, kernel_size=3, stride=1, padding=1),
                 nn.ReLU(True),
                 nn.Conv2d(features // 2, sig_ch, kernel_size=3, stride=1, padding=1),
                 nn.ReLU(True),
-                nn.Conv2d(sig_ch, 1, kernel_size=1, stride=1, padding=0),
-                nn.Softplus(),
-            ) for s in self.PATH_KEYS
-        })
-        # project the path to a compact feature that drives the residual (mirrors perlayer's sig_proj)
-        self.sig_proj = nn.ModuleDict({
-            s: nn.Conv2d(features, sig_ch, kernel_size=3, stride=1, padding=1) for s in self.PATH_KEYS
-        })
-        # step 2: per-layer FEATURE delta head (feat -> residual dz_l). Last conv zero-init => dz=0 at init.
-        self.layer_delta_heads = nn.ModuleDict({
-            s: nn.Sequential(
-                nn.Conv2d(sig_ch, sig_ch, kernel_size=3, stride=1, padding=1),
-                nn.ReLU(True),
                 nn.Conv2d(sig_ch, 1, kernel_size=3, stride=1, padding=1),
-            ) for s in self.PATH_KEYS
+            ) for s in ('p3', 'p2', 'p1')
         })
-        for s in self.PATH_KEYS:
-            nn.init.zeros_(self.layer_delta_heads[s][-1].weight)
-            nn.init.zeros_(self.layer_delta_heads[s][-1].bias)
 
     def forward(self, out_features, patch_h, patch_w, frame_length,
                 images=None, extrinsics=None, intrinsics=None,
                 layer_3_att=None, layer_4_att=None, mode=None):
         mode = False
         self.layer_depths = []
-        self.layer_depths_pre = []
 
         # ---- original gemdepth DPT backbone (verbatim from DPTHeadTemporal) ----
         out = []
@@ -105,22 +94,18 @@ class DPTHeadPerLayerRefine(DPTHeadTemporal):
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn, mode, size=layer_1_rn.shape[2:])
         path_1 = self.scratch.refinenet1(path_2, layer_1_rn, mode)
 
-        # ---- per-layer refine (z_l) + FEATURE delta (dz_l): NO warp, deep supervision ----
-        path_map = {'p4': path_4, 'p3': path_3, 'p2': path_2, 'p1': path_1}
-        for s in self.PATH_KEYS:                                # coarse -> fine
-            path_s = path_map[s]
+        # ---- cascaded coarse->fine refine. Each layer's z is a real depth with its own loss; ----
+        # ---- the finest z is the FINAL output, so every layer's loss optimises the output. ----
+        z = self.refine_p4(path_4)                              # (BT,1,H4,W4) initial depth
+        self.layer_depths.append(z.reshape(B, T, 1, *z.shape[-2:]))
+        for s, path_s in (('p3', path_3), ('p2', path_2), ('p1', path_1)):
             Hs, Ws = path_s.shape[-2:]
-            z_l = self.layer_depth_heads[s](path_s)             # step 1: refine -> z_l
-            self.layer_depths_pre.append(z_l.reshape(B, T, 1, Hs, Ws))
-            dz = self.layer_delta_heads[s](self.sig_proj[s](path_s))  # step 2: feature delta (zero-init)
-            z_ref = F.relu(z_l + dz)                            # z_l' = z_l + dz_l
-            self.layer_depths.append(z_ref.reshape(B, T, 1, Hs, Ws))
+            z_up = F.interpolate(z, size=(Hs, Ws), mode='bilinear', align_corners=True)
+            delta = self.refine_fine[s](torch.cat([path_s, z_up], dim=1))
+            z = F.relu(z_up + delta)                            # refine on top of previous depth
+            self.layer_depths.append(z.reshape(B, T, 1, Hs, Ws))
 
-        # ---- main output = ORIGINAL output_conv on path_1 (pretrained warm-start, == baseline) ----
-        feat = self.scratch.output_conv1(path_1)
-        feat = F.interpolate(feat, (int(patch_h * 14), int(patch_w * 14)),
-                             mode="bilinear", align_corners=True)
-        ori_type = feat.dtype
-        with torch.autocast(device_type="cuda", enabled=False):
-            out = self.scratch.output_conv2(feat.float())
-        return out.to(ori_type)
+        # final output = finest cascaded depth, upsampled to full resolution
+        out = F.interpolate(z, (int(patch_h * 14), int(patch_w * 14)),
+                            mode='bilinear', align_corners=True)
+        return out

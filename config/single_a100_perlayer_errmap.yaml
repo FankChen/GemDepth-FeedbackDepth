@@ -1,11 +1,11 @@
-# 方案一 (control): per-layer cascaded PURE-REFINE (no errmap). p4 predicts depth; each finer layer
-# refines cat(path, up(z)). Every layer's z gets its own single-frame loss (4 losses); finest z = output.
+# 方案二 (method): per-layer cascaded refine + errmap. Each layer's z (after errmap) gets its own
+# single-frame loss (4 losses via deep_sup_weight); the finest z is the final output.
 training:
   seed: 0
-  checkpoint_dir: ./checkpoint/single_a100_perlayer_refine
+  checkpoint_dir: ./checkpoint/single_a100_perlayer_errmap
   save_freq: 2000
   val_freq: 10000
-  log_dir: ./logs/single_a100_perlayer_refine
+  log_dir: ./logs/single_a100_perlayer_errmap
   freeze_mode: head_only
   grad_accum: 4
   aux_depth_weight: 0.0
@@ -36,11 +36,12 @@ dataloader:
 
 model:
   video_path: "./checkpoint/gemdepth.pth"
-  head_type: perlayer_refine
+  head_type: perlayer_errmap
+  warp_signal: feat
 
 encoder: 'vitl'
 pose_flag: True
 num_gpus: 1
 total_step: 6000
-project_name: video_single_a100_perlayer_refine
+project_name: video_single_a100_perlayer_errmap
 resume: false

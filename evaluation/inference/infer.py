@@ -22,7 +22,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
     parser.add_argument('--ckpt', type=str, default='./checkpoint/gemdepth.pth',
                         help='Path to the model checkpoint (model-only state dict).')
-    parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap', 'errormap_single', 'batlin', 'perlayer', 'perlayer_refine'],
+    parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap', 'errormap_single', 'batlin', 'perlayer', 'perlayer_refine', 'perlayer_errmap'],
                         help='DPT head variant; must match the checkpoint being loaded.')
     parser.add_argument('--warp_signal', type=str, default='rgb', choices=['rgb', 'feat', 'rgbfeat', 'hog'],
                         help='Signal warped for the errormap_single head (rgb|feat|rgbfeat|hog).')

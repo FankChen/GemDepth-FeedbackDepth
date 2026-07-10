@@ -23,35 +23,20 @@ def test_forward():
     of, B, T, ph, pw = _fake(ic)
     d = head(of, ph, pw, T)                                   # no images/ext/K needed (no warp)
     assert d.shape[0] == B * T and d.shape[1] == 1, d.shape
-    assert len(head.layer_depths) == 4, f"expect 4 layer depths, got {len(head.layer_depths)}"
-    assert len(head.layer_depths_pre) == 4
+    assert d.shape[-2:] == (ph * 14, pw * 14), f"final should be full-res, got {tuple(d.shape)}"
+    assert len(head.layer_depths) == 4, f"expect 4 cascaded layer depths, got {len(head.layer_depths)}"
+    hs = [z.shape[-1] for z in head.layer_depths]
+    assert hs == sorted(hs) and len(set(hs)) == 4, f"cascade resolutions not increasing: {hs}"
+    # 4 per-layer losses + final; every refine head must get gradient
     loss = d.float().mean() + sum(z.float().mean() for z in head.layer_depths)
     loss.backward()
-    gr = head.layer_depth_heads['p2'][0].weight.grad
-    gd = head.layer_delta_heads['p2'][-1].weight.grad         # last conv zero-init but drives dz
-    assert gr is not None and gr.abs().sum() > 0, "refine head got no grad"
-    assert gd is not None and gd.abs().sum() > 0, "feature delta head got no grad"
-    print(f"[perlayer_refine] fwd/bwd OK shape={tuple(d.shape)} layers={len(head.layer_depths)} (refine+feat-delta in-graph)")
-
-
-def test_main_equals_baseline():
-    ic, ft, oc = 64, 64, [48, 96, 192, 384]
-    head = DPTHeadPerLayerRefine(ic, ft, False, oc, False, num_frames=4)
-    base = DPTHeadTemporal(ic, ft, False, oc, False, num_frames=4)
-    missing, unexpected = base.load_state_dict(head.state_dict(), strict=False)
-    assert len(missing) == 0, f"baseline missing shared keys: {missing[:5]}"
-    head.eval()
-    base.eval()
-    of, B, T, ph, pw = _fake(ic)
-    with torch.no_grad():
-        d_head = head(of, ph, pw, T)
-        d_base = base(of, ph, pw, T)
-    md = (d_head - d_base).abs().max().item()
-    assert torch.allclose(d_head, d_base, atol=1e-5), f"main output != baseline, max_diff={md}"
-    print(f"[perlayer_refine] main output == baseline OK (max_diff={md:.2e})")
+    g4 = head.refine_p4[0].weight.grad
+    gf = head.refine_fine['p1'][0].weight.grad
+    assert g4 is not None and g4.abs().sum() > 0, "refine_p4 got no grad"
+    assert gf is not None and gf.abs().sum() > 0, "refine_fine[p1] got no grad"
+    print(f"[perlayer_refine cascade] fwd/bwd OK final={tuple(d.shape)} layers={len(head.layer_depths)} res={hs}")
 
 
 if __name__ == '__main__':
     test_forward()
-    test_main_equals_baseline()
     print("ALL OK")
