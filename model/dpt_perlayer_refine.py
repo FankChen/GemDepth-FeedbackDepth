@@ -41,7 +41,7 @@ class DPTHeadPerLayerRefine(DPTHeadTemporal):
             nn.Conv2d(sig_ch, 1, kernel_size=1, stride=1, padding=0),
             nn.Softplus(),
         )
-        # Finer layers p3,p2,p1: cat(path, upsampled prev depth) -> residual added onto prev depth.
+        # Middle layers p3,p2: cat(path, upsampled prev depth) -> residual added onto prev depth.
         self.refine_fine = nn.ModuleDict({
             s: nn.Sequential(
                 nn.Conv2d(features + 1, features // 2, kernel_size=3, stride=1, padding=1),
@@ -49,8 +49,17 @@ class DPTHeadPerLayerRefine(DPTHeadTemporal):
                 nn.Conv2d(features // 2, sig_ch, kernel_size=3, stride=1, padding=1),
                 nn.ReLU(True),
                 nn.Conv2d(sig_ch, 1, kernel_size=3, stride=1, padding=1),
-            ) for s in ('p3', 'p2', 'p1')
+            ) for s in ('p3', 'p2')
         })
+        # Finest layer p1 keeps the PRETRAINED output_conv as its base depth (== baseline at init),
+        # then fuses the cascaded depth via a zero-init residual (starts == baseline, learns on top).
+        self.refine_p1_fuse = nn.Sequential(
+            nn.Conv2d(2, sig_ch, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(True),
+            nn.Conv2d(sig_ch, 1, kernel_size=3, stride=1, padding=1),
+        )
+        nn.init.zeros_(self.refine_p1_fuse[-1].weight)
+        nn.init.zeros_(self.refine_p1_fuse[-1].bias)
 
     def forward(self, out_features, patch_h, patch_w, frame_length,
                 images=None, extrinsics=None, intrinsics=None,
@@ -98,14 +107,22 @@ class DPTHeadPerLayerRefine(DPTHeadTemporal):
         # ---- the finest z is the FINAL output, so every layer's loss optimises the output. ----
         z = self.refine_p4(path_4)                              # (BT,1,H4,W4) initial depth
         self.layer_depths.append(z.reshape(B, T, 1, *z.shape[-2:]))
-        for s, path_s in (('p3', path_3), ('p2', path_2), ('p1', path_1)):
+        for s, path_s in (('p3', path_3), ('p2', path_2)):
             Hs, Ws = path_s.shape[-2:]
             z_up = F.interpolate(z, size=(Hs, Ws), mode='bilinear', align_corners=True)
             delta = self.refine_fine[s](torch.cat([path_s, z_up], dim=1))
             z = F.relu(z_up + delta)                            # refine on top of previous depth
             self.layer_depths.append(z.reshape(B, T, 1, Hs, Ws))
 
-        # final output = finest cascaded depth, upsampled to full resolution
-        out = F.interpolate(z, (int(patch_h * 14), int(patch_w * 14)),
-                            mode='bilinear', align_corners=True)
-        return out
+        # finest layer p1: PRETRAINED output_conv gives the base depth (== baseline at init),
+        # then fuse the cascaded depth via a zero-init residual.
+        feat = self.scratch.output_conv1(path_1)
+        feat = F.interpolate(feat, (int(patch_h * 14), int(patch_w * 14)),
+                             mode="bilinear", align_corners=True)
+        ori_type = feat.dtype
+        with torch.autocast(device_type="cuda", enabled=False):
+            z_base = self.scratch.output_conv2(feat.float())   # baseline depth, full-res
+        z_prev = F.interpolate(z.float(), size=z_base.shape[-2:], mode='bilinear', align_corners=True)
+        z = F.relu(z_base + self.refine_p1_fuse(torch.cat([z_base, z_prev], dim=1)))
+        self.layer_depths.append(z.reshape(B, T, 1, *z.shape[-2:]))
+        return z.to(ori_type)

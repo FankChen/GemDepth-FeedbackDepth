@@ -31,9 +31,9 @@ def test_forward():
     loss = d.float().mean() + sum(z.float().mean() for z in head.layer_depths)
     loss.backward()
     g4 = head.refine_p4[0].weight.grad
-    gf = head.refine_fine['p1'][0].weight.grad
+    gf = head.refine_p1_fuse[-1].weight.grad                  # p1 fuse (zero-init, uses output_conv base)
     assert g4 is not None and g4.abs().sum() > 0, "refine_p4 got no grad"
-    assert gf is not None and gf.abs().sum() > 0, "refine_fine[p1] got no grad"
+    assert gf is not None and gf.abs().sum() > 0, "refine_p1_fuse got no grad"
     print(f"[perlayer_refine cascade] fwd/bwd OK final={tuple(d.shape)} layers={len(head.layer_depths)} res={hs}")
 
 

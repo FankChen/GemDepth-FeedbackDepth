@@ -58,8 +58,15 @@ class DPTHeadPerLayerErrmap(DPTHeadTemporal):
                 nn.Conv2d(features // 2, sig_ch, kernel_size=3, stride=1, padding=1),
                 nn.ReLU(True),
                 nn.Conv2d(sig_ch, 1, kernel_size=3, stride=1, padding=1),
-            ) for s in ('p3', 'p2', 'p1')
+            ) for s in ('p3', 'p2')
         })
+        self.refine_p1_fuse = nn.Sequential(
+            nn.Conv2d(2, sig_ch, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(True),
+            nn.Conv2d(sig_ch, 1, kernel_size=3, stride=1, padding=1),
+        )
+        nn.init.zeros_(self.refine_p1_fuse[-1].weight)
+        nn.init.zeros_(self.refine_p1_fuse[-1].bias)
         # per-layer error-map correction ----------------------------------------------------------
         self.sig_proj = nn.ModuleDict({
             s: nn.Conv2d(features, sig_ch, kernel_size=3, stride=1, padding=1) for s in self.PATH_KEYS
@@ -154,7 +161,7 @@ class DPTHeadPerLayerErrmap(DPTHeadTemporal):
         if can_warp:
             z = F.relu(z + self._errmap_delta('p4', z, path_4, images, ext, intrinsics, B, T, H0, W0))
         self.layer_depths.append(z.reshape(B, T, 1, *z.shape[-2:]))
-        for s, path_s in (('p3', path_3), ('p2', path_2), ('p1', path_1)):
+        for s, path_s in (('p3', path_3), ('p2', path_2)):
             Hs, Ws = path_s.shape[-2:]
             z_up = F.interpolate(z, size=(Hs, Ws), mode='bilinear', align_corners=True)
             delta = self.refine_fine[s](torch.cat([path_s, z_up], dim=1))       # refine step
@@ -163,6 +170,17 @@ class DPTHeadPerLayerErrmap(DPTHeadTemporal):
                 z = F.relu(z + self._errmap_delta(s, z, path_s, images, ext, intrinsics, B, T, H0, W0))
             self.layer_depths.append(z.reshape(B, T, 1, Hs, Ws))
 
-        out = F.interpolate(z, (int(patch_h * 14), int(patch_w * 14)),
-                            mode='bilinear', align_corners=True)
-        return out
+        # finest layer p1: pretrained output_conv base depth (== baseline at init) + cascaded residual,
+        # then the per-layer errmap correction (path upsampled to the output resolution).
+        feat = self.scratch.output_conv1(path_1)
+        feat = F.interpolate(feat, (int(patch_h * 14), int(patch_w * 14)),
+                             mode="bilinear", align_corners=True)
+        with torch.autocast(device_type="cuda", enabled=False):
+            z_base = self.scratch.output_conv2(feat.float())
+        z_prev = F.interpolate(z.float(), size=z_base.shape[-2:], mode='bilinear', align_corners=True)
+        z = F.relu(z_base + self.refine_p1_fuse(torch.cat([z_base, z_prev], dim=1)))
+        if can_warp:
+            path_1_hi = F.interpolate(path_1, size=z.shape[-2:], mode='bilinear', align_corners=True)
+            z = F.relu(z + self._errmap_delta('p1', z, path_1_hi, images, ext, intrinsics, B, T, H0, W0))
+        self.layer_depths.append(z.reshape(B, T, 1, *z.shape[-2:]))
+        return z
