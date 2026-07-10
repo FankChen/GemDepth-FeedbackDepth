@@ -24,6 +24,7 @@ sweep_baseline_lr1e-5 temporal feat true
 single_a100_perlayer perlayer feat true
 single_a100_perlayer_nowarp perlayer feat false
 single_a100_perlayer_refine perlayer_refine feat true
+single_a100_perlayer_errmap perlayer_errmap feat true
 single_a100_perlayer_rgb perlayer rgb true
 single_a100_perlayer_hog perlayer hog true
 single_a100_perlayer_ds05 perlayer feat true

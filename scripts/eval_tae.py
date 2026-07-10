@@ -42,7 +42,7 @@ def parse():
     p = argparse.ArgumentParser()
     p.add_argument('--ckpt', required=True)
     p.add_argument('--head_type', default='temporal',
-                   choices=['temporal', 'errormap', 'errormap_single', 'batlin', 'perlayer', 'perlayer_refine'])
+                   choices=['temporal', 'errormap', 'errormap_single', 'batlin', 'perlayer', 'perlayer_refine', 'perlayer_errmap'])
     p.add_argument('--warp_signal', default='feat', choices=['rgb', 'feat', 'rgbfeat', 'hog'])
     p.add_argument('--use_warp', type=_str2bool, default=True)
     p.add_argument('--scales', type=str, nargs='+', default=['p2', 'p1'])

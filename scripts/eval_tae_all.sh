@@ -19,6 +19,7 @@ ARMS=(
   "single_a100_perlayer/final_model.pth perlayer feat true"
   "single_a100_perlayer_nowarp/final_model.pth perlayer feat false"
   "single_a100_perlayer_refine/final_model.pth perlayer_refine feat true"
+  "single_a100_perlayer_errmap/final_model.pth perlayer_errmap feat true"
   "single_a100_perlayer_rgb/final_model.pth perlayer rgb true"
   "single_a100_perlayer_hog/final_model.pth perlayer hog true"
   "single_a100_perlayer_rgbfeat/final_model.pth perlayer rgbfeat true"
