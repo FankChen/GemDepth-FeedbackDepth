@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DPT Head 结构可视化：原始 vs 时序</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2c; --panel2:#1d2638; --ink:#e8edf6; --muted:#9fb0c9;
+    --conv:#2f6fed; --deconv:#8b5cf6; --norm:#0ea5e9; --act:#f59e0b; --attn:#ef4444;
+    --mlp:#10b981; --fusion:#e879f9; --temporal:#f43f5e; --io:#64748b; --add:#facc15;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);padding:24px 32px;line-height:1.5}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 20px;font-size:14px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 26px}
+  .legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .dot{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .wrap{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+  .col{background:var(--panel);border:1px solid #26314a;border-radius:14px;padding:18px 18px 24px;flex:1;min-width:430px}
+  .col h2 small{font-weight:400;color:var(--muted);font-size:12px;display:block;margin-top:2px}
+  .flow{display:flex;flex-direction:column;align-items:stretch;gap:0}
+  .node{border-radius:9px;padding:9px 12px;margin:5px 0;font-size:13px;position:relative;border:1px solid rgba(255,255,255,.09)}
+  .node .t{font-weight:600}
+  .node .d{font-size:11px;color:rgba(255,255,255,.78);margin-top:2px}
+  .arrow{align-self:center;color:var(--muted);font-size:16px;line-height:1;margin:1px 0}
+  .row{display:flex;gap:8px}
+  .row .node{flex:1;margin:5px 0}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:5px 0}
+  .grid4 .node{margin:0}
+  .io{background:linear-gradient(135deg,#3b465e,#2a3346);border-color:#4a5876}
+  .conv{background:linear-gradient(135deg,#1e3a8a,#2f6fed)}
+  .deconv{background:linear-gradient(135deg,#5b21b6,#8b5cf6)}
+  .norm{background:linear-gradient(135deg,#075985,#0ea5e9)}
+  .act{background:linear-gradient(135deg,#92400e,#f59e0b)}
+  .attn{background:linear-gradient(135deg,#991b1b,#ef4444)}
+  .mlp{background:linear-gradient(135deg,#065f46,#10b981)}
+  .fusion{background:linear-gradient(135deg,#86198f,#e879f9)}
+  .temporal{background:linear-gradient(135deg,#9f1239,#f43f5e)}
+  .add{background:linear-gradient(135deg,#854d0e,#facc15);color:#1a1200}
+  .add .d{color:#3a2c00}
+  .box{border:1px dashed #45537a;border-radius:10px;padding:8px 10px 12px;margin:8px 0;background:rgba(255,255,255,.02)}
+  .box .cap{font-size:12px;color:var(--muted);margin:0 0 6px;font-weight:600;letter-spacing:.3px}
+  .badge{position:absolute;top:-9px;right:8px;background:#0b0f18;border:1px solid #45537a;color:var(--muted);
+    font-size:10px;padding:1px 7px;border-radius:20px}
+  .detail{background:var(--panel2);border:1px solid #2a3550;border-radius:14px;padding:18px;margin-top:26px}
+  .detail h2{margin-bottom:12px}
+  .two{display:flex;gap:22px;flex-wrap:wrap}
+  .two > div{flex:1;min-width:320px}
+  .mini{font-size:11px;color:var(--muted);margin:2px 0 10px}
+  .tag{font-size:10px;padding:1px 6px;border-radius:5px;background:#0b0f18;border:1px solid #45537a;color:var(--muted);margin-left:6px}
+  .repeat{border-left:3px solid var(--temporal);padding-left:10px}
+  .repeatg{border-left:3px solid var(--mlp)}
+  code{background:#0b0f18;padding:1px 5px;border-radius:4px;font-size:12px;color:#a5d6ff}
+  .note{color:var(--muted);font-size:12px;margin-top:10px}
+</style>
+</head>
+<body>
+  <h1>DPT Head 结构可视化</h1>
+  <p class="sub">左：原始 <code>DPTHead</code>（单帧） · 右：时序 <code>DPTHeadTemporal</code>（视频，含 TemporalModule）。下方展开每个 Transformer / MLP / 融合块的内部层。</p>
+
+  <div class="legend">
+    <span><i class="dot io"></i>输入/输出</span>
+    <span><i class="dot conv"></i>Conv 2D</span>
+    <span><i class="dot deconv"></i>ConvTranspose / Resize</span>
+    <span><i class="dot norm"></i>Norm (Group/Layer)</span>
+    <span><i class="dot act"></i>激活 (ReLU/GELU)</span>
+    <span><i class="dot attn"></i>Attention</span>
+    <span><i class="dot mlp"></i>MLP / FeedForward</span>
+    <span><i class="dot fusion"></i>FeatureFusionBlock</span>
+    <span><i class="dot temporal"></i>TemporalModule</span>
+    <span><i class="dot add"></i>残差相加</span>
+  </div>
+
+  <div class="wrap">
+    <!-- ============ 原始 DPTHead ============ -->
+    <div class="col">
+      <h2>原始 DPTHead <small>model/dpt.py · 单帧稠密深度</small></h2>
+      <div class="flow">
+        <div class="node io"><div class="t">ViT/DINOv2 多层 token</div><div class="d">4 组特征 [B, N_patch, C]（如第 3/6/9/12 层）</div></div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">① Reassemble：token → 多尺度特征图（对 4 层各做一次）</p>
+          <div class="grid4">
+            <div class="node conv"><div class="t">proj₁ 1×1</div><div class="d">→256ch</div></div>
+            <div class="node conv"><div class="t">proj₂ 1×1</div><div class="d">→512ch</div></div>
+            <div class="node conv"><div class="t">proj₃ 1×1</div><div class="d">→1024ch</div></div>
+            <div class="node conv"><div class="t">proj₄ 1×1</div><div class="d">→1024ch</div></div>
+          </div>
+          <div class="grid4">
+            <div class="node deconv"><div class="t">Deconv ↑4×</div><div class="d">layer_1 最精细</div></div>
+            <div class="node deconv"><div class="t">Deconv ↑2×</div><div class="d">layer_2</div></div>
+            <div class="node deconv"><div class="t">Identity ×1</div><div class="d">layer_3</div></div>
+            <div class="node conv"><div class="t">Conv ↓2×</div><div class="d">layer_4 最粗</div></div>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">② Scratch：统一到 256 通道（3×3 conv, no bias）</p>
+          <div class="grid4">
+            <div class="node conv"><div class="t">layer1_rn</div></div>
+            <div class="node conv"><div class="t">layer2_rn</div></div>
+            <div class="node conv"><div class="t">layer3_rn</div></div>
+            <div class="node conv"><div class="t">layer4_rn</div></div>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">③ 自顶向下逐级融合（FeatureFusionBlock，见下方展开）</p>
+          <div class="node fusion"><div class="t">refinenet4(layer4_rn)</div><div class="d">→ path_4，上采样到 layer_3 尺寸</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">refinenet3(path_4, layer3_rn)</div><div class="d">→ path_3</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">refinenet2(path_3, layer2_rn)</div><div class="d">→ path_2</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">refinenet1(path_2, layer1_rn)</div><div class="d">→ path_1 最精细</div></div>
+        </div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">④ 输出头</p>
+          <div class="node conv"><div class="t">output_conv1 · 3×3</div><div class="d">256 → 128</div></div>
+          <div class="arrow">▼</div>
+          <div class="node deconv"><div class="t">Bilinear ↑</div><div class="d">→ (patch_h·14, patch_w·14) 原图尺寸</div></div>
+          <div class="arrow">▼</div>
+          <div class="node conv"><div class="t">output_conv2</div><div class="d">3×3(128→32) → ReLU → 1×1(32→1) → ReLU</div></div>
+        </div>
+        <div class="arrow">▼</div>
+        <div class="node io"><div class="t">深度图 [B, 1, H, W]</div></div>
+      </div>
+    </div>
+
+    <!-- ============ 时序 DPTHeadTemporal ============ -->
+    <div class="col">
+      <h2>时序 DPTHeadTemporal <small>model/dpt_temporal.py · 继承 DPTHead + 4× TemporalModule</small></h2>
+      <div class="flow">
+        <div class="node io"><div class="t">ViT token（视频）</div><div class="d">batch = B·T 拍平，需 <code>frame_length=T</code></div></div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">① Reassemble（与原始完全相同）</p>
+          <div class="grid4">
+            <div class="node conv"><div class="t">proj 1×1 ×4</div></div>
+            <div class="node deconv"><div class="t">↑4×</div></div>
+            <div class="node deconv"><div class="t">↑2×</div></div>
+            <div class="node conv"><div class="t">↓2×</div></div>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">② 编码特征上的时序注意力</p>
+          <div class="row">
+            <div class="node temporal"><span class="badge">motion_modules[0]</span><div class="t">TemporalModule</div><div class="d">layer_3 (1024ch)</div></div>
+            <div class="node temporal"><span class="badge">motion_modules[1]</span><div class="t">TemporalModule</div><div class="d">layer_4 (1024ch)</div></div>
+          </div>
+          <div class="node add"><div class="t">(可选) + layer_3_att / layer_4_att</div><div class="d">errormap / pose 变体的外部注意力特征</div></div>
+        </div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">③ Scratch 统一通道（同原始）</p>
+          <div class="grid4">
+            <div class="node conv"><div class="t">layer1_rn</div></div>
+            <div class="node conv"><div class="t">layer2_rn</div></div>
+            <div class="node conv"><div class="t">layer3_rn</div></div>
+            <div class="node conv"><div class="t">layer4_rn</div></div>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">④ 融合 + 时序交替</p>
+          <div class="node fusion"><div class="t">refinenet4(layer4_rn)</div><div class="d">→ path_4</div></div>
+          <div class="arrow">▼</div>
+          <div class="node temporal"><span class="badge">motion_modules[2]</span><div class="t">TemporalModule</div><div class="d">path_4 (256ch)</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">refinenet3(path_4, layer3_rn)</div><div class="d">→ path_3</div></div>
+          <div class="arrow">▼</div>
+          <div class="node temporal"><span class="badge">motion_modules[3]</span><div class="t">TemporalModule</div><div class="d">path_3 (256ch)</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">refinenet2(path_3, layer2_rn)</div><div class="d">→ path_2</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">refinenet1(path_2, layer1_rn)</div><div class="d">→ path_1</div></div>
+        </div>
+        <div class="arrow">▼</div>
+
+        <div class="box">
+          <p class="cap">⑤ 输出头（bf16/fp32 混合精度）</p>
+          <div class="node conv"><div class="t">output_conv1 · 3×3</div><div class="d">256 → 128</div></div>
+          <div class="arrow">▼</div>
+          <div class="node deconv"><div class="t">Bilinear ↑ 原图尺寸</div></div>
+          <div class="arrow">▼</div>
+          <div class="node conv"><div class="t">output_conv2 @ fp32</div><div class="d">autocast(enabled=False) 保数值稳定</div></div>
+        </div>
+        <div class="arrow">▼</div>
+        <div class="node io"><div class="t">视频深度 [B·T, 1, H, W]</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TemporalModule 内部展开 ============ -->
+  <div class="detail">
+    <h2>展开：TemporalModule 内部（沿时间轴的 Transformer）</h2>
+    <p class="mini">配置：<code>num_transformer_block=1</code>，<code>num_attention_blocks=2</code>，<code>heads=8</code>，<code>pos='ape'</code>。整体是残差结构，<code>proj_out</code> 零初始化 → 初始等价于原始逐帧 DPT。</p>
+    <div class="two">
+      <div>
+        <div class="box">
+          <p class="cap">TemporalModule → TemporalTransformer3DModel</p>
+          <div class="node io"><div class="t">输入 5D [B, C, T, H, W]</div><div class="d">reshape → (B·T, C, H, W)，保存 residual</div></div>
+          <div class="arrow">▼</div>
+          <div class="node norm"><div class="t">GroupNorm (32 groups)</div></div>
+          <div class="arrow">▼</div>
+          <div class="node mlp"><div class="t">proj_in · Linear</div><div class="d">C → inner_dim (= heads·head_dim)</div></div>
+          <div class="arrow">▼</div>
+          <div class="node temporal"><div class="t">TemporalTransformerBlock × 1</div><div class="d">见右侧展开</div></div>
+          <div class="arrow">▼</div>
+          <div class="node mlp"><div class="t">proj_out · Linear (zero-init)</div><div class="d">inner_dim → C</div></div>
+          <div class="arrow">▼</div>
+          <div class="node add"><div class="t">+ residual</div><div class="d">reshape 回 [B, C, T, H, W]</div></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="box repeat">
+          <p class="cap">TemporalTransformerBlock（内部）</p>
+          <div class="box repeat">
+            <p class="cap" style="color:var(--temporal)">Attention block × 2（沿时间维 T 做自注意力）</p>
+            <div class="node norm"><div class="t">LayerNorm</div></div>
+            <div class="arrow">▼</div>
+            <div class="node attn">
+              <div class="t">TemporalAttention (self-attn)</div>
+              <div class="d">+ APE 位置编码(PositionalEncoding, max_len=T)<br>
+              to_q / to_k / to_v · Linear → 多头(8) → attention → to_out(Linear)+Dropout</div>
+            </div>
+            <div class="arrow">▼</div>
+            <div class="node add"><div class="t">+ 残差</div></div>
+          </div>
+          <div class="arrow">▼</div>
+          <div class="box repeatg">
+            <p class="cap" style="color:var(--mlp)">FeedForward (MLP)</p>
+            <div class="node norm"><div class="t">LayerNorm (ff_norm)</div></div>
+            <div class="arrow">▼</div>
+            <div class="node mlp"><div class="t">GEGLU</div><div class="d">Linear(dim → 2·4·dim) → 拆两半，一半过 GELU 门控相乘</div></div>
+            <div class="arrow">▼</div>
+            <div class="node act"><div class="t">Dropout</div></div>
+            <div class="arrow">▼</div>
+            <div class="node mlp"><div class="t">Linear</div><div class="d">4·dim → dim</div></div>
+            <div class="arrow">▼</div>
+            <div class="node add"><div class="t">+ 残差</div></div>
+          </div>
+        </div>
+        <p class="note">注意力沿时间轴：token 序列 rearrange 成 <code>(b·hw, T, c)</code>，每个空间位置在 T 帧之间做 self-attention，实现跨帧一致性。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ FeatureFusionBlock 内部展开 ============ -->
+  <div class="detail">
+    <h2>展开：FeatureFusionBlock（refinenet）内部</h2>
+    <p class="mini">来自 model/util/blocks.py。两输入时先融合 skip 特征，再上采样。</p>
+    <div class="two">
+      <div>
+        <div class="box">
+          <p class="cap">FeatureFusionBlock.forward</p>
+          <div class="node io"><div class="t">输入：上层 path (+ 可选 skip 特征)</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">resConfUnit1(skip)</div><div class="d">仅当有 skip 输入时</div></div>
+          <div class="arrow">▼</div>
+          <div class="node add"><div class="t">skip_add：path + res</div></div>
+          <div class="arrow">▼</div>
+          <div class="node fusion"><div class="t">resConfUnit2</div></div>
+          <div class="arrow">▼</div>
+          <div class="node deconv"><div class="t">Bilinear ↑2× / size</div></div>
+          <div class="arrow">▼</div>
+          <div class="node conv"><div class="t">out_conv · 1×1</div><div class="d">features → features</div></div>
+        </div>
+      </div>
+      <div>
+        <div class="box repeatg">
+          <p class="cap">ResidualConvUnit（残差卷积单元）</p>
+          <div class="node act"><div class="t">ReLU</div></div>
+          <div class="arrow">▼</div>
+          <div class="node conv"><div class="t">Conv 3×3</div><div class="d">(可选 BatchNorm)</div></div>
+          <div class="arrow">▼</div>
+          <div class="node act"><div class="t">ReLU</div></div>
+          <div class="arrow">▼</div>
+          <div class="node conv"><div class="t">Conv 3×3</div><div class="d">(可选 BatchNorm)</div></div>
+          <div class="arrow">▼</div>
+          <div class="node add"><div class="t">+ 输入残差</div></div>
+        </div>
+        <p class="note">时序版的 FeatureFusionBlock 多接收一个 <code>mode</code> 参数控制插值时是否切到 fp32（bf16 训练下的数值保护）。</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:22px">核心差异：时序版在原始 DPT 的解码金字塔上，于 <b>layer_3 / layer_4 / path_4 / path_3</b> 四处插入沿时间轴自注意力的 <b>TemporalModule</b>（残差 + 零初始化），为逐帧深度加上跨帧一致性约束。</p>
+
+</body>
+</html>

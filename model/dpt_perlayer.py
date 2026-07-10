@@ -152,6 +152,10 @@ class DPTHeadPerLayer(DPTHeadTemporal):
             z_ref = F.relu(z_l + dz)                            # z_l' = z_l + dz_l
             self.layer_depths.append(z_ref.reshape(B, T, 1, Hs, Ws))
 
+        # Alias so the training loop's aux-depth supervision (which reads head.aux_depths)
+        # picks up the per-layer refined depths without special-casing the head type.
+        self.aux_depths = self.layer_depths
+
         # ---- main output = ORIGINAL output_conv on path_1 (pretrained warm-start, == baseline) ----
         feat = self.scratch.output_conv1(path_1)
         feat = F.interpolate(feat, (int(patch_h * 14), int(patch_w * 14)),

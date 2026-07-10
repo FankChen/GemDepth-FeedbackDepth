@@ -144,7 +144,18 @@ def main(cfg):
         'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
     }
     head_type = OmegaConf.select(cfg, 'model.head_type', default='temporal')
-    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type).to(accelerator.device)
+    use_gem = bool(OmegaConf.select(cfg, 'model.use_gem', default=True))
+    use_astt = bool(OmegaConf.select(cfg, 'model.use_astt', default=True))
+    use_temporal = bool(OmegaConf.select(cfg, 'model.use_temporal', default=True))
+    lora = bool(OmegaConf.select(cfg, 'model.lora', default=False))
+    lora_r = int(OmegaConf.select(cfg, 'model.lora_r', default=8))
+    lora_alpha = int(OmegaConf.select(cfg, 'model.lora_alpha', default=16))
+    lora_dropout = float(OmegaConf.select(cfg, 'model.lora_dropout', default=0.0))
+    dinov2_weights = OmegaConf.select(cfg, 'model.dinov2_weights', default=None)
+    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type,
+                     use_gem=use_gem, use_astt=use_astt, use_temporal=use_temporal,
+                     lora=lora, lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+                     dinov2_weights=dinov2_weights).to(accelerator.device)
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load
@@ -156,12 +167,22 @@ def main(cfg):
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
             if len(unexpected) > 0:
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
-            if head_type != 'errormap':
+            # When GEM/ASTT are disabled or LoRA is enabled or a research head is used, the model
+            # legitimately differs from the full-GemDepth checkpoint, so extra/missing keys are OK.
+            allow_extra = (not use_gem) or (not use_astt) or lora or head_type in ('errormap', 'perlayer', 'multiscale')
+            if not allow_extra:
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:
-                non_em_missing = [m for m in missing if ('depth_heads' not in m and 'error_encoders' not in m)]
-                assert len(non_em_missing) == 0, f"Unexpected missing keys beyond error-map modules: {non_em_missing}"
+                # New sub-modules (research heads / LoRA adapters) and disabled GEM/ASTT modules
+                # are the only allowed key mismatches.
+                new_key_tags = ('depth_heads', 'error_encoders',
+                                'layer_depth_heads', 'layer_delta_heads', 'sig_proj',
+                                'delta_heads')
+                non_new_missing = [m for m in missing
+                                   if not any(t in m for t in new_key_tags)
+                                   and 'lora_A' not in m and 'lora_B' not in m]
+                assert len(non_new_missing) == 0, f"Unexpected missing keys beyond new modules: {non_new_missing}"
     else:
         print(f"[init] WARNING: No pretrained weights found at {cfg.model.video_path}, training from scratch!")
     
@@ -180,13 +201,27 @@ def main(cfg):
     elif freeze_mode not in (None, 'default'):
         raise ValueError(f"Unknown training.freeze_mode={freeze_mode}")
 
-    # --- Split parameters into 2 groups ---
+    # Keep LoRA adapters trainable even though the DINOv2 backbone weights are frozen
+    # (this re-enables them regardless of the freeze policy above).
+    if getattr(model, 'lora', False):
+        n_lora = 0
+        for name, param in model.named_parameters():
+            if 'lora_A' in name or 'lora_B' in name:
+                param.requires_grad_(True)
+                n_lora += param.numel()
+        if accelerator.is_main_process:
+            print(f"[lora] LoRA adapters trainable: {n_lora/1e6:.3f}M params")
+
+    # --- Split parameters into groups (dec blocks / lora / other) ---
     dec_blocks_params = []
+    lora_params = []
     other_params = []
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        if name.startswith('spatial_blocks') or  name.startswith('time_blocks') :
+        if 'lora_A' in name or 'lora_B' in name:
+            lora_params.append(param)
+        elif name.startswith('spatial_blocks') or  name.startswith('time_blocks') :
             dec_blocks_params.append(param)
         else:
             other_params.append(param)
@@ -201,6 +236,7 @@ def main(cfg):
 
     dec_lr = cfg.optimizer.dec_lr if hasattr(cfg.optimizer, 'dec_lr') else 1e-5
     other_lr = cfg.optimizer.other_lr if hasattr(cfg.optimizer, 'other_lr') else 1e-6
+    lora_lr = cfg.optimizer.lora_lr if hasattr(cfg.optimizer, 'lora_lr') else 1e-4
     weight_decay = cfg.optimizer.weight_decay if hasattr(cfg.optimizer, 'weight_decay') else 0.01
 
     # Build param groups, skipping empty ones (e.g. when blocks are frozen)
@@ -209,6 +245,9 @@ def main(cfg):
     if len(dec_blocks_params) > 0:
         param_groups.append({'params': dec_blocks_params, 'lr': dec_lr})
         max_lrs.append(dec_lr)
+    if len(lora_params) > 0:
+        param_groups.append({'params': lora_params, 'lr': lora_lr})
+        max_lrs.append(lora_lr)
     if len(other_params) > 0:
         param_groups.append({'params': other_params, 'lr': other_lr})
         max_lrs.append(other_lr)
@@ -244,7 +283,9 @@ def main(cfg):
     else:
         print(f"[resume] No checkpoint found, starting from step 0")
     
-    invariant_loss_func = VideoDepthLoss(pose_flag = cfg.pose_flag)
+    # Camera (pose) loss only makes sense when GEM predicts poses; disable it otherwise.
+    pose_flag = bool(cfg.pose_flag) and use_gem
+    invariant_loss_func = VideoDepthLoss(pose_flag = pose_flag)
     aux_depth_weight = float(OmegaConf.select(cfg, 'training.aux_depth_weight', default=0.0))
     total_step = start_step
     should_keep_training = True

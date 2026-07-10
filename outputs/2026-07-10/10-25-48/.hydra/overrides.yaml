@@ -1,0 +1,3 @@
+- dataloader.num_workers=0
+- dataset.train.seq_len=8
+- total_step=3

@@ -1,0 +1,2 @@
+- dataloader.num_workers=2
+- total_step=2

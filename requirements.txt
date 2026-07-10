@@ -86,3 +86,4 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 wcmatch==10.1
 Werkzeug==3.1.8
+xformers==0.0.27

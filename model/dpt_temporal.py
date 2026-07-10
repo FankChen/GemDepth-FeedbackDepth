@@ -27,10 +27,12 @@ class DPTHeadTemporal(DPTHead):
         out_channels=[256, 512, 1024, 1024], 
         use_clstoken=False,
         num_frames=32,
-        pe='ape'
+        pe='ape',
+        use_temporal=True
     ):
         super().__init__(in_channels, features, use_bn, out_channels, use_clstoken)
 
+        self.use_temporal = use_temporal
         assert num_frames > 0
         motion_module_kwargs = EasyDict(num_attention_heads                = 8,
                                         num_transformer_block              = 1,
@@ -76,8 +78,9 @@ class DPTHeadTemporal(DPTHead):
         layer_1, layer_2, layer_3, layer_4 = out
         B, T = layer_1.shape[0] // frame_length, frame_length
 
-        layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
-        layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+            layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         return layer_3, layer_4 
     
     def forward(self, out_features, patch_h, patch_w, frame_length,layer_3_att=None,layer_4_att=None,mode=None):
@@ -104,8 +107,9 @@ class DPTHeadTemporal(DPTHead):
         
         B, T = layer_1.shape[0] // frame_length, frame_length
 
-        layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
-        layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+            layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
 
         if layer_3_att is not None:
             layer_3 = layer_3_att+layer_3
@@ -118,9 +122,11 @@ class DPTHeadTemporal(DPTHead):
         layer_4_rn = self.scratch.layer4_rn(layer_4) # 16,256,19,19
 
         path_4 = self.scratch.refinenet4(layer_4_rn,mode, size=layer_3_rn.shape[2:]) # 16,256,37,37
-        path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         path_3 = self.scratch.refinenet3(path_4, layer_3_rn, mode, size=layer_2_rn.shape[2:]) # 16,256,74,74
-        path_3 = self.motion_modules[3](path_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4),None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            path_3 = self.motion_modules[3](path_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4),None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn,mode, size=layer_1_rn.shape[2:]) # 16,256,148,148
         path_1 = self.scratch.refinenet1(path_2,layer_1_rn, mode) # 16,256,296,296
 
