@@ -18,10 +18,15 @@ ARMS=(
   "single_a100_em_single_rgbfeat/final_model.pth errormap_single rgbfeat true"
   "single_a100_perlayer/final_model.pth perlayer feat true"
   "single_a100_perlayer_nowarp/final_model.pth perlayer feat false"
+  "single_a100_perlayer_refine/final_model.pth perlayer_refine feat true"
   "single_a100_perlayer_rgb/final_model.pth perlayer rgb true"
   "single_a100_perlayer_hog/final_model.pth perlayer hog true"
   "single_a100_perlayer_rgbfeat/final_model.pth perlayer rgbfeat true"
   "single_a100_perlayer_ds05/final_model.pth perlayer feat true"
+  "single_a100_perlayer_nb/final_model.pth perlayer feat true"
+  "single_a100_perlayer_nowarp_nb/final_model.pth perlayer feat false"
+  "single_a100_baseline_unfreeze/final_model.pth temporal feat true"
+  "single_a100_scratch/final_model.pth temporal feat true"
 )
 
 echo "TAE comparison (VKITTI, seq_len=$SEQ, num_seqs=$NUM, data=$DATA)"
