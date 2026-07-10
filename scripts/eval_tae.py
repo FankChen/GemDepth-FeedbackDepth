@@ -14,8 +14,10 @@ Usage:
 import os
 import sys
 import argparse
+import random
 import statistics
 
+import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,6 +57,11 @@ def parse():
 
 def main():
     a = parse()
+    # Deterministic crop so TAE is reproducible AND comparable across arms: the dataset uses a
+    # random StatefulRandomCrop, so we re-seed every run and load single-process.
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     model = GemDepth(**MODEL_CONFIGS[a.encoder], head_type=a.head_type,
@@ -66,7 +73,7 @@ def main():
     model.eval().to(dev)
 
     ds = DepthVideoDataset(mode='train', data_dirs=list(a.data_dirs), crop_size=518, seq_len=a.seq_len)
-    loader = DataLoader(ds, batch_size=1, shuffle=False, num_workers=4, collate_fn=safe_collate)
+    loader = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0, collate_fn=safe_collate)
 
     taes = []
     for data in loader:
