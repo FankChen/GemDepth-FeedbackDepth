@@ -70,6 +70,12 @@ echo ">>> using conda: $CONDA_BIN   (base: $CONDA_BASE)"
 # shellcheck disable=SC1091
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 
+# Accept the Anaconda default-channel Terms of Service. Newer conda refuses to
+# create envs from pkgs/main & pkgs/r until this is accepted. It's a local write
+# (no network) and a no-op on conda builds without the 'tos' subcommand.
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main >/dev/null 2>&1 || true
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r    >/dev/null 2>&1 || true
+
 # --- 2) create (or reuse) the named env --------------------------------------
 if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
   echo ">>> conda env '$ENV_NAME' already exists -> reusing it"
