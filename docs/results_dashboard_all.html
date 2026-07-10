@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>GemDepth error-map / perlayer 实验结果汇总</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:24px;color:#1a1a1a;background:#fafafa}
+  h1{font-size:22px;margin-bottom:2px}
+  h2{font-size:17px;margin-top:28px;border-left:4px solid #2563eb;padding-left:8px}
+  .meta{color:#666;font-size:13px;margin-bottom:8px}
+  table{border-collapse:collapse;width:100%;margin:10px 0;background:#fff;font-size:13px}
+  th,td{border:1px solid #e2e2e2;padding:6px 9px;text-align:right}
+  th{background:#f1f5f9;text-align:center;font-weight:600}
+  td.name{text-align:left;font-family:ui-monospace,Menlo,monospace}
+  tr.base{background:#eef6ff}
+  tr.method{background:#f7fdf7}
+  .best{color:#15803d;font-weight:700}
+  .worse{color:#b91c1c}
+  .bar{display:inline-block;height:10px;background:#93c5fd;border-radius:2px;vertical-align:middle;margin-left:6px}
+  .bar.good{background:#86efac}
+  .note{background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 12px;font-size:13px;margin:8px 0}
+  .warn{background:#fef2f2;border:1px solid #fecaca}
+  .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:#e0e7ff;color:#3730a3;margin-left:6px}
+  .pending{color:#a16207;font-style:italic}
+  small{color:#777}
+</style>
+</head>
+<body>
+
+<h1>GemDepth · error-map / perlayer 实验结果汇总</h1>
+<div class="meta">分支 feat/exp-cycle-loss · 生成于 2026-07-10 · 单位：AbsRel/RMSE 越小越好，δ1 越大越好，TAE 越小越时序一致</div>
+
+<div class="note">
+<b>怎么读：</b> baseline 行（蓝底）= 未加改进的原始 head；method 行（绿底）= 各改进方案。
+单帧精度看 <b>KITTI/VKITTI AbsRel</b>；时序一致性看 <b>TAE</b>。
+</div>
+
+<h2>① 单帧精度 · KITTI Eigen（合成 VKITTI 训 → 真实 KITTI 测）</h2>
+<table>
+<tr><th>方案</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>说明</th></tr>
+<tr class="base"><td class="name">zero-shot (gemdepth.pth)</td><td>0.0678</td><td>3.110</td><td>0.9585</td><td>未微调，上限参考</td></tr>
+<tr class="base"><td class="name">baseline (VKITTI finetune, lr1e-5)</td><td class="best">0.0677</td><td>3.167</td><td>0.9571</td><td><b>基准</b></td></tr>
+<tr><td class="name">baseline lr1e-4</td><td class="worse">0.0712</td><td>–</td><td>–</td><td>LR sweep</td></tr>
+<tr><td class="name">baseline lr5e-5</td><td>0.0691</td><td>–</td><td>–</td><td>LR sweep</td></tr>
+<tr><td class="name">baseline lr1e-6</td><td>0.0681</td><td>–</td><td>–</td><td>LR sweep</td></tr>
+<tr class="method"><td class="name">perlayer (deep-sup, 旧架空版)</td><td>0.0680</td><td>3.158</td><td>0.9574</td><td>≈baseline（主输出=output_conv）</td></tr>
+<tr class="method"><td class="name">em_single · feat</td><td>0.0847</td><td>4.010</td><td>0.9278</td><td>error-map v3（AbsRel最优臂）</td></tr>
+<tr class="method"><td class="name">em_single · rgbfeat</td><td>0.0863</td><td class="best">3.757</td><td class="best">0.9300</td><td>RMSE/δ1最优臂</td></tr>
+<tr class="method"><td class="name">em_single · hog</td><td>0.0873</td><td>4.075</td><td>0.9232</td><td>error-map v3</td></tr>
+<tr class="method"><td class="name">em_single · rgb</td><td class="worse">0.0883</td><td>4.098</td><td>0.9230</td><td>error-map v3</td></tr>
+</table>
+<div class="note warn"><b>结论1（单帧）：</b> 旧 error-map v3（em_single 四臂）单帧<b>全部劣于 baseline</b>（0.085~0.088 vs 0.0677）；
+perlayer 旧版≈baseline（因为主输出还是预训练 output_conv，改进被架空）。→ 这正是重做<b>级联 perlayer（p1 用 output_conv 打底 + 逐层 refine/errmap）</b>的原因。</div>
+
+<h2>② 单帧精度 · VKITTI held-out（域内）</h2>
+<table>
+<tr><th>方案</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th></tr>
+<tr class="base"><td class="name">baseline</td><td>0.0690</td><td>4.607</td><td>0.9516</td></tr>
+<tr><td class="name">zero-shot</td><td>0.0669</td><td>–</td><td>–</td></tr>
+<tr><td class="name">em_single 四臂</td><td>0.0795 ~ 0.0832</td><td>–</td><td>–</td></tr>
+</table>
+
+<h2>③ 时序一致性 · TAE（VKITTI，越低越一致）</h2>
+<table>
+<tr><th>方案</th><th>TAE mean↓</th><th>TAE median↓</th><th>相对 baseline</th></tr>
+<tr class="method"><td class="name">perlayer_hog</td><td class="best">0.00169</td><td>0.00181</td><td>–11%</td></tr>
+<tr class="method"><td class="name">perlayer (warp)</td><td class="best">0.00170</td><td>0.00167</td><td>–10%</td></tr>
+<tr class="method"><td class="name">perlayer_ds05</td><td>0.00177</td><td>0.00135</td><td>–6%</td></tr>
+<tr class="method"><td class="name">perlayer_nowarp</td><td>0.00186</td><td>0.00132</td><td>–2%（≈baseline）</td></tr>
+<tr class="base"><td class="name">baseline</td><td>0.00189</td><td>0.00188</td><td>基准</td></tr>
+<tr class="method"><td class="name">perlayer_rgb</td><td>0.00216</td><td>0.00156</td><td>+14%</td></tr>
+<tr class="method"><td class="name">em_single · rgbfeat</td><td>0.00205</td><td>0.00178</td><td class="worse">+8%</td></tr>
+<tr class="method"><td class="name">em_single · hog</td><td>0.00208</td><td>0.00212</td><td class="worse">+10%</td></tr>
+<tr class="method"><td class="name">em_single · rgb</td><td>0.00254</td><td>0.00234</td><td class="worse">+34%</td></tr>
+<tr class="method"><td class="name">em_single · feat</td><td class="worse">0.00308</td><td>0.00286</td><td class="worse">+63%</td></tr>
+</table>
+<div class="note warn"><b>⚠ TAE 可靠性提醒：</b> 这批 TAE 是<b>确定性修复之前</b>跑的——dataset 的 StatefulRandomCrop 每次随机裁剪，导致 baseline 同 ckpt 跑出 0.00189 / 0.00218 两个值、且各 arm 之间不严格可比。
+已修（seed + 单进程），<b>需用修复后的 <code>eval_tae_all.sh</code> 重跑一遍</b>才能进正式表。趋势（perlayer &lt; baseline &lt; em_single）可参考。</div>
+<div class="note"><b>结论2（时序）：</b> perlayer 系时序一致性优于 baseline，且 <code>perlayer(warp) 0.00170 &lt; perlayer_nowarp 0.00186</code> → warp 那步对时序有正贡献；旧 em_single 反而更差。</div>
+
+<h2>④ 进行中 / 待更新</h2>
+<table>
+<tr><th>项目</th><th>状态</th><th>说明</th></tr>
+<tr><td class="name">perlayer_refine（级联纯refine）</td><td class="pending">待起训</td><td>4层级联，p1 用 output_conv 打底</td></tr>
+<tr><td class="name">perlayer_errmap（级联+每层errmap）</td><td class="pending">待起训</td><td>方案二，对着单帧优化</td></tr>
+<tr><td class="name">eval_full（AbsRel 完整表）</td><td class="pending">运行中</td><td>KITTI+VKITTI 全 arm，输出 eval_full_summary.csv</td></tr>
+<tr><td class="name">TAE 重跑（确定性修复后）</td><td class="pending">待跑</td><td>eval_tae_all.sh，验证两次同值</td></tr>
+<tr><td class="name">batlin 重跑（warp 修复后）</td><td class="pending">运行中</td><td>之前 warp 失效，已修复重训</td></tr>
+</table>
+
+<h2>⑤ 关键发现速记</h2>
+<ol style="font-size:13px;line-height:1.7">
+<li><b>error-map v3（em_single）单帧全负</b>：4 臂 0.085~0.088，均劣于 baseline 0.0677。</li>
+<li><b>perlayer 时序赢、warp 有效</b>：TAE perlayer 0.00170 &lt; baseline 0.00189 &lt; em_single；perlayer(warp) &lt; perlayer_nowarp。（TAE 待重跑确认）</li>
+<li><b>旧 perlayer 单帧被架空</b>：主输出=预训练 output_conv，refine/warp 只做辅助 → 单帧≈baseline。</li>
+<li><b>已重构级联 perlayer</b>：p1 用 output_conv 打底（起步=baseline）+ 逐层 refine(方案一)/errmap(方案二)，每层 4 个单帧 loss，直接对单帧优化。待训练验证能否把单帧顶过 baseline。</li>
+</ol>
+
+<div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard。TAE 为修复前数据，重跑后本表将更新。</div>
+
+</body>
+</html>
