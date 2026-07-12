@@ -38,6 +38,42 @@ def compute_aux_depth_loss(aux_depths, depth_gt, mask):
     return total / max(len(aux_depths), 1)
 
 
+def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
+    """Disparity-space multi-scale aux supervision with per-sample scale+shift alignment.
+
+    Companion to ``compute_aux_depth_loss``. The original does absolute L1 against
+    metric depth, which pulls the model output into metric-depth space and conflicts
+    with the main SSI loss (which supervises disparity = 1/depth). This version
+    supervises each scale in the SAME disparity space: GT disparity = 1/depth_gt, and
+    every scale's prediction is aligned to it with a DETACHED closed-form scale+shift
+    before a masked L1, so the aux branch no longer fights the main loss.
+
+    aux_depths: list of tensors shaped (B,T,1,h,w) or (B*T,1,h,w).
+    depth_gt / mask: (B,T,1,H,W).
+    """
+    gt = depth_gt.flatten(0, 1).float()
+    m = mask.flatten(0, 1).float()
+    gt_disp = torch.zeros_like(gt)
+    valid = m > 0.5
+    gt_disp[valid] = 1.0 / gt[valid].clamp(min=1e-3)
+    total = gt.new_zeros(())
+    for d in aux_depths:
+        if d.dim() == 5:
+            d = d.flatten(0, 1)
+        d = d.float()
+        h, w = d.shape[-2:]
+        gt_s = F.interpolate(gt_disp, size=(h, w), mode='nearest')
+        m_s = F.interpolate(m, size=(h, w), mode='nearest')
+        # Detached closed-form scale+shift aligning the prediction to GT disparity,
+        # so only the shape (not absolute scale) is supervised — same idea as the main SSI loss.
+        with torch.no_grad():
+            scale, shift = compute_scale_and_shift(d.squeeze(1), gt_s.squeeze(1), m_s.squeeze(1))
+        d_aligned = scale.view(-1, 1, 1, 1) * d + shift.view(-1, 1, 1, 1)
+        diff = (d_aligned - gt_s).abs() * m_s
+        total = total + diff.sum() / m_s.sum().clamp(min=1.0)
+    return total / max(len(aux_depths), 1)
+
+
 def find_latest_ckpt(checkpoint_dir: str) -> str | None:
     """Find the latest checkpoint in the directory (by step number)."""
     ckpt_dir = Path(checkpoint_dir)
@@ -287,6 +323,9 @@ def main(cfg):
     pose_flag = bool(cfg.pose_flag) and use_gem
     invariant_loss_func = VideoDepthLoss(pose_flag = pose_flag)
     aux_depth_weight = float(OmegaConf.select(cfg, 'training.aux_depth_weight', default=0.0))
+    # 'depth' (default) = original absolute metric-depth L1; 'disparity' = SSI-aligned
+    # disparity-space aux loss (matches the main loss). Only the fix config sets 'disparity'.
+    aux_depth_space = str(OmegaConf.select(cfg, 'training.aux_depth_space', default='depth'))
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") 
@@ -310,7 +349,10 @@ def main(cfg):
                     head = accelerator.unwrap_model(model).head
                     aux_depths = getattr(head, 'aux_depths', None)
                     if aux_depths:
-                        aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
+                        if aux_depth_space == 'disparity':
+                            aux_loss = compute_aux_depth_loss_disp(aux_depths, depth_gt, mask)
+                        else:
+                            aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
                         loss = loss + aux_depth_weight * aux_loss
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:

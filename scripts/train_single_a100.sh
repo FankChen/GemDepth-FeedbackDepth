@@ -16,7 +16,8 @@ case "$ARM" in
     baseline) CONFIG=single_a100_baseline ;;
     errormap) CONFIG=single_a100_errormap ;;
     multiscale) CONFIG=single_a100_multiscale ;;
-    *) echo "Unknown arm: $ARM (use 'baseline', 'errormap' or 'multiscale')" && exit 1 ;;
+    multiscale_fix) CONFIG=single_a100_multiscale_fix ;;
+    *) echo "Unknown arm: $ARM (use 'baseline', 'errormap', 'multiscale' or 'multiscale_fix')" && exit 1 ;;
 esac
 
 # Portable: PY defaults to the `python` on PATH (activate your env first); override
