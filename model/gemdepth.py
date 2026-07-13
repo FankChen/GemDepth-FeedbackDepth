@@ -65,6 +65,8 @@ class GemDepth(nn.Module):
         lora_dropout=0.0,
         lora_targets=('qkv', 'proj'),
         dinov2_weights=None,
+        backbone='dinov2',
+        backbone_weights=None,
     ):
         super(GemDepth, self).__init__()
 
@@ -76,23 +78,37 @@ class GemDepth(nn.Module):
         self.use_gem = use_gem
         self.use_astt = use_astt
         self.encoder = encoder
-        self.pretrained = DINOv2(model_name=encoder)
-
-        # Optionally load official DINOv2 backbone weights (matched to the ViT structure) and,
-        # if requested, wrap the attention projections with LoRA adapters so the frozen encoder
-        # can be fine-tuned cheaply. Done before building GEM/ASTT so lora params are registered.
-        if dinov2_weights:
-            sd = torch.load(dinov2_weights, map_location='cpu', weights_only=False)
-            sd = sd.get('model', sd) if isinstance(sd, dict) else sd
-            miss, unexp = self.pretrained.load_state_dict(sd, strict=False)
-            print(f"[dinov2] loaded backbone weights from {dinov2_weights}: "
-                  f"missing={len(miss)} unexpected={len(unexp)}")
+        self.backbone_name = backbone
         self.lora = lora
-        if lora:
-            n_lora = inject_lora(self.pretrained, r=lora_r, alpha=lora_alpha,
-                                 dropout=lora_dropout, targets=tuple(lora_targets))
-            print(f"[lora] injected LoRA (r={lora_r}, alpha={lora_alpha}) into "
-                  f"{n_lora} DINOv2 linear layers, targets={tuple(lora_targets)}")
+
+        # Backbone: DINOv2 (default, original path) or a DINOv3 backbone via model/backbones.py.
+        # DINOv2 is built + (optionally) LoRA-wrapped here; DINOv3 uses build_backbone (timm model,
+        # LoRA injected inside). Only the backbone differs — everything downstream is shared.
+        if backbone == 'dinov2':
+            self.pretrained = DINOv2(model_name=encoder)
+            self.backbone_kind = 'dinov2'
+            self.patch_size = 14
+            if dinov2_weights:
+                sd = torch.load(dinov2_weights, map_location='cpu', weights_only=False)
+                sd = sd.get('model', sd) if isinstance(sd, dict) else sd
+                miss, unexp = self.pretrained.load_state_dict(sd, strict=False)
+                print(f"[dinov2] loaded backbone weights from {dinov2_weights}: "
+                      f"missing={len(miss)} unexpected={len(unexp)}")
+            if lora:
+                n_lora = inject_lora(self.pretrained, r=lora_r, alpha=lora_alpha,
+                                     dropout=lora_dropout, targets=tuple(lora_targets))
+                print(f"[lora] injected LoRA (r={lora_r}, alpha={lora_alpha}) into "
+                      f"{n_lora} DINOv2 linear layers, targets={tuple(lora_targets)}")
+            self.enc_embed_dim = self.pretrained.embed_dim
+        else:
+            from model.backbones import build_backbone
+            self.pretrained = build_backbone(backbone, weights=backbone_weights, lora=lora,
+                                             lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout)
+            self.backbone_kind = 'convnext' if self.pretrained.is_hierarchical else 'vit'
+            self.patch_size = self.pretrained.patch_size
+            self.enc_embed_dim = self.pretrained.embed_dims[0]
+            print(f"[backbone] {backbone} kind={self.backbone_kind} patch_size={self.patch_size} "
+                  f"embed_dims={self.pretrained.embed_dims}")
 
         # ---- ASTT spatial RoPE (only used when ASTT is enabled) ----
         self.rope = None
@@ -187,13 +203,13 @@ class GemDepth(nn.Module):
 
         self.head_type = head_type
         if head_type == 'errormap':
-            self.head = DPTHeadErrorMap(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
+            self.head = DPTHeadErrorMap(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         elif head_type == 'perlayer':
-            self.head = DPTHeadPerLayer(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
+            self.head = DPTHeadPerLayer(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         elif head_type == 'temporal':
-            self.head = DPTHeadTemporal(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
+            self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
         elif head_type == 'multiscale':
-            self.head = DPTHeadMultiScaleRefine(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
+            self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
     def forward(self, x):
@@ -210,8 +226,17 @@ class GemDepth(nn.Module):
         input_images = x
         frame_idx = 0
         global_idx = 0
-        patch_h, patch_w = H // 14, W // 14
-        features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
+        patch_h, patch_w = H // self.patch_size, W // self.patch_size
+        if self.backbone_kind == 'dinov2':
+            features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
+        elif self.backbone_kind == 'vit':
+            # DINOv3 ViT: 4 NCHW maps (uniform stride) -> (token, dummy_cls) matching the DPT head API.
+            features = []
+            for f in self.pretrained(x.flatten(0, 1)):
+                tok = f.flatten(2).permute(0, 2, 1).contiguous()  # (BT, h*w, C)
+                features.append((tok, tok.new_zeros((tok.shape[0], tok.shape[2]))))
+        else:
+            raise NotImplementedError("ConvNeXt (hierarchical) DPT adaptation pending (stage 3)")
         for j, x in enumerate(features):
             x, cls_token = x[0], x[1]
             feats.append(x)

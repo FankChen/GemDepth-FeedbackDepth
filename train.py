@@ -192,16 +192,25 @@ def main(cfg):
     lora_alpha = int(OmegaConf.select(cfg, 'model.lora_alpha', default=16))
     lora_dropout = float(OmegaConf.select(cfg, 'model.lora_dropout', default=0.0))
     dinov2_weights = OmegaConf.select(cfg, 'model.dinov2_weights', default=None)
+    backbone = OmegaConf.select(cfg, 'model.backbone', default='dinov2')
+    backbone_weights = OmegaConf.select(cfg, 'model.backbone_weights', default=None)
     model = GemDepth(**model_configs[cfg.encoder], head_type=head_type,
                      use_gem=use_gem, use_astt=use_astt, use_temporal=use_temporal,
                      lora=lora, lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
-                     dinov2_weights=dinov2_weights).to(accelerator.device)
+                     dinov2_weights=dinov2_weights, backbone=backbone, backbone_weights=backbone_weights).to(accelerator.device)
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load
     if cfg.model.video_path and Path(cfg.model.video_path).exists():
         print(f"[init] Loading pretrained weights from {cfg.model.video_path}")
         checkpoint = torch.load(cfg.model.video_path, map_location='cpu',weights_only=False)
+        # load_backbone_only: keep only DINOv2 'pretrained.*' keys so head/GEM/ASTT stay
+        # random-init (true from-scratch of everything except the frozen backbone).
+        backbone_only = bool(OmegaConf.select(cfg, 'model.load_backbone_only', default=False))
+        if backbone_only:
+            checkpoint = {k: v for k, v in checkpoint.items() if k.startswith('pretrained.')}
+            if accelerator.is_main_process:
+                print(f"[init] backbone-only: keeping {len(checkpoint)} DINOv2 'pretrained.*' keys; head/GEM/ASTT random-init")
         missing, unexpected = model.load_state_dict(checkpoint, strict=False)
         if accelerator.is_main_process:
             print(f"[init] loaded pretrained: missing={len(missing)} unexpected={len(unexpected)}")
@@ -209,8 +218,10 @@ def main(cfg):
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
             # When GEM/ASTT are disabled or LoRA is enabled or a research head is used, the model
             # legitimately differs from the full-GemDepth checkpoint, so extra/missing keys are OK.
-            allow_extra = (not use_gem) or (not use_astt) or lora or head_type in ('errormap', 'perlayer', 'multiscale')
-            if not allow_extra:
+            allow_extra = backbone_only or (not use_gem) or (not use_astt) or lora or head_type in ('errormap', 'perlayer', 'multiscale')
+            if backbone_only:
+                pass  # everything except the backbone is intentionally random-init -> large missing set expected
+            elif not allow_extra:
                 assert len(missing) == 0 and len(unexpected) == 0, \
                     f"Unexpected mismatch loading baseline weights: missing={missing}, unexpected={unexpected}"
             else:

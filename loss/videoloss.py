@@ -234,6 +234,8 @@ class TemporalGradientMatchingLoss(nn.Module):
                 total += self.data_loss(prediction=pred_temp_grad.flatten(0, 1), target=target_temp_grad.flatten(0, 1), mask=temp_mask.flatten(0, 1)) * pow(self.temp_grad_decay, scale)
                 cnt += 1
 
+        if cnt == 0:  # single frame (T=1): no temporal pairs -> no temporal-gradient loss
+            return prediction.new_zeros(())
         return total / cnt
 
 class compute_camera_loss(nn.Module):

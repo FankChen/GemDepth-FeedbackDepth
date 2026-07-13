@@ -17,7 +17,11 @@ case "$ARM" in
     errormap) CONFIG=single_a100_errormap ;;
     multiscale) CONFIG=single_a100_multiscale ;;
     multiscale_fix) CONFIG=single_a100_multiscale_fix ;;
-    *) echo "Unknown arm: $ARM (use 'baseline', 'errormap', 'multiscale' or 'multiscale_fix')" && exit 1 ;;
+    ed_dinov2_static)     CONFIG=scratch_ed_dinov2_static ;;
+    ed_dinov2_temporal)   CONFIG=scratch_ed_dinov2_temporal ;;
+    ed_dinov2_multiscale) CONFIG=scratch_ed_dinov2_multiscale ;;
+    ed_dinov3vits_static) CONFIG=scratch_ed_dinov3vits_static ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|multiscale|multiscale_fix|ed_dinov2_{static,temporal,multiscale}|ed_dinov3vits_static)" && exit 1 ;;
 esac
 
 # Portable: PY defaults to the `python` on PATH (activate your env first); override
@@ -37,7 +41,7 @@ echo "[$(date)] start single-A100 training: arm=$ARM config=$CONFIG"
 # nvidia-smi | head -15 || true
 
 $PY -m accelerate.commands.launch \
-    --num_processes 1 \
+    --num_processes ${NUM_PROC:-1} \
     --mixed_precision bf16 \
     train.py \
     "${CLI_ARGS[@]}"
