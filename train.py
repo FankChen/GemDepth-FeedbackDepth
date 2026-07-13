@@ -39,14 +39,18 @@ def compute_aux_depth_loss(aux_depths, depth_gt, mask):
 
 
 def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
-    """Disparity-space multi-scale aux supervision with per-sample scale+shift alignment.
+    """Inverse-depth-space multi-scale aux supervision with per-sample scale+shift alignment.
 
     Companion to ``compute_aux_depth_loss``. The original does absolute L1 against
     metric depth, which pulls the model output into metric-depth space and conflicts
-    with the main SSI loss (which supervises disparity = 1/depth). This version
-    supervises each scale in the SAME disparity space: GT disparity = 1/depth_gt, and
-    every scale's prediction is aligned to it with a DETACHED closed-form scale+shift
+    with the main SSI loss (which supervises inverse depth = 1/depth). This version
+    supervises each scale in the SAME inverse-depth space: GT inverse depth = 1/depth_gt,
+    and each scale's prediction is aligned to it with a DETACHED closed-form scale+shift
     before a masked L1, so the aux branch no longer fights the main loss.
+
+    Note: this inverse-depth quantity is loosely called "disparity" in MiDaS-style
+    terminology (hence the gt_disp / _disp names), but strictly it is inverse depth,
+    not binocular stereo disparity.
 
     aux_depths: list of tensors shaped (B,T,1,h,w) or (B*T,1,h,w).
     depth_gt / mask: (B,T,1,H,W).
@@ -64,7 +68,7 @@ def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
         h, w = d.shape[-2:]
         gt_s = F.interpolate(gt_disp, size=(h, w), mode='nearest')
         m_s = F.interpolate(m, size=(h, w), mode='nearest')
-        # Detached closed-form scale+shift aligning the prediction to GT disparity,
+        # Detached closed-form scale+shift aligning the prediction to GT inverse depth,
         # so only the shape (not absolute scale) is supervised — same idea as the main SSI loss.
         with torch.no_grad():
             scale, shift = compute_scale_and_shift(d.squeeze(1), gt_s.squeeze(1), m_s.squeeze(1))
@@ -324,7 +328,8 @@ def main(cfg):
     invariant_loss_func = VideoDepthLoss(pose_flag = pose_flag)
     aux_depth_weight = float(OmegaConf.select(cfg, 'training.aux_depth_weight', default=0.0))
     # 'depth' (default) = original absolute metric-depth L1; 'disparity' = SSI-aligned
-    # disparity-space aux loss (matches the main loss). Only the fix config sets 'disparity'.
+    # inverse-depth-space aux loss (matches the main loss). The keyword value stays
+    # 'disparity' (MiDaS-style alias for inverse depth). Only the fix config sets it.
     aux_depth_space = str(OmegaConf.select(cfg, 'training.aux_depth_space', default='depth'))
     total_step = start_step
     should_keep_training = True
