@@ -24,7 +24,8 @@ class DPTHeadTemporalConvNeXt(DPTHeadTemporal):
         # Build the parent with the first-level dim as a placeholder; scratch /
         # refinenet / motion_modules are reused as-is, projects / resize_layers below.
         super().__init__(in_channels_list[0], features, use_bn, out_channels,
-                         use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
+                         use_clstoken, num_frames=num_frames, pe=pe,
+                         use_temporal=use_temporal, patch_size=patch_size)
         self.head_patch_size = patch_size
         # Per-level 1x1 projections: ConvNeXt stages have distinct channel counts.
         self.projects = nn.ModuleList([

@@ -49,7 +49,9 @@ class _ViTBackbone(nn.Module):
 
     def forward(self, x):
         feats = self.model.forward_intermediates(
-            x, indices=self.indices, norm=False,
+            # Match DINOv2.get_intermediate_layers(norm=True): apply the final
+            # LayerNorm to every selected ViT intermediate.
+            x, indices=self.indices, norm=True,
             output_fmt='NCHW', intermediates_only=True)
         return list(feats)
 
@@ -75,23 +77,23 @@ class _ConvNeXtBackbone(nn.Module):
         return list(feats)
 
 
-def _load_vit(timm_name, weights):
+def _load_vit(timm_name, weights, pretrained=True):
     # No explicit path means: use timm's official Hugging Face pretrained weights.
     # A local path overrides the source while keeping timm's checkpoint handling.
-    kw = dict(pretrained=True, num_classes=0)
+    kw = dict(pretrained=pretrained or bool(weights), num_classes=0)
     if weights:
         kw['pretrained_cfg_overlay'] = dict(file=weights)
     model = timm.create_model(timm_name, **kw)
     return _ViTBackbone(model, patch_size=16)
 
 
-def _load_convnext(timm_name, weights):
+def _load_convnext(timm_name, weights, pretrained=True):
     # Raw DINOv3 ConvNeXt ckpt carries extra per-stage norms (norms.3) not in timm's model,
     # so a local raw checkpoint is loaded non-strict through timm's remap filter.
     # Without a path, let timm download and load its converted official HF weights.
     from timm.models.convnext import checkpoint_filter_fn
     if not weights:
-        model = timm.create_model(timm_name, pretrained=True, num_classes=0)
+        model = timm.create_model(timm_name, pretrained=pretrained, num_classes=0)
         return _ConvNeXtBackbone(model)
 
     model = timm.create_model(timm_name, pretrained=False, num_classes=0)
@@ -103,7 +105,8 @@ def _load_convnext(timm_name, weights):
     return _ConvNeXtBackbone(model)
 
 
-def build_backbone(name, weights=None, lora=False, lora_r=8, lora_alpha=16, lora_dropout=0.0):
+def build_backbone(name, weights=None, lora=False, lora_r=8, lora_alpha=16,
+                   lora_dropout=0.0, pretrained=True):
     """Build a backbone by registry name, optionally loading weights and injecting LoRA.
 
     Returns the backbone module (frozen base if lora=True; caller enables lora params).
@@ -113,9 +116,9 @@ def build_backbone(name, weights=None, lora=False, lora_r=8, lora_alpha=16, lora
     timm_name, kind, lora_targets = _REGISTRY[name]
 
     if kind == 'vit':
-        bb = _load_vit(timm_name, weights)
+        bb = _load_vit(timm_name, weights, pretrained=pretrained)
     elif kind == 'convnext':
-        bb = _load_convnext(timm_name, weights)
+        bb = _load_convnext(timm_name, weights, pretrained=pretrained)
     else:
         raise ValueError(kind)
 

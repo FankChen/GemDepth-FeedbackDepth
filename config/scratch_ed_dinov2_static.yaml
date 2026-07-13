@@ -3,7 +3,7 @@
 # - No temporal modeling: use_temporal=false (DPT head drops motion_modules), seq_len=1.
 #   The temporal-gradient loss is auto-skipped at T=1 (returns 0), so only the single-frame
 #   spatial SSI + gradient-matching loss is used.
-# - GEM + ASTT disabled. DINOv2 backbone from gemdepth.pth (backbone-only) frozen + LoRA;
+# - GEM + ASTT disabled. Official DINOv2 backbone frozen + LoRA;
 #   DPT head trained from scratch. Eval on KITTI (inverse-depth SSI alignment).
 # This is one of three backbones (1a=DINOv2) compared under identical static single-frame recipe.
 training:
@@ -41,8 +41,10 @@ dataloader:
   num_workers: 8
 
 model:
-  video_path: "./checkpoint/gemdepth.pth"
-  load_backbone_only: true
+  video_path: null              # NEVER load GemDepth weights; head is random-init
+  dinov2_weights: "timm://vit_large_patch14_dinov2.lvd142m"  # official DINOv2 via HF
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
   head_type: temporal
   use_gem: false
   use_astt: false

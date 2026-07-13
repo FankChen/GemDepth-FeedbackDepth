@@ -67,6 +67,7 @@ class GemDepth(nn.Module):
         dinov2_weights=None,
         backbone='dinov2',
         backbone_weights=None,
+        load_backbone_pretrained=True,
     ):
         super(GemDepth, self).__init__()
 
@@ -88,12 +89,29 @@ class GemDepth(nn.Module):
             self.pretrained = DINOv2(model_name=encoder)
             self.backbone_kind = 'dinov2'
             self.patch_size = 14
-            if dinov2_weights:
-                sd = torch.load(dinov2_weights, map_location='cpu', weights_only=False)
-                sd = sd.get('model', sd) if isinstance(sd, dict) else sd
-                miss, unexp = self.pretrained.load_state_dict(sd, strict=False)
-                print(f"[dinov2] loaded backbone weights from {dinov2_weights}: "
-                      f"missing={len(miss)} unexpected={len(unexp)}")
+            if dinov2_weights and load_backbone_pretrained:
+                if str(dinov2_weights).startswith('timm://'):
+                    # timm's DINOv2 ViT-L weights are hosted on Hugging Face and
+                    # match Meta's official checkpoint exactly for all 342 model
+                    # tensors. timm omits only mask_token, which is never used by
+                    # this unmasked depth pipeline.
+                    import timm
+                    timm_name = str(dinov2_weights)[len('timm://'):]
+                    timm_model = timm.create_model(timm_name, pretrained=True, num_classes=0)
+                    sd = timm_model.state_dict()
+                    missing, unexpected = self.pretrained.load_state_dict(sd, strict=False)
+                    assert missing == ['mask_token'] and not unexpected, \
+                        f"Unexpected timm DINOv2 mismatch: missing={missing}, unexpected={unexpected}"
+                    del timm_model
+                    print(f"[dinov2] loaded {len(sd)} official tensors from timm/HF {timm_name}; "
+                          "mask_token unused")
+                else:
+                    sd = torch.load(dinov2_weights, map_location='cpu', weights_only=False)
+                    sd = sd.get('model', sd) if isinstance(sd, dict) else sd
+                    # Fail closed: a partial DINO load silently changes the experiment
+                    # into a frozen-random-backbone run.
+                    self.pretrained.load_state_dict(sd, strict=True)
+                    print(f"[dinov2] loaded all {len(sd)} backbone tensors from {dinov2_weights}")
             if lora:
                 n_lora = inject_lora(self.pretrained, r=lora_r, alpha=lora_alpha,
                                      dropout=lora_dropout, targets=tuple(lora_targets))
@@ -103,12 +121,20 @@ class GemDepth(nn.Module):
         else:
             from model.backbones import build_backbone
             self.pretrained = build_backbone(backbone, weights=backbone_weights, lora=lora,
-                                             lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout)
+                                             lora_r=lora_r, lora_alpha=lora_alpha,
+                                             lora_dropout=lora_dropout,
+                                             pretrained=load_backbone_pretrained)
             self.backbone_kind = 'convnext' if self.pretrained.is_hierarchical else 'vit'
             self.patch_size = self.pretrained.patch_size
             self.enc_embed_dim = self.pretrained.embed_dims[0]
             print(f"[backbone] {backbone} kind={self.backbone_kind} patch_size={self.patch_size} "
                   f"embed_dims={self.pretrained.embed_dims}")
+
+        if self.backbone_kind == 'convnext':
+            if head_type != 'temporal':
+                raise ValueError("ConvNeXt currently supports only head_type='temporal'")
+            if use_gem or use_astt:
+                raise ValueError("ConvNeXt hierarchical features require use_gem=false and use_astt=false")
 
         # ---- ASTT spatial RoPE (only used when ASTT is enabled) ----
         self.rope = None
@@ -211,9 +237,9 @@ class GemDepth(nn.Module):
                 from model.dpt_convnext import DPTHeadTemporalConvNeXt
                 self.head = DPTHeadTemporalConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
             else:
-                self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
+                self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         elif head_type == 'multiscale':
-            self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
+            self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
     def forward(self, x):
@@ -234,8 +260,8 @@ class GemDepth(nn.Module):
         if self.backbone_kind == 'convnext':
             # Hierarchical ConvNeXt: feed the native NCHW pyramid straight to the DPT head,
             # bypassing all token-based pos / GEM / ASTT logic (encoder+decoder only).
-            conv_feats = self.pretrained(x.flatten(0, 1))
-            with torch.autocast("cuda", enabled=False):
+            conv_feats = [f.float() for f in self.pretrained(x.flatten(0, 1))]
+            with torch.autocast(device_type=x.device.type, enabled=False):
                 depth = self.head(conv_feats, patch_h, patch_w, T)
                 depth = F.interpolate(depth, size=(H, W), mode="bilinear", align_corners=True)
                 depth = F.relu(depth)
@@ -354,10 +380,12 @@ class GemDepth(nn.Module):
                     feats[m] = blk2(feats[m])
                     feats[m] = rearrange(feats[m], "(b l) t c -> b (t l) c",b=B,t=T,l=L,c=C)
                 feats[m] = rearrange(feats[m], "b (t l) c -> (b t) l c",b=B,t=T,l=L,c=C)
-        features_attn=tuple(zip(feats, tokens))
+        # The DPT heads intentionally run in fp32. Explicit conversion is required:
+        # disabling autocast alone does not promote bf16 backbone activations.
+        features_attn=tuple((feat.float(), token.float()) for feat, token in zip(feats, tokens))
         
         #dpt_head
-        with torch.autocast("cuda", enabled=False):
+        with torch.autocast(device_type=x.device.type, enabled=False):
             if self.head_type in ('errormap', 'perlayer'):
                 depth = self.head(features_attn, patch_h, patch_w, T,
                                   images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
@@ -447,12 +475,21 @@ class GemDepth(nn.Module):
         # combined = combined.view(B,S*X,C)
         return combined
     
-    def infer_video_depth(self, frames, target_fps, input_size=518, device='cuda', fp32=False):
+    def infer_video_depth(self, frames, target_fps, input_size=518, device='cuda', fp32=False,
+                          clip_len=None):
+        """Infer inverse depth for a video.
+
+        ``clip_len=None`` preserves GemDepth's original 32-frame overlapping
+        inference and cross-window affine alignment. A positive ``clip_len``
+        runs independent non-overlapping clips (padding only the final clip),
+        which is the exact protocol for scratch models trained with T=1 or T=4.
+        """
         frame_height, frame_width = frames[0].shape[:2]
+        input_divisor = 32 if self.backbone_kind == 'convnext' else self.patch_size
         ratio = max(frame_height, frame_width) / min(frame_height, frame_width)
         if ratio > 1.78:  # we recommend to process video with ratio smaller than 16:9 due to memory limitation
             input_size = int(input_size * 1.777 / ratio)
-            input_size = round(input_size / 14) * 14
+            input_size = max(input_divisor, round(input_size / input_divisor) * input_divisor)
 
         transform = Compose([
             Resize(
@@ -460,7 +497,7 @@ class GemDepth(nn.Module):
                 height=input_size,
                 resize_target=False,
                 keep_aspect_ratio=True,
-                ensure_multiple_of=14,
+                ensure_multiple_of=input_divisor,
                 resize_method='lower_bound',
                 image_interpolation_method=cv2.INTER_CUBIC,
             ),
@@ -469,8 +506,37 @@ class GemDepth(nn.Module):
         ])
 
         frame_list = [frames[i] for i in range(frames.shape[0])]
-        frame_step = INFER_LEN - OVERLAP
         org_video_len = len(frame_list)
+
+        if clip_len is not None:
+            assert isinstance(clip_len, int) and clip_len > 0, \
+                f"clip_len must be a positive integer or None, got {clip_len}"
+            depth_list = []
+            device_type = torch.device(device).type
+            for frame_id in tqdm(range(0, org_video_len, clip_len)):
+                actual_len = min(clip_len, org_video_len - frame_id)
+                clip_frames = frame_list[frame_id:frame_id + actual_len]
+                clip_frames += [clip_frames[-1].copy()] * (clip_len - actual_len)
+                cur_list = [
+                    torch.from_numpy(transform({
+                        'image': frame.astype(np.float32) / 255.0
+                    })['image']).unsqueeze(0).unsqueeze(0)
+                    for frame in clip_frames
+                ]
+                cur_input = torch.cat(cur_list, dim=1).to(device)
+                with torch.no_grad():
+                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16,
+                                        enabled=(not fp32)):
+                        depth, _, _, _ = self.forward(cur_input)
+                depth = F.interpolate(
+                    depth.flatten(0, 1).unsqueeze(1).float(),
+                    size=(frame_height, frame_width), mode='bilinear', align_corners=True)
+                depth_list.extend(depth[i, 0].cpu().numpy() for i in range(actual_len))
+
+            assert len(depth_list) == org_video_len
+            return np.stack(depth_list, axis=0), target_fps
+
+        frame_step = INFER_LEN - OVERLAP
         append_frame_len = (frame_step - (org_video_len % frame_step)) % frame_step + (INFER_LEN - frame_step)
         frame_list = frame_list + [frame_list[-1].copy()] * append_frame_len
 
@@ -485,7 +551,8 @@ class GemDepth(nn.Module):
                 cur_input[:, :OVERLAP, ...] = pre_input[:, KEYFRAMES, ...]
 
             with torch.no_grad():
-                with torch.autocast(device_type=device, enabled=(not fp32)):
+                with torch.autocast(device_type=torch.device(device).type,
+                                    dtype=torch.bfloat16, enabled=(not fp32)):
                     depth,_,_,_= self.forward(cur_input) # depth shape: [1, T, H, W]
 
             depth = depth.to(cur_input.dtype)

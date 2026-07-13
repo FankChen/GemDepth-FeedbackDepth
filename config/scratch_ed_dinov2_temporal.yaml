@@ -1,8 +1,8 @@
 # Experiment 2: encoder+decoder ONLY baseline, FROM SCRATCH, DINOv2 ViT-L, temporal head, 4-frame.
 #
 # - GEM + ASTT disabled (use_gem/use_astt = false) -> plain encoder+decoder (VideoDepthAnything-style).
-# - DINOv2 backbone loaded from gemdepth.pth via load_backbone_only (keeps only 'pretrained.*' keys =
-#   the official frozen DINOv2; head/GEM/ASTT are NOT loaded). Everything but the backbone is from scratch.
+# - Official DINOv2 backbone checkpoint is loaded directly BEFORE LoRA injection. gemdepth.pth is
+#   never read; the DPT head is random-init and everything except the backbone starts from scratch.
 # - Backbone is frozen but LoRA-finetuned (lora=true). DPT temporal head trained from scratch.
 # - 4-frame temporal training on VKITTI. Eval on KITTI (inverse-depth SSI alignment).
 training:
@@ -40,11 +40,14 @@ dataloader:
   num_workers: 8
 
 model:
-  video_path: "./checkpoint/gemdepth.pth"   # only DINOv2 backbone is kept (see load_backbone_only)
-  load_backbone_only: true                  # keep only DINOv2 'pretrained.*'; head/GEM/ASTT random-init
+  video_path: null                          # NEVER load GemDepth weights; head is random-init
+  dinov2_weights: "timm://vit_large_patch14_dinov2.lvd142m"  # official DINOv2 via HF
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
   head_type: temporal
   use_gem: false
   use_astt: false
+  use_temporal: true
   lora: true
   lora_r: 8
   lora_alpha: 16

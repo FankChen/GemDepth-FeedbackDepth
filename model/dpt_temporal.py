@@ -28,11 +28,13 @@ class DPTHeadTemporal(DPTHead):
         use_clstoken=False,
         num_frames=32,
         pe='ape',
-        use_temporal=True
+        use_temporal=True,
+        patch_size=14,
     ):
         super().__init__(in_channels, features, use_bn, out_channels, use_clstoken)
 
         self.use_temporal = use_temporal
+        self.patch_size = patch_size
         assert num_frames > 0
         motion_module_kwargs = EasyDict(num_attention_heads                = 8,
                                         num_transformer_block              = 1,
@@ -41,16 +43,21 @@ class DPTHeadTemporal(DPTHead):
                                         zero_initialize                    = True,
                                         pos_embedding_type                 = pe)
 
-        self.motion_modules = nn.ModuleList([
-            TemporalModule(in_channels=out_channels[2], 
-                           **motion_module_kwargs),
-            TemporalModule(in_channels=out_channels[3],
-                           **motion_module_kwargs),
-            TemporalModule(in_channels=features,
-                           **motion_module_kwargs),
-            TemporalModule(in_channels=features,
-                           **motion_module_kwargs)
-        ])
+        if use_temporal:
+            self.motion_modules = nn.ModuleList([
+                TemporalModule(in_channels=out_channels[2],
+                               **motion_module_kwargs),
+                TemporalModule(in_channels=out_channels[3],
+                               **motion_module_kwargs),
+                TemporalModule(in_channels=features,
+                               **motion_module_kwargs),
+                TemporalModule(in_channels=features,
+                               **motion_module_kwargs)
+            ])
+        else:
+            # Static single-image experiments must be encoder+decoder only: do
+            # not instantiate unused temporal parameters or put them in DDP.
+            self.motion_modules = nn.ModuleList()
         self.proj = nn.ModuleList([
             nn.Linear(
                 in_channels,
@@ -133,11 +140,11 @@ class DPTHeadTemporal(DPTHead):
         out = self.scratch.output_conv1(path_1)
         if mode:
             out = F.interpolate(out.to(torch.float32), 
-                    (int(patch_h * 14), int(patch_w * 14)), 
+                    (int(patch_h * self.patch_size), int(patch_w * self.patch_size)),
                     mode="bilinear", align_corners=True)
             out = out.to(torch.bfloat16) #16,128,518,518
         else:
-            out = F.interpolate(out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True)
+            out = F.interpolate(out, (int(patch_h * self.patch_size), int(patch_w * self.patch_size)), mode="bilinear", align_corners=True)
         # out = F.interpolate(
         #     out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True
         # )

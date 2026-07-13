@@ -1,7 +1,7 @@
 # Experiment 3: encoder+decoder ONLY, FROM SCRATCH, DINOv2 ViT-L, MULTISCALE refine head, 4-frame.
 #
-# Same recipe as scratch_ed_dinov2_temporal.yaml (encoder+decoder only, from-scratch backbone-only
-# load, DINO frozen + LoRA), but the DPT head is the multi-scale coarse-to-fine refine head instead
+# Same recipe as scratch_ed_dinov2_temporal.yaml (encoder+decoder only, official DINO pretraining,
+# DINO frozen + LoRA), but the DPT head is the multi-scale coarse-to-fine refine head instead
 # of the plain temporal head. Aux supervision uses the INVERSE-DEPTH space loss (aux_depth_space:
 # disparity) so it matches the main SSI loss (see compute_aux_depth_loss_disp).
 training:
@@ -40,8 +40,10 @@ dataloader:
   num_workers: 8
 
 model:
-  video_path: "./checkpoint/gemdepth.pth"
-  load_backbone_only: true
+  video_path: null              # NEVER load GemDepth weights; head is random-init
+  dinov2_weights: "timm://vit_large_patch14_dinov2.lvd142m"  # official DINOv2 via HF
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
   head_type: multiscale
   use_gem: false
   use_astt: false

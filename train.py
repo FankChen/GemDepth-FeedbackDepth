@@ -2,8 +2,9 @@ import os
 import sys  
 from tqdm import tqdm
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from model.gemdepth import GemDepth
+from model.factory import build_gemdepth_from_config
 from dataset.dataset_mix import DepthVideoDataset,safe_collate
 from pathlib import Path
 import hydra
@@ -12,7 +13,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 from accelerate import DataLoaderConfiguration
 from accelerate.utils import DistributedDataParallelKwargs
-from loss.videoloss import *
+from loss.videoloss import VideoDepthLoss, compute_scale_and_shift
 from torch.utils.tensorboard import SummaryWriter
 import glob
 import re
@@ -93,8 +94,8 @@ def find_latest_ckpt(checkpoint_dir: str) -> str | None:
     # Also check final.pth
     final_pth = ckpt_dir / 'final.pth'
     if final_pth.exists():
-        # Use total_step from config to compare — final.pth is considered the latest
-        pass
+        print(f"[resume] Found final.pth — will resume from completed checkpoint")
+        return str(final_pth)
     if not candidates:
         return None
     candidates.sort(key=lambda x: x[0])
@@ -122,6 +123,11 @@ def load_checkpoint(checkpoint_path: str, model, optimizer, scheduler, accelerat
 
 def save_checkpoint(checkpoint_dir: str, step: int, model, optimizer, scheduler, accelerator, is_final=False):
     """Save a full training checkpoint."""
+    # Every rank reaches the surrounding barriers, but only the global main rank
+    # may write or prune files. Concurrent torch.save calls corrupt checkpoints.
+    if not accelerator.is_main_process:
+        return
+
     ckpt_dir = Path(checkpoint_dir)
     ckpt_dir.mkdir(exist_ok=True, parents=True)
     
@@ -137,12 +143,16 @@ def save_checkpoint(checkpoint_dir: str, step: int, model, optimizer, scheduler,
         'scheduler_state_dict': scheduler.state_dict(),
         'total_step': step,
     }
-    torch.save(ckpt, save_path)
+    tmp_path = save_path.with_suffix(save_path.suffix + '.tmp')
+    torch.save(ckpt, tmp_path)
+    os.replace(tmp_path, save_path)
     
     # Also save a lightweight model-only copy for easy eval loading
     if is_final:
         model_only_path = ckpt_dir / 'final_model.pth'
-        torch.save(model_sd.state_dict(), model_only_path)
+        model_only_tmp = model_only_path.with_suffix(model_only_path.suffix + '.tmp')
+        torch.save(model_sd.state_dict(), model_only_tmp)
+        os.replace(model_only_tmp, model_only_path)
     
     if accelerator.is_main_process:
         print(f"[save] Checkpoint saved to {save_path} (step {step})")
@@ -171,18 +181,31 @@ def main(cfg):
     grad_accum = int(OmegaConf.select(cfg, 'training.grad_accum', default=1))
     accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=grad_accum, dataloader_config=DataLoaderConfiguration(use_seedable_sampler=True),  kwargs_handlers=[kwargs], step_scheduler_with_optimizer=False)
     accelerator.init_trackers(project_name=cfg.project_name, config=OmegaConf.to_container(cfg, resolve=True))
-    dataset_train = DepthVideoDataset(**cfg.dataset.train)
-    # Determine effective batch size per GPU
+
     world_size = accelerator.num_processes
-    per_gpu_batch = cfg.dataloader.batch_size // world_size if world_size > 0 else cfg.dataloader.batch_size
-    train_loader = DataLoader(dataset=dataset_train,batch_size=per_gpu_batch ,pin_memory=True, shuffle=True, num_workers=int(8), drop_last=True,collate_fn=safe_collate,timeout=3600)
-    #load model
-    model_configs = {
-        'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
-        'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
-        'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
-        'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
-    }
+    expected_world_size = int(OmegaConf.select(cfg, 'num_gpus', default=world_size))
+    assert world_size == expected_world_size, \
+        f"Expected {expected_world_size} processes from config, got {world_size}. Launch with NUM_PROC={expected_world_size}."
+    global_micro_batch = int(cfg.dataloader.batch_size)
+    assert global_micro_batch > 0 and global_micro_batch % world_size == 0, \
+        f"dataloader.batch_size={global_micro_batch} must be positive and divisible by world_size={world_size}"
+    per_gpu_batch = global_micro_batch // world_size
+    effective_clip_batch = global_micro_batch * grad_accum
+    if accelerator.is_main_process:
+        print(f"[runtime] world_size={world_size} per_gpu_clip_batch={per_gpu_batch} "
+              f"global_micro_batch={global_micro_batch} grad_accum={grad_accum} "
+              f"effective_clip_batch={effective_clip_batch}")
+
+    dataset_train = DepthVideoDataset(**cfg.dataset.train)
+    assert len(dataset_train) >= global_micro_batch, \
+        f"Training dataset is too small/empty: len={len(dataset_train)}, global batch={global_micro_batch}"
+    num_workers = int(OmegaConf.select(cfg, 'dataloader.num_workers', default=8))
+    train_loader = DataLoader(dataset=dataset_train, batch_size=per_gpu_batch,
+                              pin_memory=True, shuffle=True, num_workers=num_workers,
+                              drop_last=True, collate_fn=safe_collate,
+                              timeout=3600 if num_workers > 0 else 0)
+    # Load model. The shared factory is also used by inference and smoke tests,
+    # preventing structural drift between checkpoint writer and reader.
     head_type = OmegaConf.select(cfg, 'model.head_type', default='temporal')
     use_gem = bool(OmegaConf.select(cfg, 'model.use_gem', default=True))
     use_astt = bool(OmegaConf.select(cfg, 'model.use_astt', default=True))
@@ -194,16 +217,35 @@ def main(cfg):
     dinov2_weights = OmegaConf.select(cfg, 'model.dinov2_weights', default=None)
     backbone = OmegaConf.select(cfg, 'model.backbone', default='dinov2')
     backbone_weights = OmegaConf.select(cfg, 'model.backbone_weights', default=None)
-    model = GemDepth(**model_configs[cfg.encoder], head_type=head_type,
-                     use_gem=use_gem, use_astt=use_astt, use_temporal=use_temporal,
-                     lora=lora, lora_r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
-                     dinov2_weights=dinov2_weights, backbone=backbone, backbone_weights=backbone_weights).to(accelerator.device)
+    video_path = OmegaConf.select(cfg, 'model.video_path', default=None)
+    require_pretrained_backbone = bool(OmegaConf.select(
+        cfg, 'model.require_pretrained_backbone', default=False))
+    encoder_decoder_only = bool(OmegaConf.select(
+        cfg, 'model.encoder_decoder_only', default=False))
+
+    if encoder_decoder_only:
+        assert not use_gem and not use_astt, \
+            "encoder_decoder_only requires model.use_gem=false and model.use_astt=false"
+        assert not video_path, \
+            "encoder_decoder_only scratch experiments must not load a full GemDepth checkpoint"
+    if require_pretrained_backbone:
+        if backbone == 'dinov2':
+            assert dinov2_weights, "A required DINOv2 pretrained source was not configured"
+            if not str(dinov2_weights).startswith('timm://'):
+                assert Path(dinov2_weights).is_file(), \
+                    f"Required official DINOv2 checkpoint not found: {dinov2_weights}"
+        elif backbone_weights:
+            assert Path(backbone_weights).is_file(), \
+                f"Configured local backbone checkpoint not found: {backbone_weights}"
+        # DINOv3 + null weights is valid: build_backbone uses timm pretrained=True
+
+    model = build_gemdepth_from_config(cfg, load_backbone_pretrained=True).to(accelerator.device)
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load
-    if cfg.model.video_path and Path(cfg.model.video_path).exists():
-        print(f"[init] Loading pretrained weights from {cfg.model.video_path}")
-        checkpoint = torch.load(cfg.model.video_path, map_location='cpu',weights_only=False)
+    if video_path and Path(video_path).exists():
+        print(f"[init] Loading pretrained full-model weights from {video_path}")
+        checkpoint = torch.load(video_path, map_location='cpu',weights_only=False)
         # load_backbone_only: keep only DINOv2 'pretrained.*' keys so head/GEM/ASTT stay
         # random-init (true from-scratch of everything except the frozen backbone).
         backbone_only = bool(OmegaConf.select(cfg, 'model.load_backbone_only', default=False))
@@ -234,10 +276,19 @@ def main(cfg):
                                    if not any(t in m for t in new_key_tags)
                                    and 'lora_A' not in m and 'lora_B' not in m]
                 assert len(non_new_missing) == 0, f"Unexpected missing keys beyond new modules: {non_new_missing}"
+    elif video_path:
+        raise FileNotFoundError(f"Configured model.video_path does not exist: {video_path}")
     else:
-        print(f"[init] WARNING: No pretrained weights found at {cfg.model.video_path}, training from scratch!")
+        source = dinov2_weights if backbone == 'dinov2' else (backbone_weights or 'timm/HuggingFace official weights')
+        print(f"[init] No GemDepth checkpoint loaded; backbone source={source}; decoder=random-init")
     
     model.pretrained.requires_grad_(False)
+
+    # `head.proj` is a legacy, unused projection list (the active path uses
+    # `head.projects`). Keep it for checkpoint compatibility but exclude it from
+    # encoder+decoder-only optimization.
+    if encoder_decoder_only and hasattr(model.head, 'proj'):
+        model.head.proj.requires_grad_(False)
 
     # --- Optional freeze: restrict trainable params (e.g. only the DPT head) ---
     freeze_mode = OmegaConf.select(cfg, 'training.freeze_mode', default='default')
@@ -262,6 +313,34 @@ def main(cfg):
                 n_lora += param.numel()
         if accelerator.is_main_process:
             print(f"[lora] LoRA adapters trainable: {n_lora/1e6:.3f}M params")
+
+    # Fail closed on experiment semantics: no frozen-random backbone weights may
+    # accidentally enter training, and every requested LoRA adapter must train.
+    trainable_backbone_base = [name for name, param in model.pretrained.named_parameters()
+                               if param.requires_grad and 'lora_A' not in name and 'lora_B' not in name]
+    assert not trainable_backbone_base, \
+        f"Backbone base parameters unexpectedly trainable: {trainable_backbone_base[:10]}"
+    lora_named = [(name, param) for name, param in model.pretrained.named_parameters()
+                  if 'lora_A' in name or 'lora_B' in name]
+    if lora:
+        assert lora_named and all(param.requires_grad for _, param in lora_named), \
+            "LoRA requested but adapters are missing or frozen"
+    elif lora_named:
+        raise AssertionError("LoRA adapters exist although model.lora=false")
+    if encoder_decoder_only:
+        assert not hasattr(model, 'spatial_blocks') and not hasattr(model, 'global_blocks'), \
+            "GEM/ASTT modules were instantiated in an encoder+decoder-only experiment"
+        if not use_temporal:
+            assert len(model.head.motion_modules) == 0, \
+                "Static experiment unexpectedly contains temporal motion modules"
+
+    if accelerator.is_main_process:
+        backbone_total = sum(p.numel() for p in model.pretrained.parameters())
+        lora_trainable = sum(p.numel() for _, p in lora_named if p.requires_grad)
+        head_trainable = sum(p.numel() for p in model.head.parameters() if p.requires_grad)
+        print(f"[params] backbone={backbone_total/1e6:.3f}M (base frozen), "
+              f"LoRA={lora_trainable/1e6:.3f}M trainable, "
+              f"decoder={head_trainable/1e6:.3f}M trainable")
 
     # --- Split parameters into groups (dec blocks / lora / other) ---
     dec_blocks_params = []
@@ -304,6 +383,14 @@ def main(cfg):
         max_lrs.append(other_lr)
     assert len(param_groups) > 0, "No trainable parameters found"
 
+    trainable_param_ids = {id(param) for param in model.parameters() if param.requires_grad}
+    grouped_params = [param for group in param_groups for param in group['params']]
+    grouped_param_ids = [id(param) for param in grouped_params]
+    assert len(grouped_param_ids) == len(set(grouped_param_ids)), \
+        "A trainable parameter appears in more than one optimizer group"
+    assert set(grouped_param_ids) == trainable_param_ids, \
+        "Optimizer groups do not exactly cover all trainable parameters"
+
     optimizer = optim(param_groups, weight_decay=weight_decay)
     for i, param_group in enumerate(optimizer.param_groups):
         print(f"Param group {i}: lr = {param_group['lr']}")
@@ -344,7 +431,8 @@ def main(cfg):
     aux_depth_space = str(OmegaConf.select(cfg, 'training.aux_depth_space', default='depth'))
     total_step = start_step
     should_keep_training = True
-    writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") 
+    writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") \
+        if accelerator.is_main_process else None
     
     while should_keep_training:
         model.train()
@@ -361,6 +449,7 @@ def main(cfg):
                     depth_pred,pose_enc_list,extrinsic_pred,intrinsic_pred= model(image)
                 loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred) 
                 loss=loss_dict['total_loss']
+                aux_loss = None
                 if aux_depth_weight > 0:
                     head = accelerator.unwrap_model(model).head
                     aux_depths = getattr(head, 'aux_depths', None)
@@ -370,6 +459,13 @@ def main(cfg):
                         else:
                             aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
                         loss = loss + aux_depth_weight * aux_loss
+                if not torch.isfinite(loss):
+                    finite_summary = {
+                        key: bool(torch.isfinite(value).all())
+                        for key, value in loss_dict.items() if torch.is_tensor(value)
+                    }
+                    raise FloatingPointError(
+                        f"Non-finite training loss at step {total_step}: {finite_summary}")
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), 1.0)
@@ -380,16 +476,22 @@ def main(cfg):
                 lr_scheduler.step()
                 total_step += 1
                 loss_r = accelerator.reduce(loss.detach(), reduction='mean')
+                aux_r = accelerator.reduce(aux_loss.detach(), reduction='mean') \
+                    if aux_loss is not None else None
                 if accelerator.is_main_process:
                     writer.add_scalar('train/loss', loss_r.item(), total_step)
                     writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], total_step)
+                    if aux_r is not None:
+                        writer.add_scalar('train/aux_loss', aux_r.item(), total_step)
                     used_memory_MB = torch.cuda.memory_allocated() / 1024 / 1024
                     max_used_memory_MB = torch.cuda.max_memory_allocated() / 1024 / 1024
                     writer.add_scalar('train/memory_MB', used_memory_MB, total_step)
                     writer.add_scalar('train/max_memory_MB', max_used_memory_MB, total_step)
 
                 if total_step % cfg.training.save_freq == 0:
+                    accelerator.wait_for_everyone()
                     save_checkpoint(cfg.training.checkpoint_dir, total_step, model, optimizer, lr_scheduler, accelerator)
+                    accelerator.wait_for_everyone()
 
                 if total_step >= cfg.total_step:
                     should_keep_training = False
@@ -400,9 +502,13 @@ def main(cfg):
             del loss_dict
             torch.cuda.empty_cache()
     
-    # Final save
-    if accelerator.is_main_process:
-        save_checkpoint(cfg.training.checkpoint_dir, total_step, model, optimizer, lr_scheduler, accelerator, is_final=True)
+    # Final save: every rank participates in barriers; only main writes.
+    accelerator.wait_for_everyone()
+    save_checkpoint(cfg.training.checkpoint_dir, total_step, model, optimizer, lr_scheduler, accelerator, is_final=True)
+    accelerator.wait_for_everyone()
+    if writer is not None:
+        writer.close()
+    accelerator.end_training()
 
 if __name__ == '__main__':
     main()

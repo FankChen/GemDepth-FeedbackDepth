@@ -17,7 +17,6 @@ import torch.nn.functional as F
 
 from .dpt_temporal import DPTHeadTemporal
 
-
 class DPTHeadMultiScaleRefine(DPTHeadTemporal):
     """Coarse-to-fine multi-scale depth refinement head.
 
@@ -45,9 +44,10 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
         num_frames=32,
         pe='ape',
         use_temporal=True,
+        patch_size=14,
     ):
         super().__init__(in_channels, features, use_bn, out_channels,
-                         use_clstoken, num_frames, pe, use_temporal)
+                         use_clstoken, num_frames, pe, use_temporal, patch_size)
 
         # One residual-regression head per pyramid scale (coarse -> fine).
         # No final activation: delta_Z may be positive or negative.
@@ -127,8 +127,7 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
                 zeros at the coarsest scale.
 
         Returns:
-            final_depth: refined depth at full resolution
-                [B*T, 1, patch_h*14, patch_w*14].
+            final_depth: refined depth at full input resolution.
 
         Side effects:
             self.aux_depths is set to the list of per-scale depth predictions
@@ -170,7 +169,7 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
             depth_prev = depth_cur
 
         final_depth = F.interpolate(scale_depths[-1],
-                                    (int(patch_h * 14), int(patch_w * 14)),
+                                    (int(patch_h * self.patch_size), int(patch_w * self.patch_size)),
                                     mode="bilinear", align_corners=True)
 
         return final_depth

@@ -42,6 +42,8 @@ model:
   video_path: null              # no gemdepth.pth; only the DINOv3 backbone is pretrained
   backbone: dinov3_convnext_s   # DINOv3 ConvNeXt-small (LVD-1689M) via timm/HF
   backbone_weights: null        # null -> official timm/HF pretrained weights
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
   head_type: temporal           # static DPT decoder; temporal modules disabled below
   use_gem: false
   use_astt: false

@@ -42,6 +42,8 @@ model:
   video_path: null              # no gemdepth.pth; only the DINOv3 backbone is pretrained
   backbone: dinov3_vitsplus     # DINOv3 ViT-S+ (LVD-1689M) via timm/HF
   backbone_weights: null        # null -> timm pretrained (HF); or a local .pth path
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
   head_type: temporal
   use_gem: false
   use_astt: false

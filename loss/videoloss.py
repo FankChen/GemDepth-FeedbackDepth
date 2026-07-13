@@ -568,22 +568,6 @@ class VideoDepthLoss(nn.Module):
         target_inverse[valid_mask] = 1 /target[valid_mask]
         B,T,H,W=prediction.shape
         prediction = torch.clamp(prediction, min=5e-3, max=1500)
-        extrinsic_gt=torch.stack(extrinsic_gt,dim=1)
-        for i in range(B):
-            pred=prediction[i]
-            depth_gt=target[i]
-            valid_mask=(torch.logical_and((depth_gt>1e-3), (depth_gt<400))).float()
-            with torch.no_grad():
-                gt_disp_masked = 1. / (depth_gt[valid_mask.bool()].reshape(-1, 1) + 1e-8)
-                depth_pred = torch.clamp(pred, min=1e-3)
-                pred_disp_masked = depth_pred[valid_mask.bool()].reshape(-1, 1)
-                A = torch.cat([pred_disp_masked, torch.ones_like(pred_disp_masked)], dim=-1)
-                X = torch.linalg.lstsq(A, gt_disp_masked).solution  # PyTorch 2.0+
-                scale, shift = X[0].item(), X[1].item()
-            aligned_pred = torch.clamp(scale * depth_pred + shift, min=1e-3)
-            pred_depth = torch.where(aligned_pred > 0, 1.0 / aligned_pred, 0)
-            pred_depth = torch.clamp(pred_depth, min=1e-3,max=400)
-        K=torch.linalg.inv(intrinsic_gt)
         #compute loss
         total = 0
         #ssi, gm, tgm
@@ -595,6 +579,7 @@ class VideoDepthLoss(nn.Module):
         total += loss_dict['stable_loss']
         #camera_loss
         if self.pose_flag:
+            extrinsic_gt=torch.stack(extrinsic_gt,dim=1)
             loss_dict['pose_loss'],loss_dict['trans'],loss_dict['quat']=self.camera_loss(prediction, target, mask, extrinsic_gt, intrinsic_gt, extrinsic_pred, pose_enc_list)
             total += loss_dict['pose_loss'] * self.beta
         loss_dict['total_loss'] = total
