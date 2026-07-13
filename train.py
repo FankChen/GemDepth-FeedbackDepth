@@ -177,7 +177,7 @@ def save_checkpoint(checkpoint_dir: str, step: int, model, optimizer, scheduler,
 def main(cfg):
     set_seed(cfg.training.seed)
     Path(cfg.training.checkpoint_dir).mkdir(exist_ok=True, parents=True)
-    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    kwargs = DistributedDataParallelKwargs(static_graph=True)
     grad_accum = int(OmegaConf.select(cfg, 'training.grad_accum', default=1))
     accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=grad_accum, dataloader_config=DataLoaderConfiguration(use_seedable_sampler=True),  kwargs_handlers=[kwargs], step_scheduler_with_optimizer=False)
     accelerator.init_trackers(project_name=cfg.project_name, config=OmegaConf.to_container(cfg, resolve=True))
