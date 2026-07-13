@@ -207,7 +207,11 @@ class GemDepth(nn.Module):
         elif head_type == 'perlayer':
             self.head = DPTHeadPerLayer(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         elif head_type == 'temporal':
-            self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
+            if self.backbone_kind == 'convnext':
+                from model.dpt_convnext import DPTHeadTemporalConvNeXt
+                self.head = DPTHeadTemporalConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+            else:
+                self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
         elif head_type == 'multiscale':
             self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal)
         else:
@@ -227,6 +231,15 @@ class GemDepth(nn.Module):
         frame_idx = 0
         global_idx = 0
         patch_h, patch_w = H // self.patch_size, W // self.patch_size
+        if self.backbone_kind == 'convnext':
+            # Hierarchical ConvNeXt: feed the native NCHW pyramid straight to the DPT head,
+            # bypassing all token-based pos / GEM / ASTT logic (encoder+decoder only).
+            conv_feats = self.pretrained(x.flatten(0, 1))
+            with torch.autocast("cuda", enabled=False):
+                depth = self.head(conv_feats, patch_h, patch_w, T)
+                depth = F.interpolate(depth, size=(H, W), mode="bilinear", align_corners=True)
+                depth = F.relu(depth)
+            return depth.squeeze(1).unflatten(0, (B, T)), None, None, None
         if self.backbone_kind == 'dinov2':
             features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
         elif self.backbone_kind == 'vit':
@@ -236,7 +249,7 @@ class GemDepth(nn.Module):
                 tok = f.flatten(2).permute(0, 2, 1).contiguous()  # (BT, h*w, C)
                 features.append((tok, tok.new_zeros((tok.shape[0], tok.shape[2]))))
         else:
-            raise NotImplementedError("ConvNeXt (hierarchical) DPT adaptation pending (stage 3)")
+            raise NotImplementedError(f"Unknown backbone_kind {self.backbone_kind}")
         for j, x in enumerate(features):
             x, cls_token = x[0], x[1]
             feats.append(x)

@@ -76,7 +76,9 @@ class _ConvNeXtBackbone(nn.Module):
 
 
 def _load_vit(timm_name, weights):
-    kw = dict(pretrained=bool(weights), num_classes=0)
+    # No explicit path means: use timm's official Hugging Face pretrained weights.
+    # A local path overrides the source while keeping timm's checkpoint handling.
+    kw = dict(pretrained=True, num_classes=0)
     if weights:
         kw['pretrained_cfg_overlay'] = dict(file=weights)
     model = timm.create_model(timm_name, **kw)
@@ -85,15 +87,19 @@ def _load_vit(timm_name, weights):
 
 def _load_convnext(timm_name, weights):
     # Raw DINOv3 ConvNeXt ckpt carries extra per-stage norms (norms.3) not in timm's model,
-    # so build unpretrained and load non-strict through timm's remap filter.
+    # so a local raw checkpoint is loaded non-strict through timm's remap filter.
+    # Without a path, let timm download and load its converted official HF weights.
     from timm.models.convnext import checkpoint_filter_fn
+    if not weights:
+        model = timm.create_model(timm_name, pretrained=True, num_classes=0)
+        return _ConvNeXtBackbone(model)
+
     model = timm.create_model(timm_name, pretrained=False, num_classes=0)
-    if weights:
-        raw = torch.load(weights, map_location='cpu', weights_only=False)
-        raw = raw.get('model', raw) if isinstance(raw, dict) else raw
-        filt = checkpoint_filter_fn(raw, model)
-        missing, unexpected = model.load_state_dict(filt, strict=False)
-        print(f"[backbone] convnext loaded: missing={len(missing)} unexpected={len(unexpected)}")
+    raw = torch.load(weights, map_location='cpu', weights_only=False)
+    raw = raw.get('model', raw) if isinstance(raw, dict) else raw
+    filt = checkpoint_filter_fn(raw, model)
+    missing, unexpected = model.load_state_dict(filt, strict=False)
+    print(f"[backbone] convnext loaded: missing={len(missing)} unexpected={len(unexpected)}")
     return _ConvNeXtBackbone(model)
 
 

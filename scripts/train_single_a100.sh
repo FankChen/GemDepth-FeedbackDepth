@@ -21,7 +21,8 @@ case "$ARM" in
     ed_dinov2_temporal)   CONFIG=scratch_ed_dinov2_temporal ;;
     ed_dinov2_multiscale) CONFIG=scratch_ed_dinov2_multiscale ;;
     ed_dinov3vits_static) CONFIG=scratch_ed_dinov3vits_static ;;
-    *) echo "Unknown arm: $ARM (baseline|errormap|multiscale|multiscale_fix|ed_dinov2_{static,temporal,multiscale}|ed_dinov3vits_static)" && exit 1 ;;
+    ed_dinov3convnext_static) CONFIG=scratch_ed_dinov3convnext_static ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|multiscale|multiscale_fix|ed_dinov2_{static,temporal,multiscale}|ed_dinov3vits_static|ed_dinov3convnext_static)" && exit 1 ;;
 esac
 
 # Portable: PY defaults to the `python` on PATH (activate your env first); override
