@@ -64,6 +64,20 @@ class DPTHeadTemporal(DPTHead):
                 out_channel,
             ) for out_channel in out_channels
         ])
+
+        # Dying-ReLU guard for from-scratch training. output_conv2 ends with
+        # [Conv(->32), ReLU, Conv(32->1), ReLU, Identity]. If a random init makes
+        # the final 1x1 conv all-negative, the following ReLU zeros both the output
+        # and its gradient, permanently freezing the head at a degenerate all-zero
+        # depth (observed collapsing DINOv3 ViT-S+ from scratch: loss flat, output=0).
+        # Zero-init that conv's weight + a small positive bias so the output starts
+        # positive and gradients always flow, regardless of backbone feature scale.
+        final_conv = self.scratch.output_conv2[2]
+        if isinstance(final_conv, nn.Conv2d) and final_conv.out_channels == 1:
+            nn.init.zeros_(final_conv.weight)
+            if final_conv.bias is not None:
+                nn.init.constant_(final_conv.bias, 0.5)
+
     def get_path4(self, out_features, patch_h, patch_w,frame_length):
         out = []
         pose_list=[]
