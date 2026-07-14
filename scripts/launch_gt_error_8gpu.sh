@@ -8,7 +8,12 @@ set -euo pipefail
 ROOT=${ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}
 PY=${PY:-python}
 cd "$ROOT"
-mkdir -p jobs logs checkpoint
+mkdir -p jobs logs
+if [[ -L checkpoint && ! -e checkpoint ]]; then
+  echo "Replacing dangling checkpoint symlink: checkpoint -> $(readlink checkpoint)"
+  rm checkpoint
+fi
+mkdir -p checkpoint
 
 # Fail closed: do not silently collide with existing scratch/GT-error jobs.
 if pgrep -af 'train.py.*(scratch_ed_gt_error|scratch_ed_dinov2_multiscale)' >/dev/null; then

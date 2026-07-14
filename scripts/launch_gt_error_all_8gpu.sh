@@ -15,7 +15,12 @@ export NO_ALBUMENTATIONS_UPDATE=${NO_ALBUMENTATIONS_UPDATE:-1}
 export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 
 cd "$ROOT"
-mkdir -p jobs logs checkpoint
+mkdir -p jobs logs
+if [[ -L checkpoint && ! -e checkpoint ]]; then
+  echo "Replacing dangling checkpoint symlink: checkpoint -> $(readlink checkpoint)"
+  rm checkpoint
+fi
+mkdir -p checkpoint
 
 if [[ ! -x "$PY" ]]; then
   echo "ERROR: Python executable not found: $PY" >&2
