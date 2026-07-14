@@ -177,6 +177,15 @@ def save_checkpoint(checkpoint_dir: str, step: int, model, optimizer, scheduler,
 def main(cfg):
     set_seed(cfg.training.seed)
     Path(cfg.training.checkpoint_dir).mkdir(exist_ok=True, parents=True)
+    # DPT heads have inherently-unused parameters BY DESIGN, not from a bug:
+    #   * refinenet4.resConfUnit1 is skipped (the top fusion block gets a single input),
+    #     true for EVERY DPT head incl. the plain temporal one;
+    #   * the multiscale refine head additionally never calls output_conv.
+    # find_unused_parameters=True + the multiscale head's multi-branch backward
+    # double-marks a param ("marked ready twice"). static_graph=True is the robust fix:
+    # it records the (static) used/unused set once and handles both the unused params
+    # and the multi-branch graph. Enumerating+freezing every inherently-unused module
+    # instead is fragile (there are several by design), so we keep static_graph.
     kwargs = DistributedDataParallelKwargs(static_graph=True)
     grad_accum = int(OmegaConf.select(cfg, 'training.grad_accum', default=1))
     accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=grad_accum, dataloader_config=DataLoaderConfiguration(use_seedable_sampler=True),  kwargs_handlers=[kwargs], step_scheduler_with_optimizer=False)
