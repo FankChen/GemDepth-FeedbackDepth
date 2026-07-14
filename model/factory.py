@@ -35,6 +35,8 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
         'backbone': str(OmegaConf.select(cfg, 'model.backbone', default='dinov2')),
         'backbone_weights': OmegaConf.select(cfg, 'model.backbone_weights', default=None),
         'load_backbone_pretrained': bool(load_backbone_pretrained),
+        'error_signal': str(OmegaConf.select(cfg, 'model.error_signal', default='rgb')),
+        'warp_offsets': tuple(OmegaConf.select(cfg, 'model.warp_offsets', default=[-1, 1])),
     }
 
 

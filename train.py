@@ -79,6 +79,28 @@ def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
     return total / max(len(aux_depths), 1)
 
 
+def compute_metric_depth_loss(metric_depths, depth_gt, mask):
+    """Masked multi-scale log-L1 for positive metric depths used by GT-camera warp.
+
+    Log depth preserves metric scale (unlike SSI alignment) while preventing far
+    pixels from dominating an absolute-depth L1. GT depth is supervision only;
+    it is never passed into the model/error feedback path.
+    """
+    gt = depth_gt.flatten(0, 1).float()
+    valid = mask.flatten(0, 1).float()
+    total = gt.new_zeros(())
+    for pred in metric_depths:
+        if pred.dim() == 5:
+            pred = pred.flatten(0, 1)
+        h, w = pred.shape[-2:]
+        gt_s = F.interpolate(gt, size=(h, w), mode='nearest')
+        valid_s = F.interpolate(valid, size=(h, w), mode='nearest')
+        log_error = (pred.float().clamp(min=1e-3).log()
+                     - gt_s.clamp(min=1e-3).log()).abs() * valid_s
+        total = total + log_error.sum() / valid_s.sum().clamp(min=1.0)
+    return total / max(len(metric_depths), 1)
+
+
 def find_latest_ckpt(checkpoint_dir: str) -> str | None:
     """Find the latest checkpoint in the directory (by step number)."""
     ckpt_dir = Path(checkpoint_dir)
@@ -231,6 +253,16 @@ def main(cfg):
         cfg, 'model.require_pretrained_backbone', default=False))
     encoder_decoder_only = bool(OmegaConf.select(
         cfg, 'model.encoder_decoder_only', default=False))
+
+    if head_type == 'multiscale_gt_error':
+        assert encoder_decoder_only and not use_gem and not use_astt, \
+            "GT-error oracle must keep the encoder+decoder-only protocol (GEM/ASTT off)"
+        assert int(cfg.dataset.train.seq_len) > 1, \
+            "GT-error temporal warp requires seq_len > 1"
+        assert str(OmegaConf.select(cfg, 'training.aux_depth_space', default='')) == 'disparity', \
+            "GT-error main multiscale auxiliaries must use inverse-depth/disparity space"
+        assert float(OmegaConf.select(cfg, 'training.metric_depth_weight', default=0.0)) > 0, \
+            "GT-error warp requires a supervised positive metric-depth branch"
 
     if encoder_decoder_only:
         assert not use_gem and not use_astt, \
@@ -438,6 +470,8 @@ def main(cfg):
     # inverse-depth-space aux loss (matches the main loss). The keyword value stays
     # 'disparity' (MiDaS-style alias for inverse depth). Only the fix config sets it.
     aux_depth_space = str(OmegaConf.select(cfg, 'training.aux_depth_space', default='depth'))
+    metric_depth_weight = float(OmegaConf.select(
+        cfg, 'training.metric_depth_weight', default=0.0))
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") \
@@ -455,10 +489,32 @@ def main(cfg):
             extrinsic_gt=data['poses'] 
             with accelerator.accumulate(model):
                 with accelerator.autocast():
-                    depth_pred,pose_enc_list,extrinsic_pred,intrinsic_pred= model(image)
+                    if head_type == 'multiscale_gt_error':
+                        batch_size, num_frames = image.shape[:2]
+                        intrinsic_gt = intrinsic_gt.to(
+                            accelerator.device, non_blocking=True)
+                        gt_ext_tensor = (torch.stack(extrinsic_gt, dim=1)
+                                         if isinstance(extrinsic_gt, (list, tuple))
+                                         else extrinsic_gt)
+                        gt_ext_tensor = gt_ext_tensor.to(accelerator.device, non_blocking=True)
+                        if intrinsic_gt.shape not in (
+                                (batch_size, 3, 3),
+                                (batch_size, num_frames, 3, 3)):
+                            raise ValueError(
+                                f"Unexpected GT intrinsics shape {tuple(intrinsic_gt.shape)}")
+                        if gt_ext_tensor.shape != (batch_size, num_frames, 4, 4):
+                            raise ValueError(
+                                f"Unexpected GT extrinsics shape {tuple(gt_ext_tensor.shape)}")
+                        depth_pred,pose_enc_list,extrinsic_pred,intrinsic_pred = model(
+                            image,
+                            gt_intrinsics=intrinsic_gt,
+                            gt_extrinsics=gt_ext_tensor)
+                    else:
+                        depth_pred,pose_enc_list,extrinsic_pred,intrinsic_pred= model(image)
                 loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred) 
                 loss=loss_dict['total_loss']
                 aux_loss = None
+                metric_loss = None
                 if aux_depth_weight > 0:
                     head = accelerator.unwrap_model(model).head
                     aux_depths = getattr(head, 'aux_depths', None)
@@ -468,6 +524,14 @@ def main(cfg):
                         else:
                             aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
                         loss = loss + aux_depth_weight * aux_loss
+                if metric_depth_weight > 0:
+                    head = accelerator.unwrap_model(model).head
+                    metric_depths = getattr(head, 'metric_depths', None)
+                    if not metric_depths:
+                        raise RuntimeError(
+                            "metric_depth_weight > 0 but head produced no metric_depths")
+                    metric_loss = compute_metric_depth_loss(metric_depths, depth_gt, mask)
+                    loss = loss + metric_depth_weight * metric_loss
                 if not torch.isfinite(loss):
                     finite_summary = {
                         key: bool(torch.isfinite(value).all())
@@ -487,11 +551,31 @@ def main(cfg):
                 loss_r = accelerator.reduce(loss.detach(), reduction='mean')
                 aux_r = accelerator.reduce(aux_loss.detach(), reduction='mean') \
                     if aux_loss is not None else None
+                metric_r = accelerator.reduce(metric_loss.detach(), reduction='mean') \
+                    if metric_loss is not None else None
+                error_stats = {}
+                if head_type == 'multiscale_gt_error':
+                    head = accelerator.unwrap_model(model).head
+                    for stage in ('p2', 'p1'):
+                        error_map = head.error_maps[stage]
+                        valid_map = head.valid_maps[stage]
+                        residual = error_map[:, :, :2]
+                        denom = (valid_map.sum() * residual.shape[2]).clamp(min=1.0)
+                        residual_mean = (residual * valid_map).sum() / denom
+                        valid_fraction = valid_map.mean()
+                        error_stats[f'{stage}_residual'] = accelerator.reduce(
+                            residual_mean, reduction='mean')
+                        error_stats[f'{stage}_valid'] = accelerator.reduce(
+                            valid_fraction, reduction='mean')
                 if accelerator.is_main_process:
                     writer.add_scalar('train/loss', loss_r.item(), total_step)
                     writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], total_step)
                     if aux_r is not None:
                         writer.add_scalar('train/aux_loss', aux_r.item(), total_step)
+                    if metric_r is not None:
+                        writer.add_scalar('train/metric_depth_loss', metric_r.item(), total_step)
+                    for key, value in error_stats.items():
+                        writer.add_scalar(f'train/error_{key}', value.item(), total_step)
                     used_memory_MB = torch.cuda.memory_allocated() / 1024 / 1024
                     max_used_memory_MB = torch.cuda.max_memory_allocated() / 1024 / 1024
                     writer.add_scalar('train/memory_MB', used_memory_MB, total_step)

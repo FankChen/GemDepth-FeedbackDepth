@@ -68,6 +68,8 @@ class GemDepth(nn.Module):
         backbone='dinov2',
         backbone_weights=None,
         load_backbone_pretrained=True,
+        error_signal='rgb',
+        warp_offsets=(-1, 1),
     ):
         super(GemDepth, self).__init__()
 
@@ -240,9 +242,16 @@ class GemDepth(nn.Module):
                 self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         elif head_type == 'multiscale':
             self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+        elif head_type == 'multiscale_gt_error':
+            from model.dpt_multiscale_gt_error import DPTHeadMultiScaleGTError
+            self.head = DPTHeadMultiScaleGTError(
+                self.enc_embed_dim, features, use_bn, out_channels=out_channels,
+                use_clstoken=use_clstoken, num_frames=num_frames, pe=pe,
+                use_temporal=use_temporal, patch_size=self.patch_size,
+                error_signal=error_signal, warp_offsets=warp_offsets)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
-    def forward(self, x):
+    def forward(self, x, gt_intrinsics=None, gt_extrinsics=None):
         feats=[]
         tokens=[]
         depth=[]
@@ -389,6 +398,12 @@ class GemDepth(nn.Module):
             if self.head_type in ('errormap', 'perlayer'):
                 depth = self.head(features_attn, patch_h, patch_w, T,
                                   images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
+            elif self.head_type == 'multiscale_gt_error':
+                depth = self.head(
+                    features_attn, patch_h, patch_w, T,
+                    images=input_images,
+                    gt_intrinsics=gt_intrinsics,
+                    gt_extrinsics=gt_extrinsics)
             else:
                 depth = self.head(features_attn, patch_h, patch_w,T)
             depth = F.interpolate(depth, size=(H, W), mode="bilinear", align_corners=True)

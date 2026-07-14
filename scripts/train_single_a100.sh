@@ -22,7 +22,12 @@ case "$ARM" in
     ed_dinov2_multiscale) CONFIG=scratch_ed_dinov2_multiscale; DEFAULT_NUM_PROC=2 ;;
     ed_dinov3vits_static) CONFIG=scratch_ed_dinov3vits_static; DEFAULT_NUM_PROC=2 ;;
     ed_dinov3convnext_static) CONFIG=scratch_ed_dinov3convnext_static; DEFAULT_NUM_PROC=2 ;;
-    *) echo "Unknown arm: $ARM (baseline|errormap|multiscale|multiscale_fix|ed_dinov2_{static,temporal,multiscale}|ed_dinov3vits_static|ed_dinov3convnext_static)" && exit 1 ;;
+    gt_error_rgb)     CONFIG=scratch_ed_gt_error_rgb; DEFAULT_NUM_PROC=2 ;;
+    gt_error_feat)    CONFIG=scratch_ed_gt_error_feat; DEFAULT_NUM_PROC=2 ;;
+    gt_error_rgbfeat) CONFIG=scratch_ed_gt_error_rgbfeat; DEFAULT_NUM_PROC=2 ;;
+    gt_error_geom)    CONFIG=scratch_ed_gt_error_geom; DEFAULT_NUM_PROC=2 ;;
+    gt_error_baseline) CONFIG=scratch_ed_gt_error_baseline; DEFAULT_NUM_PROC=2 ;;
+    *) echo "Unknown arm: $ARM (baseline|errormap|multiscale|multiscale_fix|ed_dinov2_{static,temporal,multiscale}|ed_dinov3vits_static|ed_dinov3convnext_static|gt_error_{baseline,rgb,feat,rgbfeat,geom})" && exit 1 ;;
 esac
 DEFAULT_NUM_PROC=${DEFAULT_NUM_PROC:-1}
 

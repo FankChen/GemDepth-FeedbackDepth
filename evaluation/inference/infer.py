@@ -42,6 +42,12 @@ if __name__ == '__main__':
             # (strict load below), so skip re-downloading pretrained backbones.
             cfg = OmegaConf.load(args.config)
             gemdepth = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
+            if str(cfg.model.head_type) == 'multiscale_gt_error':
+                raise ValueError(
+                    "multiscale_gt_error is a GT-camera oracle and cannot use the "
+                    "RGB-only KITTI inference entry point. Evaluate it with "
+                    "evaluation/eval/eval_vkitti_gt_error.py on held-out VKITTI. "
+                    "A Pose-CNN version will remove this restriction later.")
         else:
             model_configs = {
                 'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},

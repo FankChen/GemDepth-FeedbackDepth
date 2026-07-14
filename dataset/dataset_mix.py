@@ -62,7 +62,8 @@ class RandomCropWithInfo(A.DualTransform):
         return img[y_min:y_min + self.height, x_min:x_min + self.width]
 
 class DepthVideoDataset(Dataset):
-    def __init__(self, mode, data_dirs=[''], crop_size=518, seq_len=4):
+    def __init__(self, mode, data_dirs=[''], crop_size=518, seq_len=4,
+                 include_scenes=None, exclude_scenes=None, window_stride=1):
         if data_dirs is None:
             data_dirs = ['']
         elif isinstance(data_dirs, str):
@@ -70,6 +71,14 @@ class DepthVideoDataset(Dataset):
         self.mode = mode
         self.crop_size = crop_size
         self.seq_len = seq_len
+        self.window_stride = int(window_stride)
+        if self.window_stride < 1:
+            raise ValueError(f"window_stride must be >=1, got {window_stride}")
+        self.include_scenes = set(include_scenes or [])
+        self.exclude_scenes = set(exclude_scenes or [])
+        overlap = self.include_scenes & self.exclude_scenes
+        if overlap:
+            raise ValueError(f"Scenes cannot be both included and excluded: {sorted(overlap)}")
         self.tartanair_ratio=1 #30.5W
         self.vkitti_ratio=15 #2.1W
         self.max_depth_outer=200
@@ -96,6 +105,10 @@ class DepthVideoDataset(Dataset):
                     trimmed = base.rstrip(os.sep)
                     variation = os.path.basename(trimmed)
                     scene = os.path.basename(os.path.dirname(trimmed))
+                    if self.include_scenes and scene not in self.include_scenes:
+                        continue
+                    if scene in self.exclude_scenes:
+                        continue
 
                     depth_dir = os.path.join(base, 'frames', 'depth', 'Camera_0')
                     if not os.path.isdir(depth_dir):
@@ -133,7 +146,7 @@ class DepthVideoDataset(Dataset):
                     else:
                         start_idx = round(seq_num * 0.9) + 1
                         end_idx = seq_num
-                    for i in range(start_idx, end_idx):
+                    for i in range(start_idx, end_idx, self.window_stride):
                         set_paths = []
                         for j in range(seq_len):
                             fr = frames[i + j]
@@ -159,7 +172,7 @@ class DepthVideoDataset(Dataset):
                     else:
                         start_idx = round(seq_num * 0.9)+1
                         end_idx = seq_num
-                    for i in range(start_idx, end_idx):
+                    for i in range(start_idx, end_idx, self.window_stride):
                         set_paths = []
                         for j in range(seq_len):
                             image_path = os.path.join(scene_path, 'image_left', image_names[i  + j])

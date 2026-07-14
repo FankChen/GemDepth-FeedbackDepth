@@ -1,0 +1,61 @@
+# Scene20-held-out baseline for the GT-camera oracle channel study.
+# Identical train split/recipe to the four GT-error arms, but uses the original
+# multiscale head and no metric-depth/error branch.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/scratch_ed_gt_error_baseline
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_gt_error_baseline
+  freeze_mode: default
+  grad_accum: 1
+  aux_depth_weight: 1.0
+  aux_depth_space: disparity
+  metric_depth_weight: 0.0
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti/}']
+    crop_size: 518
+    seq_len: 4
+    exclude_scenes: ['Scene20']
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 4
+    include_scenes: ['Scene20']
+
+dataloader:
+  batch_size: 8
+  num_workers: 8
+
+model:
+  video_path: null
+  dinov2_weights: "timm://vit_large_patch14_dinov2.lvd142m"
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  head_type: multiscale
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+
+encoder: 'vitl'
+pose_flag: false
+num_gpus: 2
+total_step: 20000
+project_name: scratch_ed_gt_error_baseline
+resume: false
