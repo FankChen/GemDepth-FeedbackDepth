@@ -73,29 +73,44 @@ def normalize_prediction_robust(target, mask, ms=None):
     return target / (s.view(-1, 1, 1)), (m.detach(), s.detach())
 
 
-def compute_scale_and_shift(prediction, target, mask):
-    # system matrix: A = [[a_00, a_01], [a_10, a_11]]
-    a_00 = torch.sum(mask * prediction * prediction, (1, 2))
-    a_01 = torch.sum(mask * prediction, (1, 2))
-    a_11 = torch.sum(mask, (1, 2))
+def compute_scale_and_shift(prediction, target, mask, max_scale=100.0,
+                            min_variance=1e-8):
+    """Fit a per-sample affine alignment without normal-equation cancellation.
 
-    # right hand side: b = [b_0, b_1]
-    b_0 = torch.sum(mask * prediction * target, (1, 2))
-    b_1 = torch.sum(mask * target, (1, 2))
+    The former determinant implementation evaluated
+    ``sum(p**2) * n - sum(p)**2`` in float32.  For nearly constant predictions
+    those two large terms cancel, producing arbitrary negative/tiny determinants
+    and occasionally non-finite losses.  The centered covariance formulation is
+    mathematically equivalent, but is accumulated in float64. Degenerate
+    predictions fall back to unit scale, and the fitted scale is bounded by
+    ``max_scale`` so it cannot directly multiply residual gradients without
+    limit.
+    """
+    output_dtype = (torch.float32 if prediction.dtype in (torch.float16, torch.bfloat16)
+                    else prediction.dtype)
+    p = prediction.to(torch.float64)
+    t = target.to(torch.float64)
+    w = mask.to(torch.float64)
 
-    # solution: x = A^-1 . b = [[a_11, -a_01], [-a_10, a_00]] / (a_00 * a_11 - a_01 * a_10) . b
-    x_0 = torch.zeros_like(b_0)
-    x_1 = torch.zeros_like(b_1)
+    count = w.sum(dim=(1, 2))
+    safe_count = count.clamp(min=1.0)
+    mean_p = (w * p).sum(dim=(1, 2)) / safe_count
+    mean_t = (w * t).sum(dim=(1, 2)) / safe_count
+    centered_p = p - mean_p[:, None, None]
+    centered_t = t - mean_t[:, None, None]
+    variance = (w * centered_p.square()).sum(dim=(1, 2))
+    covariance = (w * centered_p * centered_t).sum(dim=(1, 2))
 
-    det = a_00 * a_11 - a_01 * a_01
-    valid = det.nonzero()
+    variance_floor = safe_count * float(min_variance)
+    well_conditioned = (count > 0) & (variance > variance_floor)
+    fitted_scale = covariance / variance.clamp(min=variance_floor)
+    scale = torch.where(well_conditioned, fitted_scale, torch.ones_like(fitted_scale))
+    scale = torch.nan_to_num(
+        scale, nan=1.0, posinf=float(max_scale), neginf=-float(max_scale))
+    scale = scale.clamp(min=-float(max_scale), max=float(max_scale))
+    shift = torch.where(count > 0, mean_t - scale * mean_p, torch.zeros_like(mean_t))
 
-    x_0[valid] = (a_11[valid] * b_0[valid] - a_01[valid]
-                  * b_1[valid]) / (det[valid] + 1e-6)
-    x_1[valid] = (-a_01[valid] * b_0[valid] + a_00[valid]
-                  * b_1[valid]) / (det[valid] + 1e-6)
-
-    return x_0, x_1
+    return scale.to(output_dtype), shift.to(output_dtype)
 
 class TrimmedProcrustesLoss(nn.Module):
     def __init__(self, alpha=0.5, scales=4, trim=0.2, reduction="batch-based"):
