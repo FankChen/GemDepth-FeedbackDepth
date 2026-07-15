@@ -27,8 +27,8 @@
 </head>
 <body>
 
-<h1>GemDepth · error-map / perlayer 实验结果汇总</h1>
-<div class="meta">分支 feat/exp-cycle-loss · 生成于 2026-07-10 · 单位：AbsRel/RMSE 越小越好，δ1 越大越好，TAE 越小越时序一致</div>
+<h1>GemDepth · error-map / perlayer / multiscale 实验结果汇总</h1>
+<div class="meta">分支 feat/exp-cycle-loss · 生成于 2026-07-10 · <b>2026-07-12 增补 multiscale（阿里云 DSW · 分支 bugfix/clean）见 §⑥</b> · <b>2026-07-14 增补 from-scratch backbone 消融（分支 exp/scratch-ed-backbones）见 §⑦</b> · 单位：AbsRel/RMSE 越小越好，δ1 越大越好，TAE 越小越时序一致</div>
 
 <div class="note">
 <b>怎么读：</b> baseline 行（蓝底）= 未加改进的原始 head；method 行（绿底）= 各改进方案。
@@ -81,6 +81,7 @@ perlayer 旧版≈baseline（因为主输出还是预训练 output_conv，改进
 <h2>④ 进行中 / 待更新</h2>
 <table>
 <tr><th>项目</th><th>状态</th><th>说明</th></tr>
+<tr><td class="name">multiscale（多尺度 refine · 阿里云）</td><td class="best">✓ 已修复重训</td><td>修复后 AbsRel 0.0725 追平 baseline（详见 §⑥）</td></tr>
 <tr><td class="name">perlayer_refine（级联纯refine）</td><td class="pending">待起训</td><td>4层级联，p1 用 output_conv 打底</td></tr>
 <tr><td class="name">perlayer_errmap（级联+每层errmap）</td><td class="pending">待起训</td><td>方案二，对着单帧优化</td></tr>
 <tr><td class="name">eval_full（AbsRel 完整表）</td><td class="pending">运行中</td><td>KITTI+VKITTI 全 arm，输出 eval_full_summary.csv</td></tr>
@@ -96,7 +97,57 @@ perlayer 旧版≈baseline（因为主输出还是预训练 output_conv，改进
 <li><b>已重构级联 perlayer</b>：p1 用 output_conv 打底（起步=baseline）+ 逐层 refine(方案一)/errmap(方案二)，每层 4 个单帧 loss，直接对单帧优化。待训练验证能否把单帧顶过 baseline。</li>
 </ol>
 
-<div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard。TAE 为修复前数据，重跑后本表将更新。</div>
+<h2>⑥ multiscale 多尺度 refine（2026-07-12 · 阿里云 DSW 新增）</h2>
+<div class="note">分支 <code>bugfix/clean</code> · 协议同上：<b>head_only + VKITTI + 10k step + lr1e-4</b>（同配方对照 = §① baseline lr1e-4 = 0.0712）。
+head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample(depth_{i-1}).detach() + Δ_i</code>，每尺度一个 delta_head，detach 截断跨尺度梯度。训练 loss 56.4→4.85 收敛，无崩溃。</div>
+<table>
+<tr><th>方案</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>说明</th></tr>
+<tr class="base"><td class="name">baseline lr1e-4（同配方对照）</td><td class="best">0.0712</td><td>—</td><td>—</td><td>temporal head（来自 §①）</td></tr>
+<tr class="method"><td class="name">multiscale · 原始输出（当逆深度评测）</td><td class="worse">0.2430</td><td>8.138</td><td>0.523</td><td>评测错配 → 虚高</td></tr>
+<tr class="method"><td class="name">multiscale · 输出取倒数(depth→disp)再评测</td><td>0.1435</td><td>5.936</td><td>0.806</td><td>纠正错配后仍劣于 baseline</td></tr>
+<tr class="method"><td class="name">★ multiscale_fix · 逆深度空间 aux 重训</td><td class="best">0.0725</td><td class="best">3.267</td><td class="best">0.950</td><td>修复后直接评测(不取倒数)，追平 baseline</td></tr>
+</table>
+<div class="note warn"><b>根因（代码实锤）：</b>multiscale 输出 min/median/max = 4.73 / <b>26.1</b> / 195.3 → 是<b>米制深度</b>（逆深度应为 0.01~0.3）。
+病根 = <code>aux_depth_weight=1.0</code>（errormap/perlayer 仅 0.1）配合 <code>compute_aux_depth_loss</code> 的<b>绝对深度 L1</b>（<code>|aux − depth_gt|</code>，未取倒数）；
+而主损失 SSI 监督到<b>逆深度</b>（<code>1/depth_gt</code>，见 loss/videoloss.py）。两损失<b>空间相反、同强度拉扯</b> → 输出被拽向米制深度；eval 却按逆深度做 lstsq 对齐 → 倒数错配 → AbsRel 虚高 0.243。取倒数只能救回一部分（0.243→0.143），救不回训练时的空间冲突。</div>
+<div class="note"><b>aux_depth_weight 对比（放大器）：</b> baseline <b>0.0</b> · errormap <b>0.1</b> · perlayer <b>0.1</b> · <b>multiscale 1.0</b>。0.1 时主损失(逆深度)主导、输出仍逆深度 → eval 正确（0.08 档）；1.0 时输出被拉走 → eval 错配（0.243）。</div>
+<div class="note warn"><b>根因结论：</b>原 multiscale ckpt <b>被污染</b>（损失空间自相矛盾），0.243 / 0.143 <b>都不代表多尺度 refine 的真实效果</b>。</div>
+<div class="note"><b>✓ 修复已验证（multiscale_fix，2026-07-13）：</b>方案A 根治——新增 <code>compute_aux_depth_loss_disp</code>（逆深度空间 <code>1/depth_gt</code> + 每样本 SSI 对齐），仅新 config <code>single_a100_multiscale_fix.yaml</code> 打开 <code>aux_depth_space=disparity</code>，<b>师兄原 head/config/loss 三文件零改动</b>（分支 <code>exp/multiscale-aux-disp</code>）。重训后 <b>AbsRel 0.243→0.0725、δ1 0.523→0.950，直接评测(不取倒数)即回正</b>，实锤根因。<br>
+<b>方法结论：</b>修复后多尺度 refine <b>追平 baseline</b>（0.0725 vs 0.0712），单帧精度<b>无明显增益也无损害</b>——之前的“差”纯属评测错配。要体现其价值还需看时序一致性(TAE)或进一步优化 head。</div>
+
+<h2>⑦ from-scratch encoder+decoder · backbone 消融（2026-07-14 · 阿里云 DSW · 分支 exp/scratch-ed-backbones）</h2>
+<div class="note"><b>与 §①–⑥ 不同的新协议：</b>不加载 gemdepth.pth，<b>只加载 DINO 预训练</b>；baseline = <b>只 encoder+decoder</b>（关 GEM/ASTT），backbone 冻结 + LoRA 微调，<b>DPT head 从头训 20000 步</b>（VKITTI，总 batch 8）。
+→ 这是 from-scratch，<b>不能直接与 §① 的 head-only 微调 baseline 0.0677 比数值</b>，只作本组内部（三 backbone、静态 vs 时序）横向对照。三个静态实验用同一 crop 448 保证公平。</div>
+<table>
+<tr><th>实验</th><th>backbone（参数）</th><th>head</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>状态</th></tr>
+<tr class="method"><td class="name">1a · DINOv2 ViT-L · 静态</td><td>ViT-L (305M)</td><td>temporal</td><td>0.1003</td><td>3.669</td><td>0.918</td><td>✅ 有效</td></tr>
+<tr class="method"><td class="name">1b · DINOv3 ViT-S+ · 静态</td><td>ViT-S+ (28.9M)</td><td>temporal</td><td>0.1277</td><td>5.479</td><td>0.881</td><td>✅ 有效（三者最弱，最小 backbone）</td></tr>
+<tr class="method"><td class="name">1c · DINOv3 ConvNeXt-s · 静态</td><td>ConvNeXt-s (50M)</td><td>temporal</td><td class="best">0.0930</td><td>3.733</td><td>0.923</td><td>✅ 有效 · 静态最强</td></tr>
+<tr class="method"><td class="name">2 · DINOv2 ViT-L · 时序 4 帧</td><td>ViT-L (305M)</td><td>temporal</td><td class="best">0.0832</td><td class="best">3.408</td><td class="best">0.940</td><td>✅ 有效 · 整体最强</td></tr>
+<tr class="method"><td class="name">3 · DINOv2 · 多尺度 · 时序 4 帧</td><td>ViT-L (305M)</td><td>multiscale</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td class="pending">⏳ 崩溃重训中</td></tr>
+</table>
+<div class="note"><b>✓ 1b（DINOv3 ViT-S+）已修复重训（_v2 · @97fb77c）：</b>原 0.391 是 <b>dying-ReLU 训练塌缩</b>——从头训的 DPT head 末层卷积初始化全负 → ReLU 杀输出+梯度 → loss 全程平在 1.15、输出恒 0。加<b>抗死初始化</b>（末层卷积 zero-weight + 正 bias）后重训，loss 正常 1.33→0.060，<b>AbsRel 0.391→0.1277、δ1 0.316→0.881</b>。→ <b>ViT-S+ 从头训确实能学</b>，之前纯属初始化死区；它是三者中最弱的（28.9M 最小 backbone），属合理结果。</div>
+<div class="note warn"><b>⏳ 3（multiscale）崩溃 → 已修：</b>报错 "Parameter marked ready twice"。<b>根因（师兄质疑后深挖）：</b>DPT <b>结构性</b>地有未用参数——<code>refinenet4.resConfUnit1</code>（顶层 fusion block 单输入、天生跳过它，<b>所有 head 都有</b>）+ multiscale 额外绕过 <code>output_conv</code>；原 <code>find_unused_parameters=True</code> 正是为兜这些未用参数而开，却与多尺度<b>多分支</b>反向冲突 → 双标记崩。<b>多分支反向本身没问题</b>（temporal head 同样 find_unused=True 却没崩，因单分支）。<code>static_graph=True</code>（@72df22e）是正确鲁棒解：一次性记录静态图的用/不用集合，同时处理未用参数+多分支。<b>实测反证</b>：改 find_unused=False 会因这些结构性未用参数在第 0 步 DDP 死锁（不只 multiscale，所有实验都会）。3_v2 正常重训中。</div>
+<div class="note"><b>本组有效结论（1a / 1c / 2）：</b>
+<ol style="font-size:13px;line-height:1.7;margin:4px 0">
+<li><b>静态 backbone 排序（三者全有效）：ConvNeXt-s 0.0930 &gt; DINOv2 ViT-L 0.1003 &gt; ViT-S+ 0.1277</b>。关键：<b>DINOv3 ConvNeXt-s（50M）反超 DINOv2 ViT-L（305M），小 6 倍却更好</b>；ViT-S+（28.9M 最小）最弱但有效。→ 层级 ConvNeXt 特征最划算。</li>
+<li><b>时序有增益</b>：DINOv2 时序 head 0.0832 &lt; 同 backbone 静态 0.1003，约 <b>+0.017 AbsRel</b>、δ1 0.940 vs 0.918。</li>
+<li><b>caveat</b>：from-scratch 20k 步 ≠ head-only 微调，不与 §① baseline 0.0677 同档；评测因 KITTI 宽图缩放到 ~272（1a/1b/1c/2 一致）。3（multiscale）修复重训中，训完补。</li>
+</ol></div>
+
+<h2>⑧ GT-camera oracle · 多尺度 error-feedback 五臂（2026-07-15 · Scene20 held-out）</h2>
+<div class="note"><b>独立 held-out 协议：</b>DINOv2 ViT-L + LoRA，T=4，关 GEM/ASTT；训练显式排除 <b>Scene20</b>，测试只包含 Scene20。GT K / world-to-camera extrinsics 仅供 oracle warp，<b>GT depth 不进入模型输入</b>；主输出按每 clip SSI 对齐到 GT inverse depth，再于 80 m 范围计算指标。该表不能与 KITTI 或 §①–⑦ 的不同 split 直接横比。</div>
+<table>
+<tr><th>实验臂</th><th>error signal</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>评估量</th><th>状态</th></tr>
+<tr class="base"><td class="name">Held-out multiscale baseline</td><td>—</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">训练中 / 待评估</td></tr>
+<tr class="method"><td class="name">GT-error · RGB</td><td>RGB warp residual + validity</td><td><b>0.248834</b></td><td><b>11.669141</b></td><td><b>0.574748</b></td><td>2088 clips · 8352 frames</td><td class="best">✅ 完整评估</td></tr>
+<tr class="method"><td class="name">GT-error · Feature</td><td>DPT feature warp residual + validity</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">待评估</td></tr>
+<tr class="method"><td class="name">GT-error · Geometry</td><td>metric-depth consistency + validity</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">训练中 / 待评估</td></tr>
+<tr class="method"><td class="name">GT-error · RGB+Feature</td><td>RGB + feature residuals + validity</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">训练中 / 待评估</td></tr>
+</table>
+<div class="note warn"><b>当前只记录绝对结果，不提前下方法结论：</b>RGB 的 AbsRel 0.2488 看起来偏高，但必须等同 split、同训练 recipe 的 held-out multiscale baseline 后才能判断 error feedback 的净贡献。数据加载枚举 2090 个 clip，其中 2088 个有效 clip（8352 帧）进入指标聚合；随机种子为 20260714。</div>
+
+<div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard · multiscale 来自阿里云 output_eval/ · GT-camera oracle 来自 results/gt_error_scene20/*.json。TAE 为修复前数据，重跑后本表将更新。</div>
 
 </body>
 </html>
