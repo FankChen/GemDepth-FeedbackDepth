@@ -118,7 +118,7 @@ def main():
         poses = batch['poses']
         ext = torch.stack(poses, dim=1).to(device, non_blocking=True)
         with torch.no_grad(), torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            if head_type == 'multiscale_gt_error':
+            if head_type in ('multiscale_gt_error', 'multiscale_gt_error_v2'):
                 pred, _, _, _ = model(images, gt_intrinsics=K, gt_extrinsics=ext)
             else:
                 pred, _, _, _ = model(images)

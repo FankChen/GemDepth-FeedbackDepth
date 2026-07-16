@@ -47,6 +47,12 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
             cfg, 'model.metric_max_depth', default=100.0)),
         'error_normalization': str(OmegaConf.select(
             cfg, 'model.error_normalization', default='mean')),
+        'warp_border_margin': float(OmegaConf.select(
+            cfg, 'model.warp_border_margin', default=1.0)),
+        'warp_occlusion_rel': float(OmegaConf.select(
+            cfg, 'model.warp_occlusion_rel', default=0.05)),
+        'warp_occlusion_abs': float(OmegaConf.select(
+            cfg, 'model.warp_occlusion_abs', default=0.10)),
     }
 
 

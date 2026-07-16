@@ -97,6 +97,60 @@ def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
     return total / max(len(aux_depths), 1)
 
 
+def compute_aux_depth_loss_disp_clip(aux_depths, depth_gt, mask):
+    """Four-level inverse-depth supervision with one shared affine gauge per clip.
+
+    Unlike the legacy per-frame auxiliary, all T frames of a clip share the
+    same detached scale/shift, and p4/p3/p2 reuse the gauge fitted from the final
+    p1 prediction. This matches the shared GemDepth readout and makes additive
+    inter-level comparisons meaningful instead of allowing one gauge per scale.
+    """
+    gt = depth_gt.float()
+    valid = mask.float()
+    gt_inverse = torch.zeros_like(gt)
+    positive = valid > 0.5
+    gt_inverse[positive] = 1.0 / gt[positive].clamp(min=1e-3)
+    total = gt.new_zeros(())
+    if not aux_depths:
+        return total
+    reference = aux_depths[-1]
+    if reference.dim() != 5:
+        raise ValueError(
+            f'Clip-level auxiliary expects (B,T,1,H,W), got {tuple(reference.shape)}')
+    ref_batch, ref_frames = reference.shape[:2]
+    reference_target = F.interpolate(
+        gt_inverse.flatten(0, 1), size=reference.shape[-2:],
+        mode='nearest').unflatten(0, (ref_batch, ref_frames)).squeeze(2)
+    reference_valid = F.interpolate(
+        valid.flatten(0, 1), size=reference.shape[-2:],
+        mode='nearest').unflatten(0, (ref_batch, ref_frames)).squeeze(2)
+    with torch.no_grad():
+        shared_scale, shared_shift = compute_scale_and_shift(
+            reference.float().squeeze(2).flatten(1, 2),
+            reference_target.flatten(1, 2),
+            reference_valid.flatten(1, 2))
+    for prediction in aux_depths:
+        if prediction.dim() != 5:
+            raise ValueError(
+                f'Clip-level auxiliary expects (B,T,1,H,W), got {tuple(prediction.shape)}')
+        batch, frames = prediction.shape[:2]
+        size = prediction.shape[-2:]
+        gt_s = F.interpolate(
+            gt_inverse.flatten(0, 1), size=size, mode='nearest').unflatten(0, (batch, frames))
+        valid_s = F.interpolate(
+            valid.flatten(0, 1), size=size, mode='nearest').unflatten(0, (batch, frames))
+        pred = prediction.float().squeeze(2)
+        target = gt_s.squeeze(2)
+        weights = valid_s.squeeze(2)
+        if batch != ref_batch or frames != ref_frames:
+            raise ValueError('All v2 auxiliary predictions must share B,T dimensions')
+        aligned = (shared_scale[:, None, None, None] * pred
+                   + shared_shift[:, None, None, None])
+        difference = (aligned - target).abs() * weights
+        total = total + difference.sum() / weights.sum().clamp(min=1.0)
+    return total / max(len(aux_depths), 1)
+
+
 def compute_metric_depth_loss(metric_depths, depth_gt, mask, metric_log_depths=None,
                               target_min_depth=1e-3, target_max_depth=None):
     """Masked multi-scale log-L1 for positive metric depths used by GT-camera warp.
@@ -288,7 +342,8 @@ def main(cfg):
     encoder_decoder_only = bool(OmegaConf.select(
         cfg, 'model.encoder_decoder_only', default=False))
 
-    if head_type == 'multiscale_gt_error':
+    oracle_head_types = ('multiscale_gt_error', 'multiscale_gt_error_v2')
+    if head_type in oracle_head_types:
         assert encoder_decoder_only and not use_gem and not use_astt, \
             "GT-error oracle must keep the encoder+decoder-only protocol (GEM/ASTT off)"
         assert int(cfg.dataset.train.seq_len) > 1, \
@@ -525,7 +580,7 @@ def main(cfg):
             extrinsic_gt=data['poses'] 
             with accelerator.accumulate(model):
                 with accelerator.autocast():
-                    if head_type == 'multiscale_gt_error':
+                    if head_type in oracle_head_types:
                         batch_size, num_frames = image.shape[:2]
                         intrinsic_gt = intrinsic_gt.to(
                             accelerator.device, non_blocking=True)
@@ -555,7 +610,13 @@ def main(cfg):
                     head = accelerator.unwrap_model(model).head
                     aux_depths = getattr(head, 'aux_depths', None)
                     if aux_depths:
-                        if aux_depth_space == 'disparity':
+                        if head_type == 'multiscale_gt_error_v2':
+                            if len(aux_depths) != 4:
+                                raise RuntimeError(
+                                    f'v2 must supervise p4/p3/p2/p1, got {len(aux_depths)} depths')
+                            aux_loss = compute_aux_depth_loss_disp_clip(
+                                aux_depths, depth_gt, mask)
+                        elif aux_depth_space == 'disparity':
                             aux_loss = compute_aux_depth_loss_disp(aux_depths, depth_gt, mask)
                         else:
                             aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
@@ -622,9 +683,10 @@ def main(cfg):
                 metric_r = accelerator.reduce(metric_loss.detach(), reduction='mean') \
                     if metric_loss is not None else None
                 error_stats = {}
-                if head_type == 'multiscale_gt_error':
+                if head_type in oracle_head_types:
                     head = accelerator.unwrap_model(model).head
-                    for index, stage in enumerate(('p2', 'p1')):
+                    stages = tuple(getattr(head, 'stage_names', ('p2', 'p1')))
+                    for index, stage in enumerate(stages):
                         error_map = head.error_maps[stage]
                         valid_map = head.valid_maps[stage]
                         residual = error_map[:, :, :2]

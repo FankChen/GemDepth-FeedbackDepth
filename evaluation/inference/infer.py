@@ -42,7 +42,7 @@ if __name__ == '__main__':
             # (strict load below), so skip re-downloading pretrained backbones.
             cfg = OmegaConf.load(args.config)
             gemdepth = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
-            if str(cfg.model.head_type) == 'multiscale_gt_error':
+            if str(cfg.model.head_type) in ('multiscale_gt_error', 'multiscale_gt_error_v2'):
                 raise ValueError(
                     "multiscale_gt_error is a GT-camera oracle and cannot use the "
                     "RGB-only KITTI inference entry point. Evaluate it with "

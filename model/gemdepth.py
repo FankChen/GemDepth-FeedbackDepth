@@ -75,6 +75,9 @@ class GemDepth(nn.Module):
         metric_min_depth=1e-3,
         metric_max_depth=100.0,
         error_normalization='mean',
+        warp_border_margin=1.0,
+        warp_occlusion_rel=0.05,
+        warp_occlusion_abs=0.10,
     ):
         super(GemDepth, self).__init__()
 
@@ -259,6 +262,19 @@ class GemDepth(nn.Module):
                 metric_min_depth=metric_min_depth,
                 metric_max_depth=metric_max_depth,
                 error_normalization=error_normalization)
+        elif head_type == 'multiscale_gt_error_v2':
+            from model.dpt_gt_error_v2 import DPTHeadGTErrorV2
+            self.head = DPTHeadGTErrorV2(
+                self.enc_embed_dim, features, use_bn, out_channels=out_channels,
+                use_clstoken=use_clstoken, num_frames=num_frames, pe=pe,
+                use_temporal=use_temporal, patch_size=self.patch_size,
+                error_signal=error_signal, warp_offsets=warp_offsets,
+                metric_init_depth=metric_init_depth,
+                metric_min_depth=metric_min_depth,
+                metric_max_depth=metric_max_depth,
+                warp_border_margin=warp_border_margin,
+                warp_occlusion_rel=warp_occlusion_rel,
+                warp_occlusion_abs=warp_occlusion_abs)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
     def forward(self, x, gt_intrinsics=None, gt_extrinsics=None):
@@ -408,7 +424,7 @@ class GemDepth(nn.Module):
             if self.head_type in ('errormap', 'perlayer'):
                 depth = self.head(features_attn, patch_h, patch_w, T,
                                   images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
-            elif self.head_type == 'multiscale_gt_error':
+            elif self.head_type in ('multiscale_gt_error', 'multiscale_gt_error_v2'):
                 depth = self.head(
                     features_attn, patch_h, patch_w, T,
                     images=input_images,
