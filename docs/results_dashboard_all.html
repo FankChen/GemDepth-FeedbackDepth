@@ -139,7 +139,7 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <div class="note"><b>独立 held-out 协议：</b>DINOv2 ViT-L + LoRA，T=4，关 GEM/ASTT；训练显式排除 <b>Scene20</b>，测试只包含 Scene20。GT K / world-to-camera extrinsics 仅供 oracle warp，<b>GT depth 不进入模型输入</b>；主输出按每 clip SSI 对齐到 GT inverse depth，再于 80 m 范围计算指标。该表不能与 KITTI 或 §①–⑦ 的不同 split 直接横比。</div>
 <table>
 <tr><th>实验臂</th><th>error signal</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>评估量</th><th>状态</th></tr>
-<tr class="base"><td class="name">Held-out multiscale baseline</td><td>—</td><td>0.444656</td><td>15.126310</td><td>0.288045</td><td>2088 clips · 8352 frames</td><td>✅ 完整评估</td></tr>
+<tr class="base"><td class="name">Multiscale-only baseline（无 error feedback）</td><td>—</td><td>0.444656</td><td>15.126310</td><td>0.288045</td><td>2088 clips · 8352 frames</td><td>✅ 完整评估</td></tr>
 <tr class="method"><td class="name">GT-error · RGB</td><td>RGB warp residual + validity</td><td>0.248834</td><td>11.669141</td><td class="best">0.574748</td><td>2088 clips · 8352 frames</td><td>✅ δ1 最优（与 Feature 近乎并列）</td></tr>
 <tr class="method"><td class="name">GT-error · Feature</td><td>DPT feature warp residual + validity</td><td class="best">0.233081</td><td class="best">8.612631</td><td>0.574575</td><td>2088 clips · 8352 frames</td><td class="best">✅ AbsRel / RMSE 最优</td></tr>
 <tr class="method"><td class="name">GT-error · Geometry</td><td>metric-depth consistency + validity</td><td class="worse">0.462033</td><td class="worse">15.347888</td><td class="worse">0.259086</td><td>2088 clips · 8352 frames</td><td class="worse">✅ 劣于 baseline</td></tr>
@@ -147,13 +147,34 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 </table>
 <div class="note"><b>✓ 五臂最终结论：</b>
 <ol style="font-size:13px;line-height:1.7;margin:4px 0">
-<li><b>Feature residual 是明确首选：</b>相对 baseline，AbsRel 降 <b>47.6%</b>（0.4447→0.2331），RMSE 降 <b>43.1%</b>（15.13→8.61），δ1 提升 <b>28.65 个百分点</b>。它相对 RGB 仍将 AbsRel 降 6.3%、RMSE 降 26.2%。</li>
+<li><b>完整 Feature-feedback architecture 是当前首选：</b>相对 multiscale-only baseline，AbsRel 降 <b>47.6%</b>（0.4447→0.2331），RMSE 降 <b>43.1%</b>（15.13→8.61），δ1 提升 <b>28.65 个百分点</b>。它相对 RGB arm 仍将 AbsRel 降 6.3%、RMSE 降 26.2%。但该 47.6% 同时包含 metric-depth heads、p2 error encoder、p2→p1 feedback 与 p1 correction 的容量，<b>不能全部归因于 Feature residual 本身</b>。</li>
 <li><b>RGB 的 δ1 仅以 0.000173 绝对值领先 Feature</b>（0.574748 vs 0.574575，约 0.017 个百分点），远小于其 AbsRel/RMSE 劣势，不能据此宣称 RGB 整体更好；下一阶段固定用 <b>Feature</b>。</li>
 <li><b>简单拼接无协同：</b>RGB+Feature（0.3036）反而弱于两种单流，说明双流残差存在干扰，不能把“更多信号”直接等同于更强。</li>
 <li><b>纯几何 depth-consistency 失败：</b>Geometry 比 baseline 的 AbsRel 高 3.9%、RMSE 高 1.5%、δ1 低 2.90 个百分点；当前 metric-depth 预测误差/遮挡判断会使几何残差成为噪声，不应进入下一阶段。</li>
 </ol></div>
-<div class="note warn"><b>论文边界：</b>这是 <b>GT-camera oracle</b>，只证明“在正确相机几何下，DPT feature warp residual 能显著改善 held-out 合成域深度”；尚不能声称部署时无需 GT pose，也不能直接外推到 KITTI。四个 error-signal 臂参数量与 loss 结构一致，可公平比较信号；baseline 没有 metric-depth/error-feedback 分支，因此它衡量的是完整方法增益，而不是单独某一通道的纯变量消融。下一步应固定 Feature 臂，只把 GT extrinsics 替换成简单 Pose CNN。</div>
+<div class="note warn"><b>论文边界：</b>这是 <b>GT-camera oracle</b>，只证明“在正确相机几何下，完整 Feature-feedback architecture 能显著改善 held-out 合成域深度”；尚不能声称部署时无需 GT pose，也不能直接外推到 KITTI。四个 error-signal 臂参数量与 loss 结构一致，可公平比较信号；baseline 没有 metric-depth/error-feedback 分支，因此它衡量的是完整方法增益，而不是单独某一通道的纯变量消融。Feature 目前只是<b>下一阶段的候选</b>，在补齐 null-error 容量对照与逐层可视化前，不把 47.6% 写成 Feature error 的净贡献。</div>
 <div class="note"><b>评估量说明：</b>底层发现 2090 个 clip；<code>DepthVideoDataset.__len__()</code> 向下取四的倍数，实际一致评估 <b>2088 clips / 8352 frames</b>。五臂样本完全一致，当前排序公平。随机种子 20260714。报告字段已于 <code>3b9e7d8</code> 修正；指标本身无需重算。</div>
+
+<div class="note"><b>表 8 baseline / 表 7 数字为何不能直接比较：</b>表 8 的 baseline 不是表 7 的最简单 temporal DPT，而是 <b>DINOv2 ViT-L + LoRA + T=4 + multiscale refine</b>，仅去掉 metric-depth/error-feedback 分支；训练还显式排除 Scene20，并在 Scene20-only 上评估。表 7 的 0.0832 则是 temporal head、全 VKITTI 训练（包含 Scene20）、KITTI Eigen 测试。两者 head、训练 split、测试域和 evaluator 均不同，所以 <code>0.0832 vs 0.4447</code> 不能解释为 multiscale 退化。要测 multiscale 的净贡献，必须补同一 Scene20-held-out 协议的 temporal baseline。</div>
+<table>
+<tr><th>待补控制</th><th>结构</th><th>回答的问题</th></tr>
+<tr class="base"><td class="name">B0 · Temporal DPT</td><td>最简单 temporal head</td><td>同 split 的真正基础线</td></tr>
+<tr class="base"><td class="name">B1 · Multiscale-only</td><td>当前表 8 baseline</td><td>multiscale 相对 temporal 的净贡献</td></tr>
+<tr class="base"><td class="name">B2 · Null-error capacity control</td><td>保留 metric heads / encoder / correction，error 恒为 0</td><td>额外网络容量本身的贡献</td></tr>
+<tr class="method"><td class="name">M · Feature feedback</td><td>完整 Feature arm</td><td>Feature error 相对等容量 B2 的净贡献</td></tr>
+</table>
+
+<div class="note"><b>RGB+Feature 为何变差：当前只有实现事实，没有因果结论。</b>实现为 p2/p1 上分别计算并<b>各自按帧均值归一化</b>的 RGB residual 与 L2-normalized DPT feature residual，再直接组成 <code>[E_rgb, E_feat, validity]</code>，送入同一个 3→64→256 error encoder；没有 learned gating、独立分支编码、modality confidence 或 disagreement handling。独立归一化会抹去两种信号的相对可信度；两者又共享 metric depth、相机与 warp grid，可能高度相关而非互补。但“RGB 噪声干扰 Feature / 两流冗余 / normalization 或 fusion 有问题”目前都只是<b>待验证假设</b>，不能仅凭最终指标下结论。</div>
+<div class="note"><b>必须补的可视化与统计（无需重训）：</b>从同一个 RGB+Feature checkpoint、同一个固定 Scene20 clip 导出 p2/p1 的两个 residual slot、validity、predicted metric depth、p2 feedback norm、p1 signed correction，以及相对 B1 的 improvement map；全 Scene20 统计两 residual 的 Pearson/Spearman、top-10% overlap、saturation、valid coverage、与真实 depth-error 的相关性，以及 correction 改善/恶化像素比例。当前 head 已缓存 <code>error_maps</code>/<code>valid_maps</code>/<code>metric_depths</code>，其余可用 forward hook 获取。</div>
+
+<div class="note warn"><b>HOG 可视化与实现 caveat（旧 em_single HOG，不属于表 8 Geometry）：</b>
+<ol style="font-size:13px;line-height:1.7;margin:4px 0">
+<li><code>sqrt(gx²+gy²+eps)</code> 使平坦区也有非零 magnitude，随后逐像素 L2 normalization 会把人工底噪放大；<code>eps</code> 应只放在归一化分母。</li>
+<li>现有彩色图以“归一化 HOG 各 bin 之和”作为亮度、<code>argmax bin</code> 作为 hue；它不是真实 Sobel magnitude，也不是经典 cell/bin glyph HOG。低梯度区仍被强行赋予方向，容易出现大片伪彩色。</li>
+<li>训练时 HOG 直接读取 ImageNet-normalized 模型输入；可视化脚本先反归一化到 [0,1] 再算 HOG，两者信号不一致。</li>
+<li><code>cell=8</code> 的偶数 avg-pool kernel 配合 padding=4 会产生 H+1/W+1 后再插值回去，可能引入轻微空间偏移。</li>
+</ol>
+因此旧 HOG 图不能作为正确性证据，旧 HOG arm 结果也需带 caveat；若继续该方向，应统一输入、修 magnitude floor、屏蔽低梯度方向、改用原始 magnitude + 经典 HOG glyph 可视化，并重训 HOG arm。</div>
 
 <div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard · multiscale 来自阿里云 output_eval/ · GT-camera oracle 来自 results/gt_error_scene20/*.json。TAE 为修复前数据，重跑后本表将更新。</div>
 
