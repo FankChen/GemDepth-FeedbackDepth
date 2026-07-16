@@ -19,6 +19,24 @@ import glob
 import re
 
 
+def tensor_health(tensor):
+    """Compact finite/range diagnostics, evaluated only on a failure path."""
+    if tensor is None:
+        return None
+    value = tensor.detach()
+    finite = torch.isfinite(value)
+    finite_count = int(finite.sum().item())
+    summary = {
+        'finite': finite_count == value.numel(),
+        'nonfinite': value.numel() - finite_count,
+    }
+    if finite_count:
+        finite_values = value.float()[finite]
+        summary['min'] = float(finite_values.min().item())
+        summary['max'] = float(finite_values.max().item())
+    return summary
+
+
 def compute_aux_depth_loss(aux_depths, depth_gt, mask):
     """Masked multi-scale L1 supervision for the error-map head's intermediate depths.
 
@@ -237,6 +255,13 @@ def main(cfg):
             "encoder_decoder_only requires model.use_gem=false and model.use_astt=false"
         assert not video_path, \
             "encoder_decoder_only scratch experiments must not load a full GemDepth checkpoint"
+        if head_type == 'multiscale':
+            assert float(OmegaConf.select(
+                cfg, 'training.aux_depth_weight', default=0.0)) > 0, \
+                "Scratch multiscale requires multi-scale auxiliary supervision"
+            assert str(OmegaConf.select(
+                cfg, 'training.aux_depth_space', default='')) == 'disparity', \
+                "Scratch multiscale auxiliary supervision must use inverse-depth/disparity space"
     if require_pretrained_backbone:
         if backbone == 'dinov2':
             assert dinov2_weights, "A required DINOv2 pretrained source was not configured"
@@ -468,16 +493,39 @@ def main(cfg):
                         else:
                             aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
                         loss = loss + aux_depth_weight * aux_loss
-                if not torch.isfinite(loss):
+                if not torch.isfinite(loss).all():
+                    tracked = {
+                        'combined_loss': loss,
+                        'depth_pred': depth_pred,
+                        'aux_loss': aux_loss,
+                    }
+                    tracked.update({
+                        f'main/{key}': value for key, value in loss_dict.items()
+                        if torch.is_tensor(value)
+                    })
+                    head = accelerator.unwrap_model(model).head
+                    for index, value in enumerate(getattr(head, 'aux_depths', ())):
+                        tracked[f'aux_depth/{index}'] = value
                     finite_summary = {
-                        key: bool(torch.isfinite(value).all())
-                        for key, value in loss_dict.items() if torch.is_tensor(value)
+                        key: tensor_health(value) for key, value in tracked.items()
                     }
                     raise FloatingPointError(
-                        f"Non-finite training loss at step {total_step}: {finite_summary}")
+                        f"Non-finite training loss at step {total_step}, "
+                        f"rank {accelerator.process_index}: {finite_summary}")
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), 1.0)
+                    grad_norm = accelerator.clip_grad_norm_(model.parameters(), 1.0)
+                    if not torch.isfinite(grad_norm).all():
+                        bad_gradients = [
+                            name for name, parameter in model.named_parameters()
+                            if parameter.grad is not None
+                            and not torch.isfinite(parameter.grad).all()
+                        ]
+                        optimizer.zero_grad(set_to_none=True)
+                        raise FloatingPointError(
+                            f"Non-finite gradient norm at step {total_step}, "
+                            f"rank {accelerator.process_index}; "
+                            f"parameters={bad_gradients[:20]}")
                 optimizer.step()
                 optimizer.zero_grad()
 
