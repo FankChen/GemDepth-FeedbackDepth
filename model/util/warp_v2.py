@@ -147,22 +147,25 @@ def temporal_signal_error_v2(signal, metric_depth, K, extrinsics, offsets=(-1, 1
         full_error = signal.new_full((batch, frames, 1, height, width), float('inf'))
         full_valid = torch.zeros(
             (batch, frames, 1, height, width), device=device, dtype=torch.bool)
-        full_warped = signal.new_zeros((batch, frames, channels, height, width))
-        full_offset = torch.zeros(
-            (batch, frames, 1, height, width), device=device, dtype=torch.int16)
         full_error[:, target_indices] = torch.where(
             valid, error, torch.full_like(error, float('inf'))
         ).reshape(batch, count, 1, height, width)
         full_valid[:, target_indices] = valid.reshape(batch, count, 1, height, width)
-        full_warped[:, target_indices] = warped.reshape(
-            batch, count, channels, height, width)
-        full_offset[:, target_indices] = torch.full(
-            (batch, count, 1, height, width), offset,
-            device=device, dtype=torch.int16)
         candidate_errors.append(full_error)
         candidate_valids.append(full_valid)
-        candidate_warped.append(full_warped)
-        candidate_offsets.append(full_offset)
+        if return_diagnostics:
+            full_warped = signal.new_zeros(
+                (batch, frames, channels, height, width))
+            full_offset = torch.zeros(
+                (batch, frames, 1, height, width), device=device,
+                dtype=torch.int16)
+            full_warped[:, target_indices] = warped.reshape(
+                batch, count, channels, height, width)
+            full_offset[:, target_indices] = torch.full(
+                (batch, count, 1, height, width), offset,
+                device=device, dtype=torch.int16)
+            candidate_warped.append(full_warped)
+            candidate_offsets.append(full_offset)
 
     if not candidate_errors:
         zeros = signal.new_zeros((batch, frames, 1, height, width))
