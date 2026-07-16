@@ -13,6 +13,7 @@ training:
   aux_depth_weight: 1.0
   aux_depth_space: disparity
   metric_depth_weight: 0.1
+  health_print_freq: 100
 
 optimizer:
   kind: adamw

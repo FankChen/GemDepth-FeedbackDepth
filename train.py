@@ -498,6 +498,8 @@ def main(cfg):
     aux_depth_space = str(OmegaConf.select(cfg, 'training.aux_depth_space', default='depth'))
     metric_depth_weight = float(OmegaConf.select(
         cfg, 'training.metric_depth_weight', default=0.0))
+    health_print_freq = int(OmegaConf.select(
+        cfg, 'training.health_print_freq', default=0))
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") \
@@ -643,6 +645,14 @@ def main(cfg):
                         writer.add_scalar('train/metric_depth_loss', metric_r.item(), total_step)
                     for key, value in error_stats.items():
                         writer.add_scalar(f'train/error_{key}', value.item(), total_step)
+                    if health_print_freq > 0 and total_step % health_print_freq == 0:
+                        health = ' '.join(
+                            f'{key}={value.item():.6g}'
+                            for key, value in sorted(error_stats.items()))
+                        metric_text = (f' metric_loss={metric_r.item():.6g}'
+                                       if metric_r is not None else '')
+                        print(f'[metric-health] step={total_step}{metric_text} {health}',
+                              flush=True)
                     used_memory_MB = torch.cuda.memory_allocated() / 1024 / 1024
                     max_used_memory_MB = torch.cuda.max_memory_allocated() / 1024 / 1024
                     writer.add_scalar('train/memory_MB', used_memory_MB, total_step)
