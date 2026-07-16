@@ -130,7 +130,10 @@ def main():
     result = {
         'config': args.config,
         'checkpoint': args.ckpt,
-        'clips': len(dataset.data_paths),
+        # DepthVideoDataset.__len__ rounds down to a multiple of four, so report
+        # what the DataLoader actually evaluated rather than the raw path count.
+        'clips': len(dataset),
+        'clips_discovered': len(dataset.data_paths),
         'heldout_scenes': heldout_scenes,
         'frames_evaluated': count,
         'seed': args.seed,
