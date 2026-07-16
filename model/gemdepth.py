@@ -70,6 +70,10 @@ class GemDepth(nn.Module):
         load_backbone_pretrained=True,
         error_signal='rgb',
         warp_offsets=(-1, 1),
+        metric_depth_mode='softplus',
+        metric_init_depth=20.0,
+        metric_min_depth=0.1,
+        metric_max_depth=200.0,
     ):
         super(GemDepth, self).__init__()
 
@@ -248,7 +252,11 @@ class GemDepth(nn.Module):
                 self.enc_embed_dim, features, use_bn, out_channels=out_channels,
                 use_clstoken=use_clstoken, num_frames=num_frames, pe=pe,
                 use_temporal=use_temporal, patch_size=self.patch_size,
-                error_signal=error_signal, warp_offsets=warp_offsets)
+                error_signal=error_signal, warp_offsets=warp_offsets,
+                metric_depth_mode=metric_depth_mode,
+                metric_init_depth=metric_init_depth,
+                metric_min_depth=metric_min_depth,
+                metric_max_depth=metric_max_depth)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
     def forward(self, x, gt_intrinsics=None, gt_extrinsics=None):

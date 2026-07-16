@@ -15,6 +15,8 @@ by the separate metric-depth training loss.  This stage deliberately uses GT
 cameras to isolate the depth/error design before a learned pose CNN is added.
 """
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,7 +46,8 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
                  out_channels=(256, 512, 1024, 1024), use_clstoken=False,
                  num_frames=32, pe='ape', use_temporal=True, patch_size=14,
                  error_signal='rgb', warp_offsets=(-1, 1),
-                 metric_init_depth=20.0):
+                 metric_init_depth=20.0, metric_depth_mode='softplus',
+                 metric_min_depth=0.1, metric_max_depth=200.0):
         super().__init__(
             in_channels=in_channels,
             features=features,
@@ -62,9 +65,23 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
         self.warp_offsets = tuple(int(o) for o in warp_offsets)
         if not self.warp_offsets or any(o == 0 for o in self.warp_offsets):
             raise ValueError(f"warp_offsets must contain non-zero temporal offsets, got {warp_offsets}")
+        if metric_depth_mode not in ('softplus', 'log_depth'):
+            raise ValueError(
+                "metric_depth_mode must be 'softplus' or 'log_depth', "
+                f"got {metric_depth_mode!r}")
+        if not 0 < metric_min_depth < metric_init_depth < metric_max_depth:
+            raise ValueError(
+                "Expected 0 < metric_min_depth < metric_init_depth < metric_max_depth, "
+                f"got {(metric_min_depth, metric_init_depth, metric_max_depth)}")
+        self.metric_depth_mode = metric_depth_mode
+        self.metric_min_depth = float(metric_min_depth)
+        self.metric_max_depth = float(metric_max_depth)
+        self.metric_log_min = math.log(self.metric_min_depth)
+        self.metric_log_max = math.log(self.metric_max_depth)
 
         self.metric_depth_heads = nn.ModuleDict({
-            stage: self._make_metric_depth_head(features, metric_init_depth)
+            stage: self._make_metric_depth_head(
+                features, metric_init_depth, metric_depth_mode)
             for stage in ('p2', 'p1')
         })
         # p2 error is encoded and upsampled into the already-built p1 feature.
@@ -92,25 +109,49 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
 
         # Populated on every forward for losses and diagnostics.
         self.metric_depths = []
+        self.metric_log_depths = []
         self.error_maps = {}
         self.raw_error_maps = {}
         self.valid_maps = {}
 
     @staticmethod
-    def _make_metric_depth_head(features, init_depth):
+    def _make_metric_depth_head(features, init_depth, mode):
         head = nn.Sequential(
             nn.Conv2d(features, features // 2, kernel_size=3, padding=1),
             nn.ReLU(True),
             nn.Conv2d(features // 2, 32, kernel_size=3, padding=1),
             nn.ReLU(True),
             nn.Conv2d(32, 1, kernel_size=1),
-            nn.Softplus(),
+            nn.Softplus() if mode == 'softplus' else nn.Identity(),
         )
-        # Start from a stable positive constant. The branch remains fully
-        # trainable; sigmoid(20) ~= 1 so the bias does not saturate gradients.
+        # Both modes start at the same positive metric depth. log_depth predicts
+        # log(Z) directly, so its loss never differentiates through a clamped Z.
         nn.init.zeros_(head[-2].weight)
-        nn.init.constant_(head[-2].bias, float(init_depth))
+        initial_bias = float(init_depth) if mode == 'softplus' else math.log(float(init_depth))
+        nn.init.constant_(head[-2].bias, initial_bias)
         return head
+
+    def _predict_metric_depth(self, stage, feat, b, t):
+        """Predict bounded metric depth while retaining an unclamped log-depth loss path."""
+        output = self.metric_depth_heads[stage](feat.detach().float())
+        expected = (b * t, 1, *feat.shape[-2:])
+        if output.shape != expected:
+            raise ValueError(
+                f"Unexpected {stage} metric-head shape {tuple(output.shape)}, expected {expected}")
+        if self.metric_depth_mode == 'log_depth':
+            log_depth = output
+            # This bounded value is consumed only by the no-grad warp. The loss
+            # supervises the *unclamped* log_depth below, so out-of-range logits
+            # always retain a direct recovery gradient.
+            metric_depth = torch.exp(log_depth.clamp(
+                min=self.metric_log_min, max=self.metric_log_max))
+            self.metric_log_depths.append(
+                log_depth.reshape(b, t, 1, *log_depth.shape[-2:]))
+        else:
+            metric_depth = output
+        self.metric_depths.append(
+            metric_depth.reshape(b, t, 1, *metric_depth.shape[-2:]))
+        return metric_depth
 
     @staticmethod
     def _prepare_geometry(gt_intrinsics, gt_extrinsics, b, t, device):
@@ -211,6 +252,7 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
 
         self.aux_depths = []
         self.metric_depths = []
+        self.metric_log_depths = []
         self.error_maps = {}
         self.raw_error_maps = {}
         self.valid_maps = {}
@@ -234,10 +276,7 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
         depth_p2 = depth_prev.detach() + self.delta_heads[2](p2)
         h2, w2 = depth_p2.shape[-2:]
         self.aux_depths.append(depth_p2.reshape(b, t, 1, h2, w2))
-        metric_p2 = self.metric_depth_heads['p2'](p2.detach().float())
-        if metric_p2.shape != (b * t, 1, h2, w2):
-            raise ValueError(f"Unexpected p2 metric-depth shape {tuple(metric_p2.shape)}")
-        self.metric_depths.append(metric_p2.reshape(b, t, 1, h2, w2))
+        metric_p2 = self._predict_metric_depth('p2', p2, b, t)
         error_p2 = self._make_error_channels(
             p2, images, metric_p2, K, ext, b, t, src_hw, 'p2')
         p2_feedback = self.error_encoders['p2'](error_p2)
@@ -250,10 +289,7 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
             depth_p2, size=p1.shape[-2:], mode='bilinear', align_corners=True)
         depth_p1 = depth_prev.detach() + self.delta_heads[3](p1)
         h1, w1 = depth_p1.shape[-2:]
-        metric_p1 = self.metric_depth_heads['p1'](p1.detach().float())
-        if metric_p1.shape != (b * t, 1, h1, w1):
-            raise ValueError(f"Unexpected p1 metric-depth shape {tuple(metric_p1.shape)}")
-        self.metric_depths.append(metric_p1.reshape(b, t, 1, h1, w1))
+        metric_p1 = self._predict_metric_depth('p1', p1, b, t)
         error_p1 = self._make_error_channels(
             p1, images, metric_p1, K, ext, b, t, src_hw, 'p1')
         depth_p1 = depth_p1 + self.p1_correction(torch.cat((p1, error_p1), dim=1))

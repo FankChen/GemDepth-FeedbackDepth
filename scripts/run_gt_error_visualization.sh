@@ -11,6 +11,8 @@ FRAME_IDX=${FRAME_IDX:-1}
 OUTPUT=${OUTPUT:-results/gt_error_visualization/sample${SAMPLE_IDX}}
 LOG=${LOG:-jobs/gt_error_visualization_sample${SAMPLE_IDX}.log}
 PID_FILE=${PID_FILE:-jobs/gt_error_visualization_sample${SAMPLE_IDX}.pid}
+RGBFEAT_CONFIG=${RGBFEAT_CONFIG:-config/scratch_ed_gt_error_rgbfeat.yaml}
+RGBFEAT_CKPT=${RGBFEAT_CKPT:-checkpoint/scratch_ed_gt_error_rgbfeat/final_model.pth}
 
 cd "$ROOT"
 mkdir -p jobs "$OUTPUT"
@@ -19,7 +21,8 @@ for required in \
   "$PY" \
   "$VKITTI_ROOT" \
   checkpoint/scratch_ed_gt_error_baseline/final_model.pth \
-  checkpoint/scratch_ed_gt_error_rgbfeat/final_model.pth
+  "$RGBFEAT_CONFIG" \
+  "$RGBFEAT_CKPT"
 do
   if [[ ! -e "$required" ]]; then
     echo "ERROR: missing $required" >&2
@@ -49,6 +52,8 @@ CUDA_VISIBLE_DEVICES="$GPU_ID" nohup "$PY" \
   --data_dir "$VKITTI_ROOT" \
   --sample_idx "$SAMPLE_IDX" \
   --frame_idx "$FRAME_IDX" \
+  --rgbfeat_config "$RGBFEAT_CONFIG" \
+  --rgbfeat_ckpt "$RGBFEAT_CKPT" \
   --output "$OUTPUT" \
   > "$LOG" 2>&1 &
 

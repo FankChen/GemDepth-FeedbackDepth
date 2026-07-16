@@ -97,26 +97,34 @@ def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
     return total / max(len(aux_depths), 1)
 
 
-def compute_metric_depth_loss(metric_depths, depth_gt, mask):
+def compute_metric_depth_loss(metric_depths, depth_gt, mask, metric_log_depths=None):
     """Masked multi-scale log-L1 for positive metric depths used by GT-camera warp.
 
     Log depth preserves metric scale (unlike SSI alignment) while preventing far
     pixels from dominating an absolute-depth L1. GT depth is supervision only;
-    it is never passed into the model/error feedback path.
+    it is never passed into the model/error feedback path. When raw predicted
+    log-depths are provided, supervise them directly: this retains a recovery
+    gradient even if the bounded metric value used by warp reaches its floor.
     """
     gt = depth_gt.flatten(0, 1).float()
     valid = mask.flatten(0, 1).float()
+    use_direct_log = metric_log_depths is not None
+    predictions = metric_log_depths if use_direct_log else metric_depths
+    if use_direct_log and len(metric_log_depths) != len(metric_depths):
+        raise ValueError(
+            f"metric_log_depths/metric_depths length mismatch: "
+            f"{len(metric_log_depths)} vs {len(metric_depths)}")
     total = gt.new_zeros(())
-    for pred in metric_depths:
+    for pred in predictions:
         if pred.dim() == 5:
             pred = pred.flatten(0, 1)
         h, w = pred.shape[-2:]
         gt_s = F.interpolate(gt, size=(h, w), mode='nearest')
         valid_s = F.interpolate(valid, size=(h, w), mode='nearest')
-        log_error = (pred.float().clamp(min=1e-3).log()
-                     - gt_s.clamp(min=1e-3).log()).abs() * valid_s
+        pred_log = pred.float() if use_direct_log else pred.float().clamp(min=1e-3).log()
+        log_error = (pred_log - gt_s.clamp(min=1e-3).log()).abs() * valid_s
         total = total + log_error.sum() / valid_s.sum().clamp(min=1.0)
-    return total / max(len(metric_depths), 1)
+    return total / max(len(predictions), 1)
 
 
 def find_latest_ckpt(checkpoint_dir: str) -> str | None:
@@ -548,7 +556,10 @@ def main(cfg):
                     if not metric_depths:
                         raise RuntimeError(
                             "metric_depth_weight > 0 but head produced no metric_depths")
-                    metric_loss = compute_metric_depth_loss(metric_depths, depth_gt, mask)
+                    metric_log_depths = getattr(head, 'metric_log_depths', None)
+                    metric_loss = compute_metric_depth_loss(
+                        metric_depths, depth_gt, mask,
+                        metric_log_depths=metric_log_depths or None)
                     loss = loss + metric_depth_weight * metric_loss
                 if not torch.isfinite(loss).all():
                     tracked = {
@@ -600,7 +611,7 @@ def main(cfg):
                 error_stats = {}
                 if head_type == 'multiscale_gt_error':
                     head = accelerator.unwrap_model(model).head
-                    for stage in ('p2', 'p1'):
+                    for index, stage in enumerate(('p2', 'p1')):
                         error_map = head.error_maps[stage]
                         valid_map = head.valid_maps[stage]
                         residual = error_map[:, :, :2]
@@ -611,6 +622,18 @@ def main(cfg):
                             residual_mean, reduction='mean')
                         error_stats[f'{stage}_valid'] = accelerator.reduce(
                             valid_fraction, reduction='mean')
+                        metric_depth = head.metric_depths[index].detach().float()
+                        metric_floor = float(getattr(head, 'metric_min_depth', 0.0))
+                        metric_values = {
+                            f'{stage}_metric_min': metric_depth.amin(),
+                            f'{stage}_metric_mean': metric_depth.mean(),
+                            f'{stage}_metric_max': metric_depth.amax(),
+                            f'{stage}_metric_floor_fraction': (
+                                metric_depth <= metric_floor * 1.01).float().mean(),
+                        }
+                        for key, value in metric_values.items():
+                            error_stats[key] = accelerator.reduce(
+                                value, reduction='mean')
                 if accelerator.is_main_process:
                     writer.add_scalar('train/loss', loss_r.item(), total_step)
                     writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], total_step)
