@@ -93,6 +93,7 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
         # Populated on every forward for losses and diagnostics.
         self.metric_depths = []
         self.error_maps = {}
+        self.raw_error_maps = {}
         self.valid_maps = {}
 
     @staticmethod
@@ -141,21 +142,21 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
                 rgb = F.interpolate(
                     rgb.flatten(0, 1), size=(h, w), mode='bilinear', align_corners=False)
                 rgb = rgb.reshape(b, t, 3, h, w)
-                rgb_error, rgb_valid = photometric_signal_error(
+                rgb_error_raw, rgb_valid = photometric_signal_error(
                     rgb, metric_bt, K_s, extrinsics, self.warp_offsets)
-                rgb_error = normalize_error_map(rgb_error, rgb_valid)
+                rgb_error = normalize_error_map(rgb_error_raw, rgb_valid)
 
             if self.error_signal in ('feat', 'rgbfeat'):
                 feat_signal = feat.detach().reshape(b, t, channels, h, w)
                 feat_signal = F.normalize(feat_signal, p=2, dim=2, eps=1e-6)
-                feat_error, feat_valid = photometric_signal_error(
+                feat_error_raw, feat_valid = photometric_signal_error(
                     feat_signal, metric_bt, K_s, extrinsics, self.warp_offsets)
-                feat_error = normalize_error_map(feat_error, feat_valid)
+                feat_error = normalize_error_map(feat_error_raw, feat_valid)
 
             if self.error_signal == 'geom':
-                geom_error, geom_valid = geometric_depth_error_map(
+                geom_error_raw, geom_valid = geometric_depth_error_map(
                     metric_bt, K_s, extrinsics, self.warp_offsets)
-                geom_error = normalize_error_map(geom_error, geom_valid)
+                geom_error = normalize_error_map(geom_error_raw, geom_valid)
 
             if self.error_signal == 'rgb':
                 error_channels = torch.cat((rgb_error, torch.zeros_like(rgb_error), rgb_valid), dim=2)
@@ -170,6 +171,17 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
                 error_channels = torch.cat((geom_error, torch.zeros_like(geom_error), geom_valid), dim=2)
                 valid = geom_valid
 
+        raw_maps = {}
+        if self.error_signal in ('rgb', 'rgbfeat'):
+            raw_maps['rgb'] = rgb_error_raw.detach()
+            raw_maps['rgb_valid'] = rgb_valid.detach()
+        if self.error_signal in ('feat', 'rgbfeat'):
+            raw_maps['feat'] = feat_error_raw.detach()
+            raw_maps['feat_valid'] = feat_valid.detach()
+        if self.error_signal == 'geom':
+            raw_maps['geom'] = geom_error_raw.detach()
+            raw_maps['geom_valid'] = geom_valid.detach()
+        self.raw_error_maps[stage] = raw_maps
         self.error_maps[stage] = error_channels.detach()
         self.valid_maps[stage] = valid.detach()
         return error_channels.reshape(bt, 3, h, w).to(feat.dtype)
@@ -200,6 +212,7 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
         self.aux_depths = []
         self.metric_depths = []
         self.error_maps = {}
+        self.raw_error_maps = {}
         self.valid_maps = {}
 
         # p4 and p3 are identical to the baseline; they establish global shape.
@@ -222,6 +235,8 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
         h2, w2 = depth_p2.shape[-2:]
         self.aux_depths.append(depth_p2.reshape(b, t, 1, h2, w2))
         metric_p2 = self.metric_depth_heads['p2'](p2.detach().float())
+        if metric_p2.shape != (b * t, 1, h2, w2):
+            raise ValueError(f"Unexpected p2 metric-depth shape {tuple(metric_p2.shape)}")
         self.metric_depths.append(metric_p2.reshape(b, t, 1, h2, w2))
         error_p2 = self._make_error_channels(
             p2, images, metric_p2, K, ext, b, t, src_hw, 'p2')
@@ -236,6 +251,8 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
         depth_p1 = depth_prev.detach() + self.delta_heads[3](p1)
         h1, w1 = depth_p1.shape[-2:]
         metric_p1 = self.metric_depth_heads['p1'](p1.detach().float())
+        if metric_p1.shape != (b * t, 1, h1, w1):
+            raise ValueError(f"Unexpected p1 metric-depth shape {tuple(metric_p1.shape)}")
         self.metric_depths.append(metric_p1.reshape(b, t, 1, h1, w1))
         error_p1 = self._make_error_channels(
             p1, images, metric_p1, K, ext, b, t, src_hw, 'p1')
