@@ -1,0 +1,63 @@
+{
+  "normal": {
+    "absrel": 0.21357864141464233,
+    "rmse": 16.82911491394043,
+    "delta1": 0.672144889831543
+  },
+  "no_rgb": {
+    "absrel": 0.21357864141464233,
+    "rmse": 16.82911491394043,
+    "delta1": 0.672144889831543
+  },
+  "no_feat": {
+    "absrel": 0.21357864141464233,
+    "rmse": 16.82911491394043,
+    "delta1": 0.672144889831543
+  },
+  "zero_residuals": {
+    "absrel": 0.21357864141464233,
+    "rmse": 16.82911491394043,
+    "delta1": 0.672144889831543
+  },
+  "baseline": {
+    "absrel": 0.34952491521835327,
+    "rmse": 20.83624267578125,
+    "delta1": 0.4444250464439392
+  },
+  "stage_statistics": {
+    "p2": {
+      "valid_fraction": 0.9780405405405406,
+      "raw_rgb_mean": 0.03754177317023277,
+      "raw_feat_mean": 3.557925811037421e-05,
+      "pearson_rgb_feat": -0.05369820557258703,
+      "top10_iou_rgb_feat": 0.042769361805682304,
+      "rgb_saturation_fraction": 0.04278898984193802,
+      "feat_saturation_fraction": 0.0636071041226387
+    },
+    "p1": {
+      "valid_fraction": 0.0,
+      "raw_rgb_mean": NaN,
+      "raw_feat_mean": NaN,
+      "pearson_rgb_feat": NaN,
+      "top10_iou_rgb_feat": NaN,
+      "rgb_saturation_fraction": 0.0,
+      "feat_saturation_fraction": 0.0
+    }
+  },
+  "sample": {
+    "sample_idx": 0,
+    "frame_idx": 1,
+    "seed": 20260714,
+    "depth_paths": [
+      "/mnt/workspace/vkitti/vkitti/Scene20/15-deg-left/frames/depth/Camera_0/depth_00000.png",
+      "/mnt/workspace/vkitti/vkitti/Scene20/15-deg-left/frames/depth/Camera_0/depth_00001.png",
+      "/mnt/workspace/vkitti/vkitti/Scene20/15-deg-left/frames/depth/Camera_0/depth_00002.png",
+      "/mnt/workspace/vkitti/vkitti/Scene20/15-deg-left/frames/depth/Camera_0/depth_00003.png"
+    ]
+  },
+  "before_p1_correction": {
+    "absrel": 0.21357612311840057,
+    "rmse": 16.827939987182617,
+    "delta1": 0.672169029712677
+  }
+}
