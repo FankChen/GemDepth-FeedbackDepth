@@ -97,7 +97,8 @@ def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
     return total / max(len(aux_depths), 1)
 
 
-def compute_metric_depth_loss(metric_depths, depth_gt, mask, metric_log_depths=None):
+def compute_metric_depth_loss(metric_depths, depth_gt, mask, metric_log_depths=None,
+                              target_min_depth=1e-3, target_max_depth=None):
     """Masked multi-scale log-L1 for positive metric depths used by GT-camera warp.
 
     Log depth preserves metric scale (unlike SSI alignment) while preventing far
@@ -109,6 +110,12 @@ def compute_metric_depth_loss(metric_depths, depth_gt, mask, metric_log_depths=N
     gt = depth_gt.flatten(0, 1).float()
     valid = mask.flatten(0, 1).float()
     use_direct_log = metric_log_depths is not None
+    if target_min_depth <= 0:
+        raise ValueError(f"target_min_depth must be positive, got {target_min_depth}")
+    if target_max_depth is not None and target_max_depth <= target_min_depth:
+        raise ValueError(
+            f"target_max_depth must exceed target_min_depth, got "
+            f"{target_max_depth} <= {target_min_depth}")
     predictions = metric_log_depths if use_direct_log else metric_depths
     if use_direct_log and len(metric_log_depths) != len(metric_depths):
         raise ValueError(
@@ -122,7 +129,8 @@ def compute_metric_depth_loss(metric_depths, depth_gt, mask, metric_log_depths=N
         gt_s = F.interpolate(gt, size=(h, w), mode='nearest')
         valid_s = F.interpolate(valid, size=(h, w), mode='nearest')
         pred_log = pred.float() if use_direct_log else pred.float().clamp(min=1e-3).log()
-        log_error = (pred_log - gt_s.clamp(min=1e-3).log()).abs() * valid_s
+        gt_s = gt_s.clamp(min=float(target_min_depth), max=target_max_depth)
+        log_error = (pred_log - gt_s.log()).abs() * valid_s
         total = total + log_error.sum() / valid_s.sum().clamp(min=1.0)
     return total / max(len(predictions), 1)
 
@@ -559,9 +567,12 @@ def main(cfg):
                         raise RuntimeError(
                             "metric_depth_weight > 0 but head produced no metric_depths")
                     metric_log_depths = getattr(head, 'metric_log_depths', None)
+                    direct_log = metric_log_depths or None
                     metric_loss = compute_metric_depth_loss(
                         metric_depths, depth_gt, mask,
-                        metric_log_depths=metric_log_depths or None)
+                        metric_log_depths=direct_log,
+                        target_min_depth=(head.metric_min_depth if direct_log else 1e-3),
+                        target_max_depth=(head.metric_max_depth if direct_log else None))
                     loss = loss + metric_depth_weight * metric_loss
                 if not torch.isfinite(loss).all():
                     tracked = {
@@ -626,12 +637,15 @@ def main(cfg):
                             valid_fraction, reduction='mean')
                         metric_depth = head.metric_depths[index].detach().float()
                         metric_floor = float(getattr(head, 'metric_min_depth', 0.0))
+                        metric_ceiling = float(getattr(head, 'metric_max_depth', float('inf')))
                         metric_values = {
                             f'{stage}_metric_min': metric_depth.amin(),
                             f'{stage}_metric_mean': metric_depth.mean(),
                             f'{stage}_metric_max': metric_depth.amax(),
                             f'{stage}_metric_floor_fraction': (
                                 metric_depth <= metric_floor * 1.01).float().mean(),
+                            f'{stage}_metric_ceiling_fraction': (
+                                metric_depth >= metric_ceiling * 0.99).float().mean(),
                         }
                         for key, value in metric_values.items():
                             error_stats[key] = accelerator.reduce(

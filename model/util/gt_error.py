@@ -11,7 +11,7 @@ learned pose CNN is introduced.
 import torch
 import torch.nn.functional as F
 
-from .warp import photometric_error_map
+from .warp import cosine_error_map, photometric_error_map
 
 
 def imagenet_denormalize(images: torch.Tensor) -> torch.Tensor:
@@ -22,14 +22,22 @@ def imagenet_denormalize(images: torch.Tensor) -> torch.Tensor:
 
 
 def normalize_error_map(error: torch.Tensor, valid: torch.Tensor,
-                        clip: float = 5.0, eps: float = 1e-6) -> torch.Tensor:
-    """Normalize a residual per frame so error modalities have comparable scale.
+                        clip: float = 5.0, eps: float = 1e-6,
+                        mode: str = 'mean') -> torch.Tensor:
+    """Scale a residual for network input.
 
-    The masked mean is detached: normalization cannot be gamed through its
-    denominator.  Valid residuals have mean roughly ``1 / clip`` and remain in
-    ``[0,1]``; invalid pixels are exactly zero.
+    ``fixed`` preserves residuals already defined in ``[0,1]`` (RGB L1, cosine
+    feature distance, geometric relative error). ``mean`` reproduces the legacy
+    per-frame masked-mean normalization for old checkpoints/configs.
     """
     valid = valid.to(error.dtype)
+    if mode == 'fixed':
+        # RGB L1, cosine feature distance and geometric relative error are all
+        # defined in [0,1]. Preserve their absolute confidence instead of
+        # amplifying every frame to the same mean magnitude.
+        return error.clamp(0.0, 1.0) * valid
+    if mode != 'mean':
+        raise ValueError(f"Unknown error normalization mode: {mode!r}")
     denom = ((error * valid).sum(dim=(-2, -1), keepdim=True)
              / valid.sum(dim=(-2, -1), keepdim=True).clamp(min=1.0))
     normalized = (error / denom.detach().clamp(min=eps)).clamp(0.0, clip) / clip
@@ -147,4 +155,12 @@ def photometric_signal_error(signal: torch.Tensor, metric_depth: torch.Tensor,
                              offsets=(-1, 1)):
     """Thin typed wrapper around the generic warp residual implementation."""
     return photometric_error_map(
+        signal, metric_depth, K, extrinsics, offsets=tuple(offsets))
+
+
+def feature_cosine_signal_error(signal: torch.Tensor, metric_depth: torch.Tensor,
+                                K: torch.Tensor, extrinsics: torch.Tensor,
+                                offsets=(-1, 1)):
+    """Fixed-range cosine residual for dense decoder features."""
+    return cosine_error_map(
         signal, metric_depth, K, extrinsics, offsets=tuple(offsets))

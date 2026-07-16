@@ -72,8 +72,9 @@ class GemDepth(nn.Module):
         warp_offsets=(-1, 1),
         metric_depth_mode='softplus',
         metric_init_depth=20.0,
-        metric_min_depth=0.1,
-        metric_max_depth=200.0,
+        metric_min_depth=1e-3,
+        metric_max_depth=100.0,
+        error_normalization='mean',
     ):
         super(GemDepth, self).__init__()
 
@@ -256,7 +257,8 @@ class GemDepth(nn.Module):
                 metric_depth_mode=metric_depth_mode,
                 metric_init_depth=metric_init_depth,
                 metric_min_depth=metric_min_depth,
-                metric_max_depth=metric_max_depth)
+                metric_max_depth=metric_max_depth,
+                error_normalization=error_normalization)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
     def forward(self, x, gt_intrinsics=None, gt_extrinsics=None):

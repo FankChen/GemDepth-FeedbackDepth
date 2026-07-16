@@ -23,6 +23,7 @@ import torch.nn.functional as F
 
 from .dpt_multiscale import DPTHeadMultiScaleRefine
 from .util.gt_error import (
+    feature_cosine_signal_error,
     geometric_depth_error_map,
     imagenet_denormalize,
     normalize_error_map,
@@ -47,7 +48,8 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
                  num_frames=32, pe='ape', use_temporal=True, patch_size=14,
                  error_signal='rgb', warp_offsets=(-1, 1),
                  metric_init_depth=20.0, metric_depth_mode='softplus',
-                 metric_min_depth=0.1, metric_max_depth=200.0):
+                 metric_min_depth=1e-3, metric_max_depth=100.0,
+                 error_normalization='mean'):
         super().__init__(
             in_channels=in_channels,
             features=features,
@@ -65,6 +67,11 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
         self.warp_offsets = tuple(int(o) for o in warp_offsets)
         if not self.warp_offsets or any(o == 0 for o in self.warp_offsets):
             raise ValueError(f"warp_offsets must contain non-zero temporal offsets, got {warp_offsets}")
+        if error_normalization not in ('mean', 'fixed'):
+            raise ValueError(
+                "error_normalization must be 'mean' or 'fixed', "
+                f"got {error_normalization!r}")
+        self.error_normalization = error_normalization
         if metric_depth_mode not in ('softplus', 'log_depth'):
             raise ValueError(
                 "metric_depth_mode must be 'softplus' or 'log_depth', "
@@ -185,19 +192,26 @@ class DPTHeadMultiScaleGTError(DPTHeadMultiScaleRefine):
                 rgb = rgb.reshape(b, t, 3, h, w)
                 rgb_error_raw, rgb_valid = photometric_signal_error(
                     rgb, metric_bt, K_s, extrinsics, self.warp_offsets)
-                rgb_error = normalize_error_map(rgb_error_raw, rgb_valid)
+                rgb_error = normalize_error_map(
+                    rgb_error_raw, rgb_valid, mode=self.error_normalization)
 
             if self.error_signal in ('feat', 'rgbfeat'):
                 feat_signal = feat.detach().reshape(b, t, channels, h, w)
                 feat_signal = F.normalize(feat_signal, p=2, dim=2, eps=1e-6)
-                feat_error_raw, feat_valid = photometric_signal_error(
-                    feat_signal, metric_bt, K_s, extrinsics, self.warp_offsets)
-                feat_error = normalize_error_map(feat_error_raw, feat_valid)
+                if self.error_normalization == 'fixed':
+                    feat_error_raw, feat_valid = feature_cosine_signal_error(
+                        feat_signal, metric_bt, K_s, extrinsics, self.warp_offsets)
+                else:
+                    feat_error_raw, feat_valid = photometric_signal_error(
+                        feat_signal, metric_bt, K_s, extrinsics, self.warp_offsets)
+                feat_error = normalize_error_map(
+                    feat_error_raw, feat_valid, mode=self.error_normalization)
 
             if self.error_signal == 'geom':
                 geom_error_raw, geom_valid = geometric_depth_error_map(
                     metric_bt, K_s, extrinsics, self.warp_offsets)
-                geom_error = normalize_error_map(geom_error_raw, geom_valid)
+                geom_error = normalize_error_map(
+                    geom_error_raw, geom_valid, mode=self.error_normalization)
 
             if self.error_signal == 'rgb':
                 error_channels = torch.cat((rgb_error, torch.zeros_like(rgb_error), rgb_valid), dim=2)

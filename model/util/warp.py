@@ -152,6 +152,69 @@ def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-
     return err, valid
 
 
+def cosine_error_map(features, depth, K, extrinsics, offsets=(-1, 1),
+                     eps=1e-6, big=1.0):
+    """Temporal feature-warp error using a fixed-range cosine distance.
+
+    Both target and bilinearly warped source features are L2-normalized before
+    measuring ``(1 - cosine) / 2``. The residual is therefore in ``[0, 1]``
+    regardless of feature channel count, unlike a channel-mean L1 whose scale
+    shrinks toward numerical noise for high-dimensional normalized features.
+    """
+    B, T, C, H, W = features.shape
+    device = features.device
+    dtype = features.dtype
+
+    K = K.to(dtype)
+    extrinsics = extrinsics.to(dtype)
+    inv_K = torch.inverse(K)
+
+    error_stack = []
+    valid_stack = []
+    for offset in offsets:
+        t0 = max(0, -offset)
+        t1 = min(T, T - offset)
+        if t1 <= t0:
+            continue
+        idx_t = torch.arange(t0, t1, device=device)
+        idx_s = idx_t + offset
+        n = int(idx_t.numel())
+        N = B * n
+
+        feat_t = features[:, idx_t].reshape(N, C, H, W)
+        feat_s = features[:, idx_s].reshape(N, C, H, W)
+        depth_t = depth[:, idx_t].reshape(N, 1, H, W)
+        warped, valid = _inverse_warp(
+            depth_t,
+            feat_s,
+            inv_K[:, idx_t].reshape(N, 3, 3),
+            K[:, idx_s].reshape(N, 3, 3),
+            extrinsics[:, idx_t].reshape(N, 4, 4),
+            extrinsics[:, idx_s].reshape(N, 4, 4),
+            eps=eps,
+        )
+        target_unit = F.normalize(feat_t, p=2, dim=1, eps=eps)
+        warped_unit = F.normalize(warped, p=2, dim=1, eps=eps)
+        cosine = (target_unit * warped_unit).sum(dim=1, keepdim=True).clamp(-1.0, 1.0)
+        error = ((1.0 - cosine) * 0.5).clamp(0.0, 1.0)
+        error = error * valid + big * (1.0 - valid)
+
+        full_error = features.new_full((B, T, 1, H, W), big)
+        full_valid = features.new_zeros((B, T, 1, H, W))
+        full_error[:, idx_t] = error.reshape(B, n, 1, H, W)
+        full_valid[:, idx_t] = valid.reshape(B, n, 1, H, W)
+        error_stack.append(full_error)
+        valid_stack.append(full_valid)
+
+    if not error_stack:
+        zeros = features.new_zeros((B, T, 1, H, W))
+        return zeros, zeros
+
+    error = torch.stack(error_stack, dim=0).min(dim=0).values
+    valid = torch.stack(valid_stack, dim=0).max(dim=0).values
+    return error * valid, valid
+
+
 # Generic per-layer signal error map. The photometric error map is the special case where
 # the warped signal is the RGB image; here the signal can be any (B,T,C,H,W) feature tensor
 # (e.g. a projected DPT feature or a HOG descriptor). The warping/residual computation is

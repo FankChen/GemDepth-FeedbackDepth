@@ -42,9 +42,11 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
         'metric_init_depth': float(OmegaConf.select(
             cfg, 'model.metric_init_depth', default=20.0)),
         'metric_min_depth': float(OmegaConf.select(
-            cfg, 'model.metric_min_depth', default=0.1)),
+            cfg, 'model.metric_min_depth', default=1e-3)),
         'metric_max_depth': float(OmegaConf.select(
-            cfg, 'model.metric_max_depth', default=200.0)),
+            cfg, 'model.metric_max_depth', default=100.0)),
+        'error_normalization': str(OmegaConf.select(
+            cfg, 'model.error_normalization', default='mean')),
     }
 
 

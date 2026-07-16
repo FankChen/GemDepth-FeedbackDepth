@@ -1,7 +1,8 @@
-# Metric-depth module repair pilot/full run for the RGB+Feature GT-camera arm.
-# The only methodological change from scratch_ed_gt_error_rgbfeat.yaml is the
-# metric-depth parameterization: predict log(Z) directly for loss, and exponentiate
-# a bounded copy only for warp. This removes the old log(clamp(Softplus(.))) dead zone.
+# Geometry-input repair pilot/full run for the RGB+Feature GT-camera arm.
+# Relative to scratch_ed_gt_error_rgbfeat.yaml it makes two scoped consistency fixes:
+# (1) predict log(Z) directly, supervise in the same 1e-3..100m range used by warp;
+# (2) use fixed [0,1] residual scales (RGB L1 / feature cosine), removing the
+#     per-frame mean amplification that promoted tiny feature-border noise.
 training:
   seed: 0
   checkpoint_dir: ./checkpoint/scratch_ed_gt_error_rgbfeat_metricfix
@@ -51,8 +52,9 @@ model:
   warp_offsets: [-1, 1]
   metric_depth_mode: log_depth
   metric_init_depth: 20.0
-  metric_min_depth: 0.1
-  metric_max_depth: 200.0
+  metric_min_depth: 1.0e-3
+  metric_max_depth: 100.0
+  error_normalization: fixed
   use_gem: false
   use_astt: false
   use_temporal: true

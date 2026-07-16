@@ -23,8 +23,8 @@ class MetricDepthParameterizationTest(unittest.TestCase):
             error_signal='rgbfeat',
             metric_depth_mode=mode,
             metric_init_depth=20.0,
-            metric_min_depth=0.1,
-            metric_max_depth=200.0,
+            metric_min_depth=1e-3,
+            metric_max_depth=100.0,
         )
 
     def test_legacy_and_log_modes_keep_identical_state_schema(self):
@@ -59,13 +59,15 @@ class MetricDepthParameterizationTest(unittest.TestCase):
         head.metric_log_depths = []
         metric = head._predict_metric_depth('p1', feature, b=2, t=4)
         self.assertTrue(torch.isfinite(metric).all())
-        torch.testing.assert_close(metric, torch.full_like(metric, 0.1))
+        torch.testing.assert_close(metric, torch.full_like(metric, 1e-3))
 
         gt = torch.full((2, 4, 1, 16, 16), 20.0)
         mask = torch.ones_like(gt)
         loss = compute_metric_depth_loss(
             head.metric_depths, gt, mask,
-            metric_log_depths=head.metric_log_depths)
+            metric_log_depths=head.metric_log_depths,
+            target_min_depth=head.metric_min_depth,
+            target_max_depth=head.metric_max_depth)
         loss.backward()
         self.assertIsNotNone(final_conv.bias.grad)
         self.assertTrue(torch.isfinite(final_conv.bias.grad).all())
@@ -81,8 +83,22 @@ class MetricDepthParameterizationTest(unittest.TestCase):
         head.metric_depths = []
         head.metric_log_depths = []
         metric = head._predict_metric_depth('p2', feature, b=1, t=4)
-        torch.testing.assert_close(metric, torch.full_like(metric, 200.0))
+        torch.testing.assert_close(metric, torch.full_like(metric, 100.0))
         self.assertEqual(float(head.metric_log_depths[0].min()), 100.0)
+
+    def test_gt_target_uses_the_same_upper_bound_as_warp(self):
+        predicted_log = torch.full(
+            (1, 4, 1, 4, 4), torch.tensor(100.0).log().item(),
+            requires_grad=True)
+        metric = torch.full_like(predicted_log, 100.0)
+        gt = torch.full((1, 4, 1, 8, 8), 150.0)
+        mask = torch.ones_like(gt)
+        loss = compute_metric_depth_loss(
+            [metric], gt, mask,
+            metric_log_depths=[predicted_log],
+            target_min_depth=1e-3,
+            target_max_depth=100.0)
+        self.assertLess(float(loss), 1e-6)
 
 
 if __name__ == '__main__':
