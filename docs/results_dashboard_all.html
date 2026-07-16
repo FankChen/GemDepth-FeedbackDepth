@@ -22,6 +22,10 @@
   .warn{background:#fef2f2;border:1px solid #fecaca}
   .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:#e0e7ff;color:#3730a3;margin-left:6px}
   .pending{color:#a16207;font-style:italic}
+  .viz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px;margin:12px 0}
+  .viz-grid figure{margin:0;background:#fff;border:1px solid #e2e8f0;border-radius:7px;padding:8px}
+  .viz-grid img{display:block;width:100%;height:auto;border-radius:4px}
+  .viz-grid figcaption{font-size:12px;color:#475569;line-height:1.5;margin-top:6px;text-align:left}
   small{color:#777}
 </style>
 </head>
@@ -175,6 +179,28 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <li><code>cell=8</code> 的偶数 avg-pool kernel 配合 padding=4 会产生 H+1/W+1 后再插值回去，可能引入轻微空间偏移。</li>
 </ol>
 因此旧 HOG 图不能作为正确性证据，旧 HOG arm 结果也需带 caveat；若继续该方向，应统一输入、修 magnitude floor、屏蔽低梯度方向、改用原始 magnitude + 经典 HOG glyph 可视化，并重训 HOG arm。</div>
+
+<h2>⑨ GT-error 逐层可视化审计（2026-07-16 · Scene20 sample0）</h2>
+<div class="note"><b>样本与干预：</b>Scene20 / 15-deg-left / frame 0–3，展示 frame 1；固定 seed=20260714。同一个 RGB+Feature checkpoint 上分别执行 normal、RGB residual 清零、Feature residual 清零、两 residual 同时清零。干预仅清零 residual slot，<b>保留 validity</b>；指标仍做 clip-level SSI 对齐，因此它检验的是“residual 是否改变可评估的深度形状”，不能排除仅改变全局 affine scale/shift 的微小作用。原始统计见 <a href="assets/gt_error_visualization_sample0/summary.json">summary.json</a>。</div>
+
+<div class="viz-grid">
+<figure><a href="assets/gt_error_visualization_sample0/01_overview.png"><img src="assets/gt_error_visualization_sample0/01_overview.png" alt="GT-error overview"></a><figcaption><b>图 9-1 · 总览。</b>RGB+Feature 相对 B1 的 sample0 clip-level AbsRel 为 0.2136 vs 0.3495；改善主要表现为大范围低频深度趋势，而非物体边缘的局部修正。p1 correction 前后为 0.213576 vs 0.213579，几乎无贡献。</figcaption></figure>
+<figure><a href="assets/gt_error_visualization_sample0/02_multiscale_z.png"><img src="assets/gt_error_visualization_sample0/02_multiscale_z.png" alt="p4 to p1 multiscale depth"></a><figcaption><b>图 9-2 · p4→p1 累计深度。</b>高分辨率层没有明显恢复汽车、树木等几何细节，输出逐层转向平滑低频梯度。该现象提示 multiscale delta 路径也需后续审计，但不能在 error geometry 尚未有效前据此先修改 DPT。</figcaption></figure>
+<figure><a href="assets/gt_error_visualization_sample0/03_error_layers.png"><img src="assets/gt_error_visualization_sample0/03_error_layers.png" alt="p2 and p1 error layers"></a><figcaption><b>图 9-3 · 最关键证据。</b>p2 metric depth 近似常数，validity=97.8%；p1 metric depth 近乎归零，RGB/Feature residual 与 validity 全黑（validity=0）。p2 Feature residual 主要呈矩形边框而非场景结构，raw mean 仅 3.56×10⁻⁵，逐帧均值归一化可能将边界/数值伪影大幅放大。</figcaption></figure>
+<figure><a href="assets/gt_error_visualization_sample0/04_feedback_correction.png"><img src="assets/gt_error_visualization_sample0/04_feedback_correction.png" alt="feedback and correction"></a><figcaption><b>图 9-4 · feedback / correction。</b>p2 encoder 确实输出非零 feedback norm，但其是否由 residual、validity 或 bias 驱动尚未分离；p1 error 三通道全零时 correction 仍非零，证明它可退化为 feature-only correction。其前后 SSI 指标几乎不变。</figcaption></figure>
+<figure><a href="assets/gt_error_visualization_sample0/05_counterfactual.png"><img src="assets/gt_error_visualization_sample0/05_counterfactual.png" alt="RGB Feature counterfactuals"></a><figcaption><b>图 9-5 · inference-time counterfactual。</b>normal / no-RGB / no-Feature / zero-residuals 的 AbsRel、RMSE、δ1 完全相同到打印精度，SSI-aligned 深度图也无可见差异。严格结论是：该 sample 上 residual 值未改变可评估深度形状；尚不能把完整架构增益归因于 error residual。</figcaption></figure>
+</div>
+
+<table>
+<tr><th>模块</th><th>实际证据</th><th>当前判断</th><th>修改顺序</th></tr>
+<tr class="worse"><td class="name">Metric-depth head / loss</td><td>p2 近常数；p1 近零；p1 validity=0</td><td><b>首要根因候选</b>。当前 loss 使用 <code>log(clamp(pred,1e-3))</code>；Softplus 输出跌破阈值后 clamp 区域梯度为 0，存在不可恢复的低值塌缩路径。</td><td><b>第 1</b></td></tr>
+<tr><td class="name">Warp 投影核心</td><td>同一实现 p2 validity=97.8%，且解析平面测试此前通过</td><td>当前没有证据表明 <code>ext_s @ inv(ext_t)</code> 或 grid 公式是首要 bug；p1 全失效更符合输入 metric depth 塌缩。修 metric depth 后再用 GT depth 替换测试确认。</td><td>第 2（验证，不先重写）</td></tr>
+<tr class="worse"><td class="name">Error normalization</td><td>p2 Feature raw mean=3.56×10⁻⁵，归一化图被矩形边框主导</td><td>按自身极小均值放大可能突出 padding/warp 边界伪影。需在 geometry 有效后加入绝对 floor、robust percentile 或 confidence gating。</td><td>第 3</td></tr>
+<tr class="worse"><td class="name">Fusion / correction</td><td>residual 清零后 SSI 指标不变；p1 correction 前后不变</td><td>当前 residual 对 sample0 的可评估形状没有作用；还需补“validity-only / 三通道全零 / raw output max-diff”以区分 validity、bias 与纯 affine 作用。</td><td>第 4</td></tr>
+<tr><td class="name">Multiscale DPT</td><td>p4→p1 越来越平滑，细节未恢复</td><td>是次级结构问题，但现在先改 DPT 会与上游无效 geometry 混杂，无法判断改动价值。</td><td>最后</td></tr>
+</table>
+
+<div class="note warn"><b>本轮定位结论（仅 sample0，不外推全 Scene20）：</b>问题首先出在 <b>metric-depth branch / supervision</b>，它向 warp 提供了近常数乃至近零深度，导致 p1 warp 全部无效；不是先把问题归咎于 warp 矩阵实现，也不应先改 DPT。随后才是 error normalization 与 fusion。下一步只改第一个模块：移除 metric loss 的 clamp 死区、为 p1/p2 metric depth 加范围/梯度/validity 健康检查，并用同一 clip 验证 p1 validity 恢复；确认后再逐模块推进。</div>
 
 <div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard · multiscale 来自阿里云 output_eval/ · GT-camera oracle 来自 results/gt_error_scene20/*.json。TAE 为修复前数据，重跑后本表将更新。</div>
 

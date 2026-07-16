@@ -120,3 +120,25 @@ HOG 是旧 `em_single` 的手工梯度方向特征，**不是** GT-camera 五臂
 - [ ] 跑全 Scene20 residual/correction 统计。
 - [ ] 根据实证决定 gating/独立 encoder/normalization 修改。
 - [ ] 固定被验证的 Feature 方案后，再把 GT extrinsics 替换为简单 Pose CNN。
+
+### Sample0 逐层可视化实证（2026-07-16）
+
+输入：Scene20 / 15-deg-left / frame 0–3，展示 frame 1；同一 RGB+Feature checkpoint 做 normal / no-RGB / no-Feature / zero-residuals 推理干预。证据图已归档到 `docs/assets/gt_error_visualization_sample0/`。
+
+确定性观察（仅该 sample）：
+
+- p2 metric depth 近似常数，但 warp validity=97.8%；p1 metric depth 近乎归零，p1 RGB/Feature residual 与 validity 全零（validity=0）。
+- p2 Feature raw residual mean 仅 `3.56e-5`，normalized map 主要由矩形边框支配；当前按自身均值归一化存在放大 padding/warp 数值伪影的风险。
+- normal / no-RGB / no-Feature / zero-residuals 的 SSI 指标完全相同到打印精度（AbsRel 均 `0.2135786414`）。这只证明 residual 值未改变该 clip 的 SSI 可评估深度形状；validity 仍保留，且 SSI 会消除全局 affine 差异，不能扩大成“raw 输出逐位相同”。
+- p1 correction 前后 AbsRel `0.213576→0.213579`，无改善；p1 error 三通道全零时 correction 仍非零，说明该支路可退化为 feature-only correction。
+- p4→p1 累计深度逐渐变成低频平滑梯度，没有明显恢复汽车/树木等几何细节，但在上游 metric geometry 失效前，不先改 DPT 以免混杂。
+
+模块定位顺序：
+
+1. **先修 metric-depth head/loss**：当前 `log(clamp(pred,1e-3))` 对低于阈值的 Softplus 输出产生零梯度死区，是 p1 低值塌缩的首要代码候选。先移除死区并增加 p1/p2 metric range、gradient、validity 健康检查。
+2. **再验证 warp 核心，不先重写**：同一投影代码在 p2 有高 validity，解析平面测试也通过；修复 metric depth 后，用 GT depth 替换做同 clip A/B，确认投影/相机约定。
+3. **再修 error normalization**：避免以极小均值将边界伪影放大；考虑 absolute floor / robust percentile / confidence。
+4. **再审计 fusion/correction**：补 validity-only、三通道全零和 raw-output max-diff，区分 residual、validity、bias 与纯 affine 作用。
+5. **最后才动 multiscale DPT**。
+
+因此当前首改模块已经收敛为 **metric-depth branch / supervision**，不是先改 warp 矩阵，也不是先改 DPT。
