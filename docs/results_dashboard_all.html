@@ -139,13 +139,21 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <div class="note"><b>独立 held-out 协议：</b>DINOv2 ViT-L + LoRA，T=4，关 GEM/ASTT；训练显式排除 <b>Scene20</b>，测试只包含 Scene20。GT K / world-to-camera extrinsics 仅供 oracle warp，<b>GT depth 不进入模型输入</b>；主输出按每 clip SSI 对齐到 GT inverse depth，再于 80 m 范围计算指标。该表不能与 KITTI 或 §①–⑦ 的不同 split 直接横比。</div>
 <table>
 <tr><th>实验臂</th><th>error signal</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>评估量</th><th>状态</th></tr>
-<tr class="base"><td class="name">Held-out multiscale baseline</td><td>—</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">训练中 / 待评估</td></tr>
-<tr class="method"><td class="name">GT-error · RGB</td><td>RGB warp residual + validity</td><td><b>0.248834</b></td><td><b>11.669141</b></td><td><b>0.574748</b></td><td>2088 clips · 8352 frames</td><td class="best">✅ 完整评估</td></tr>
-<tr class="method"><td class="name">GT-error · Feature</td><td>DPT feature warp residual + validity</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">待评估</td></tr>
-<tr class="method"><td class="name">GT-error · Geometry</td><td>metric-depth consistency + validity</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">训练中 / 待评估</td></tr>
-<tr class="method"><td class="name">GT-error · RGB+Feature</td><td>RGB + feature residuals + validity</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td>Scene20</td><td class="pending">训练中 / 待评估</td></tr>
+<tr class="base"><td class="name">Held-out multiscale baseline</td><td>—</td><td>0.444656</td><td>15.126310</td><td>0.288045</td><td>2088 clips · 8352 frames</td><td>✅ 完整评估</td></tr>
+<tr class="method"><td class="name">GT-error · RGB</td><td>RGB warp residual + validity</td><td>0.248834</td><td>11.669141</td><td class="best">0.574748</td><td>2088 clips · 8352 frames</td><td>✅ δ1 最优（与 Feature 近乎并列）</td></tr>
+<tr class="method"><td class="name">GT-error · Feature</td><td>DPT feature warp residual + validity</td><td class="best">0.233081</td><td class="best">8.612631</td><td>0.574575</td><td>2088 clips · 8352 frames</td><td class="best">✅ AbsRel / RMSE 最优</td></tr>
+<tr class="method"><td class="name">GT-error · Geometry</td><td>metric-depth consistency + validity</td><td class="worse">0.462033</td><td class="worse">15.347888</td><td class="worse">0.259086</td><td>2088 clips · 8352 frames</td><td class="worse">✅ 劣于 baseline</td></tr>
+<tr class="method"><td class="name">GT-error · RGB+Feature</td><td>RGB + feature residuals + validity</td><td>0.303622</td><td>12.370620</td><td>0.516473</td><td>2088 clips · 8352 frames</td><td>✅ 不及单 Feature / RGB</td></tr>
 </table>
-<div class="note warn"><b>当前只记录绝对结果，不提前下方法结论：</b>RGB 的 AbsRel 0.2488 看起来偏高，但必须等同 split、同训练 recipe 的 held-out multiscale baseline 后才能判断 error feedback 的净贡献。数据加载枚举 2090 个 clip，其中 2088 个有效 clip（8352 帧）进入指标聚合；随机种子为 20260714。</div>
+<div class="note"><b>✓ 五臂最终结论：</b>
+<ol style="font-size:13px;line-height:1.7;margin:4px 0">
+<li><b>Feature residual 是明确首选：</b>相对 baseline，AbsRel 降 <b>47.6%</b>（0.4447→0.2331），RMSE 降 <b>43.1%</b>（15.13→8.61），δ1 提升 <b>28.65 个百分点</b>。它相对 RGB 仍将 AbsRel 降 6.3%、RMSE 降 26.2%。</li>
+<li><b>RGB 的 δ1 仅以 0.000173 绝对值领先 Feature</b>（0.574748 vs 0.574575，约 0.017 个百分点），远小于其 AbsRel/RMSE 劣势，不能据此宣称 RGB 整体更好；下一阶段固定用 <b>Feature</b>。</li>
+<li><b>简单拼接无协同：</b>RGB+Feature（0.3036）反而弱于两种单流，说明双流残差存在干扰，不能把“更多信号”直接等同于更强。</li>
+<li><b>纯几何 depth-consistency 失败：</b>Geometry 比 baseline 的 AbsRel 高 3.9%、RMSE 高 1.5%、δ1 低 2.90 个百分点；当前 metric-depth 预测误差/遮挡判断会使几何残差成为噪声，不应进入下一阶段。</li>
+</ol></div>
+<div class="note warn"><b>论文边界：</b>这是 <b>GT-camera oracle</b>，只证明“在正确相机几何下，DPT feature warp residual 能显著改善 held-out 合成域深度”；尚不能声称部署时无需 GT pose，也不能直接外推到 KITTI。四个 error-signal 臂参数量与 loss 结构一致，可公平比较信号；baseline 没有 metric-depth/error-feedback 分支，因此它衡量的是完整方法增益，而不是单独某一通道的纯变量消融。下一步应固定 Feature 臂，只把 GT extrinsics 替换成简单 Pose CNN。</div>
+<div class="note"><b>评估量说明：</b>底层发现 2090 个 clip；<code>DepthVideoDataset.__len__()</code> 向下取四的倍数，实际一致评估 <b>2088 clips / 8352 frames</b>。五臂样本完全一致，当前排序公平。随机种子 20260714。报告字段已于 <code>3b9e7d8</code> 修正；指标本身无需重算。</div>
 
 <div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard · multiscale 来自阿里云 output_eval/ · GT-camera oracle 来自 results/gt_error_scene20/*.json。TAE 为修复前数据，重跑后本表将更新。</div>
 
