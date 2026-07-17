@@ -160,10 +160,19 @@ HOG 是旧 `em_single` 的手工梯度方向特征，**不是** GT-camera 五臂
 - 该增益是 baseline anchor、共享 readout/gauge、feedback placement、pixel-center warp、occlusion/border、cosine/fixed error scale 的组合结果，不能拆成单模块贡献。仍缺 same-split Temporal B0、null-error control 和多 seed。
 - 最终 sample0 四层 relative error：p4 `0.23119` → p3 `0.22088` → p2 `0.22093` → p1 `0.22105`。几何/对应图已健康，但只有 p4→p3 明显改善；p2/p1 平台化并轻微反弹，所以“每层都提高”尚未成立。
 
+#### v2 架构口径：不是纯 Multiscale
+
+- v2 的主干仍是原始 **Temporal DPT**：保留四层 feature pyramid、refinenet4→1、layer3/layer4 与 path4/path3 temporal modules，以及共享的 `output_conv1/output_conv2` inverse-depth readout。
+- “multiscale/multi-level”只表示 p4/p3/p2/p1 都产生 readout、接受监督并参与逐层 refine；它不再使用旧 Multiscale 的 raw `depth_prev.detach() + delta` 递归。
+- 在 Temporal DPT 锚点之外，v2 还增加四层 metric log-depth heads、GT-camera warp residual、p4/p3/p2 error encoders/feedback 与 p1 correction。因此准确称谓是 **baseline-anchored Temporal DPT + multi-level error feedback + Warp v2**，不是纯 Multiscale。
+- error encoders 和最终 correction 均为零初始化，所以初始化时主 inverse-depth 输出精确退化为原 Temporal DPT；训练后则是混合架构。它既不同于 Scratch T4 的旧 raw-delta Multiscale，也不同于五臂中的 Multiscale-only B1。
+
 ### Scratch T=4 修正协议重评（2026-07-17）
 
 - 根因：原 inference entry 没有把 config 的训练 `seq_len` 传给已经支持 `clip_len` 的模型接口；T=4 模型被按原 GemDepth 32 帧 overlap + 跨窗 affine 推理。`bc354cc` 修复为 non-overlap `clip_len=4`，并增加推理 finite fail-fast 与稳定中心化 SSI 对齐。
 - DINOv2 Temporal T4：旧错误协议 `0.083218/3.407811/0.940155` → 修正协议 **`0.080037/3.352053/0.944425`**，AbsRel 改善 3.82%。
-- DINOv2 Multiscale T4：训练已完整到 20k；修正协议最终 **`0.384146/11.539853/0.326224`**。该结果 finite 且 evaluator 正常完成，因此是有效的负结果，不再是“待评估”。
-- 同配方下 Multiscale 相对 Temporal：AbsRel 4.80×、RMSE 3.44×、δ1 −61.82pp；旧 multiscale 结构明确失败，但尚不能从最终指标把失败归因于单一模块。
+- DINOv2 Multiscale T4：训练已完整到 20k；修正协议最终 **`0.384146/11.539853/0.326224`**。该结果 finite 且 evaluator 正常完成，但后续输出扫描证明它是塌缩 checkpoint 的有效评估，而不是健康 Multiscale 模型的性能。
+- 1269 个 NPY 的分布证据：Temporal 的零值比例中位数 `0.000583`、空间标准差中位数 `135.3274`；Multiscale 的帧均值/空间标准差中位数均为 `0`，零值比例中位数和 P95 均为 `1.0`，但全局最大值达到 `8.994075705344e12`。即典型帧 100% 全零，少数像素发生极端爆值。
+- 代码闭环：旧 Multiscale 绕过带正初始化的 baseline readout，改用无末端正值约束的 signed delta heads；raw additive recursion 与各层独立 SSI gauge 不相容；顶层 ReLU 将负 raw 输出压成零，而主损失的 `[5e-3,1500]` clamp 又可让零区/爆值区失去有效梯度。finite loss/gradient 检查无法识别这种分布塌缩。
+- 同配方下 Multiscale 相对 Temporal：AbsRel 4.80×、RMSE 3.44×、δ1 −61.82pp。这些数值只记录塌缩严重程度，不能用于估计健康 Multiscale 架构上限；各机制的精确责任比例未单独消融。决定不再修复/重训该旧结构。
 - 三个静态 backbone 的旧指标仍经过默认 32 帧 entry；虽无 temporal module，跨窗 affine 可能改变输出，需后续用 `clip_len=1` 重评后再锁定静态排序。
