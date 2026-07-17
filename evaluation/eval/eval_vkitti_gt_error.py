@@ -27,6 +27,34 @@ from loss.videoloss import compute_scale_and_shift
 from model.factory import build_gemdepth_from_config
 
 
+def install_zero_error_hooks(model, mode):
+    """Inference-time control that disables v2's error pathway without retraining.
+
+    'all' feeds an all-zero error channel to every error encoder and the final
+    correction. Because those modules are bias-free, the feedback and correction
+    become exactly zero, so the trained v2 collapses to its pure anchored
+    Temporal DPT readout. 'residual' zeros only the two reprojection-residual
+    channels and keeps the validity channel, isolating whether the residual
+    VALUES matter beyond the valid-pixel mask.
+    """
+    head = model.head
+
+    def _pre_hook(module, inputs):
+        (features,) = inputs
+        if mode == 'all':
+            return (torch.zeros_like(features),)
+        if mode == 'residual':
+            gated = features.clone()
+            gated[:, :2] = 0.0
+            return (gated,)
+        raise ValueError(f"Unknown zero_error mode {mode!r}")
+
+    handles = [encoder.register_forward_pre_hook(_pre_hook)
+               for encoder in head.error_encoders.values()]
+    handles.append(head.final_error_correction.register_forward_pre_hook(_pre_hook))
+    return handles
+
+
 def evaluate_batch(pred_inverse_depth, gt_depth, mask, max_depth):
     """Return sums of per-frame AbsRel/RMSE/delta1 after per-clip SSI alignment."""
     pred = pred_inverse_depth.float()
@@ -68,6 +96,12 @@ def main():
                         help='0 evaluates all unique held-out clips')
     parser.add_argument('--max_depth', type=float, default=80.0)
     parser.add_argument('--seed', type=int, default=20260714)
+    parser.add_argument('--zero_error', choices=['none', 'all', 'residual'],
+                        default='none',
+                        help='Inference-time error-pathway control for v2 heads '
+                             '(no retraining). "all" disables the entire error '
+                             'feedback (pure anchored Temporal DPT); "residual" '
+                             'zeros only the reprojection residual and keeps validity.')
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -107,6 +141,12 @@ def main():
     model.load_state_dict(state, strict=True)
     model = model.to(device).eval()
     head_type = str(cfg.model.head_type)
+    if args.zero_error != 'none':
+        if head_type != 'multiscale_gt_error_v2':
+            raise ValueError('--zero_error is only supported for multiscale_gt_error_v2')
+        install_zero_error_hooks(model, args.zero_error)
+        print(f'[control] zero_error={args.zero_error}: error pathway disabled at '
+              f'inference (same checkpoint, no retraining)')
 
     totals = torch.zeros(3, device=device)
     count = 0
@@ -137,6 +177,7 @@ def main():
         'heldout_scenes': heldout_scenes,
         'frames_evaluated': count,
         'seed': args.seed,
+        'zero_error': args.zero_error,
         'abs_relative_difference': metrics[0],
         'rmse_linear': metrics[1],
         'delta1_acc': metrics[2],
