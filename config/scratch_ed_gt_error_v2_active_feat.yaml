@@ -1,0 +1,72 @@
+# Ablation A of the active error-feedback experiment.
+# Identical to scratch_ed_gt_error_rgbfeat_v2_active.yaml EXCEPT error_signal=feat.
+# Feature was the most stable single stream in the 5-arm study (0.233 vs RGB+Feature
+# 0.304), so this tests whether feature-only warp residual activates better.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/scratch_ed_gt_error_v2_active_feat
+  save_freq: 500
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_gt_error_v2_active_feat
+  freeze_mode: default
+  grad_accum: 1
+  aux_depth_weight: 1.0
+  aux_depth_space: disparity
+  metric_depth_weight: 0.1
+  health_print_freq: 100
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti/}']
+    crop_size: 518
+    seq_len: 4
+    exclude_scenes: ['Scene20']
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 4
+    include_scenes: ['Scene20']
+
+dataloader:
+  batch_size: 8
+  num_workers: 8
+
+model:
+  video_path: null
+  dinov2_weights: "timm://vit_large_patch14_dinov2.lvd142m"
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  head_type: multiscale_gt_error_v2
+  error_signal: feat
+  warp_offsets: [-1, 1]
+  metric_init_depth: 20.0
+  metric_min_depth: 1.0e-3
+  metric_max_depth: 100.0
+  warp_border_margin: 4.0
+  warp_occlusion_rel: 0.05
+  warp_occlusion_abs: 0.10
+  feedback_gate_init: 0.1
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+
+encoder: 'vitl'
+pose_flag: false
+num_gpus: 2
+total_step: 20000
+project_name: scratch_ed_gt_error_v2_active_feat
+resume: false
