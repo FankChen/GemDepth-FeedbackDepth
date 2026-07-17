@@ -148,6 +148,8 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <tr class="method"><td class="name">GT-error · Feature</td><td>DPT feature warp residual + validity</td><td class="best">0.233081</td><td class="best">8.612631</td><td>0.574575</td><td>2088 clips · 8352 frames</td><td class="best">✅ AbsRel / RMSE 最优</td></tr>
 <tr class="method"><td class="name">GT-error · Geometry</td><td>metric-depth consistency + validity</td><td class="worse">0.462033</td><td class="worse">15.347888</td><td class="worse">0.259086</td><td>2088 clips · 8352 frames</td><td class="worse">✅ 劣于 baseline</td></tr>
 <tr class="method"><td class="name">GT-error · RGB+Feature</td><td>RGB + feature residuals + validity</td><td>0.303622</td><td>12.370620</td><td>0.516473</td><td>2088 clips · 8352 frames</td><td>✅ 不及单 Feature / RGB</td></tr>
+<tr class="method"><td class="name">Metric log-depth fix only</td><td>旧 DPT/warp + 修复 metric clamp 死区</td><td>0.229364</td><td>10.451446</td><td>0.609936</td><td>2088 clips · 8352 frames</td><td>✅ 证明 metric branch 修复有效</td></tr>
+<tr class="method"><td class="name">★ Baseline-anchored DPT + Warp v2</td><td>4层锚定 readout + pixel-center warp + fixed error scale</td><td class="best">0.084935</td><td class="best">4.958671</td><td class="best">0.897651</td><td>2088 clips · 8352 frames</td><td class="best">✅ 当前整体最优</td></tr>
 </table>
 <div class="note"><b>✓ 五臂最终结论：</b>
 <ol style="font-size:13px;line-height:1.7;margin:4px 0">
@@ -201,6 +203,23 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 </table>
 
 <div class="note warn"><b>本轮定位结论（仅 sample0，不外推全 Scene20）：</b>问题首先出在 <b>metric-depth branch / supervision</b>，它向 warp 提供了近常数乃至近零深度，导致 p1 warp 全部无效；不是先把问题归咎于 warp 矩阵实现，也不应先改 DPT。随后才是 error normalization 与 fusion。下一步只改第一个模块：移除 metric loss 的 clamp 死区、为 p1/p2 metric depth 加范围/梯度/validity 健康检查，并用同一 clip 验证 p1 validity 恢复；确认后再逐模块推进。</div>
+
+<h2>⑩ 修复后最终结果（2026-07-17）</h2>
+<table>
+<tr><th>方案</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>相对 B1</th></tr>
+<tr class="base"><td class="name">B1 · Multiscale-only</td><td>0.444656</td><td>15.126310</td><td>0.288045</td><td>基准</td></tr>
+<tr class="method"><td class="name">旧 RGB+Feature</td><td>0.303622</td><td>12.370620</td><td>0.516473</td><td>AbsRel −31.7%</td></tr>
+<tr class="method"><td class="name">Metric log-depth fix only</td><td>0.229364</td><td>10.451446</td><td>0.609936</td><td>AbsRel −48.4%</td></tr>
+<tr class="method"><td class="name">★ Baseline-anchored DPT + Warp v2</td><td class="best">0.084935</td><td class="best">4.958671</td><td class="best">0.897651</td><td class="best">AbsRel −80.9%</td></tr>
+</table>
+<div class="note"><b>确定性结果：</b>
+<ol style="font-size:13px;line-height:1.7;margin:4px 0">
+<li>只修 metric log-depth dead zone 已把 AbsRel 从旧 RGB+Feature 的 0.3036 降到 0.2294（相对 B1 降 48.4%），证明旧 p1 metric-depth 塌缩确实是主要故障之一。</li>
+<li>完整 v2 达到 <b>0.0849 / 4.959 / 0.8977</b>，相对 B1：AbsRel 降 80.9%、RMSE 降 67.2%、δ1 提升 60.96 个百分点；相对 metric-fix-only，AbsRel 再降 63.0%。</li>
+<li>v2 的最终四层 validity 为 p4/p3/p2/p1 = 0.792/0.850/0.874/0.889，metric floor fraction 全为 0，旧 p1 validity=0 的故障已经消失。</li>
+</ol></div>
+<div class="note warn"><b>不能过度解释：</b>v2 同时修改 baseline anchor、四层共享 readout/loss gauge、feedback 注入位置、pixel-center warp、occlusion/border validity、Feature cosine 与 fixed error scale；因此 <b>0.0849 是组合系统结果</b>，不能归因于其中单个模块。Same-split Temporal B0 和 null-error 容量对照仍未补，随机种子也只有一个。</div>
+<div class="note"><b>最终 sample0 四层质量：</b>metric depth 与 warp validity 均健康，说明“每层 depth 对应同尺寸 target/warped image”的实现已成立；但 SSI relative error 为 p4 0.23119 → p3 0.22088 → p2 0.22093 → p1 0.22105。只有 p4→p3 明显改善（−4.46%），p3→p2/p1 轻微反弹。因此当前可说<b>四层几何正确、整体模型有效</b>，但还不能说每一层都持续提高深度；高分辨率 p2/p1 refine 仍有优化空间。</div>
 
 <div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard · multiscale 来自阿里云 output_eval/ · GT-camera oracle 来自 results/gt_error_scene20/*.json。TAE 为修复前数据，重跑后本表将更新。</div>
 

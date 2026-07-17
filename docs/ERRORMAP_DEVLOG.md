@@ -142,3 +142,20 @@ HOG 是旧 `em_single` 的手工梯度方向特征，**不是** GT-camera 五臂
 5. **最后才动 multiscale DPT**。
 
 因此当前首改模块已经收敛为 **metric-depth branch / supervision**，不是先改 warp 矩阵，也不是先改 DPT。
+
+### 修复后最终结果（2026-07-17）
+
+同一 Scene20-held-out 协议（2088 clips / 8352 frames）：
+
+| 方案 | AbsRel↓ | RMSE↓ | δ1↑ |
+|---|---:|---:|---:|
+| Multiscale-only B1 | 0.444656 | 15.126310 | 0.288045 |
+| 旧 RGB+Feature | 0.303622 | 12.370620 | 0.516473 |
+| Metric log-depth fix only | 0.229364 | 10.451446 | 0.609936 |
+| **Baseline-anchored DPT + Warp v2** | **0.084935** | **4.958671** | **0.897651** |
+
+- Metric-only fix 相对 B1：AbsRel −48.4%、RMSE −30.9%、δ1 +32.19pp；证明 metric branch clamp dead zone/塌缩是旧实现的重要根因。
+- 完整 v2 相对 B1：AbsRel −80.9%、RMSE −67.2%、δ1 +60.96pp；相对 metric-only fix，AbsRel 再降 63.0%。
+- v2 最终 p4/p3/p2/p1 validity = 0.792/0.850/0.874/0.889，floor fraction 全 0；旧 p1 validity=0 故障已消失。
+- 该增益是 baseline anchor、共享 readout/gauge、feedback placement、pixel-center warp、occlusion/border、cosine/fixed error scale 的组合结果，不能拆成单模块贡献。仍缺 same-split Temporal B0、null-error control 和多 seed。
+- 最终 sample0 四层 relative error：p4 `0.23119` → p3 `0.22088` → p2 `0.22093` → p1 `0.22105`。几何/对应图已健康，但只有 p4→p3 明显改善；p2/p1 平台化并轻微反弹，所以“每层都提高”尚未成立。
