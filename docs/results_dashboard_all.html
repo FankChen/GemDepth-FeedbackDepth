@@ -127,16 +127,17 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <tr class="method"><td class="name">1a · DINOv2 ViT-L · 静态</td><td>ViT-L (305M)</td><td>temporal</td><td>0.1003</td><td>3.669</td><td>0.918</td><td>✅ 有效</td></tr>
 <tr class="method"><td class="name">1b · DINOv3 ViT-S+ · 静态</td><td>ViT-S+ (28.9M)</td><td>temporal</td><td>0.1277</td><td>5.479</td><td>0.881</td><td>✅ 有效（三者最弱，最小 backbone）</td></tr>
 <tr class="method"><td class="name">1c · DINOv3 ConvNeXt-s · 静态</td><td>ConvNeXt-s (50M)</td><td>temporal</td><td class="best">0.0930</td><td>3.733</td><td>0.923</td><td>✅ 有效 · 静态最强</td></tr>
-<tr class="method"><td class="name">2 · DINOv2 ViT-L · 时序 4 帧</td><td>ViT-L (305M)</td><td>temporal</td><td class="best">0.0832</td><td class="best">3.408</td><td class="best">0.940</td><td>✅ 有效 · 整体最强</td></tr>
-<tr class="method"><td class="name">3 · DINOv2 · 多尺度 · 时序 4 帧</td><td>ViT-L (305M)</td><td>multiscale</td><td class="pending">—</td><td class="pending">—</td><td class="pending">—</td><td class="pending">⏳ 崩溃重训中</td></tr>
+<tr class="method"><td class="name">2 · DINOv2 ViT-L · 时序 4 帧</td><td>ViT-L (305M)</td><td>temporal</td><td class="best">0.0800</td><td class="best">3.352</td><td class="best">0.944</td><td>✅ T=4 修正协议 · 整体最强</td></tr>
+<tr class="method"><td class="name">3 · DINOv2 · 多尺度 · 时序 4 帧</td><td>ViT-L (305M)</td><td>multiscale</td><td class="worse">0.3841</td><td class="worse">11.540</td><td class="worse">0.326</td><td class="worse">✅ 训练/评估完成 · 方法失败</td></tr>
 </table>
 <div class="note"><b>✓ 1b（DINOv3 ViT-S+）已修复重训（_v2 · @97fb77c）：</b>原 0.391 是 <b>dying-ReLU 训练塌缩</b>——从头训的 DPT head 末层卷积初始化全负 → ReLU 杀输出+梯度 → loss 全程平在 1.15、输出恒 0。加<b>抗死初始化</b>（末层卷积 zero-weight + 正 bias）后重训，loss 正常 1.33→0.060，<b>AbsRel 0.391→0.1277、δ1 0.316→0.881</b>。→ <b>ViT-S+ 从头训确实能学</b>，之前纯属初始化死区；它是三者中最弱的（28.9M 最小 backbone），属合理结果。</div>
-<div class="note warn"><b>⏳ 3（multiscale）崩溃 → 已修：</b>报错 "Parameter marked ready twice"。<b>根因（师兄质疑后深挖）：</b>DPT <b>结构性</b>地有未用参数——<code>refinenet4.resConfUnit1</code>（顶层 fusion block 单输入、天生跳过它，<b>所有 head 都有</b>）+ multiscale 额外绕过 <code>output_conv</code>；原 <code>find_unused_parameters=True</code> 正是为兜这些未用参数而开，却与多尺度<b>多分支</b>反向冲突 → 双标记崩。<b>多分支反向本身没问题</b>（temporal head 同样 find_unused=True 却没崩，因单分支）。<code>static_graph=True</code>（@72df22e）是正确鲁棒解：一次性记录静态图的用/不用集合，同时处理未用参数+多分支。<b>实测反证</b>：改 find_unused=False 会因这些结构性未用参数在第 0 步 DDP 死锁（不只 multiscale，所有实验都会）。3_v2 正常重训中。</div>
-<div class="note"><b>本组有效结论（1a / 1c / 2）：</b>
+<div class="note warn"><b>3（multiscale）最终状态：</b>DDP 的 "Parameter marked ready twice" 已由 <code>static_graph=True</code> 正确修复；训练也在稳定 SSI 修复后从 step 12000 续到 20000 并生成完整 final checkpoint。首次 KITTI 评估失败并非 checkpoint 参数必然损坏，而是推理入口遗漏 <code>clip_len=4</code>，错误采用原 GemDepth 的 32 帧 overlap + 跨窗 affine 协议，随后旧 evaluator 的 SVD 在非有限/退化输入上崩溃。<code>bc354cc</code> 修复为训练匹配的非重叠 T=4 推理 + finite fail-fast + 稳定闭式 SSI 后，最终得到 <b>0.3841 / 11.540 / 0.326</b>。因此实验已完成且指标有效，但 multiscale 方法本身在该 from-scratch 配方下明确失败，原因尚不能仅凭最终指标归因。</div>
+<div class="note"><b>本组有效结论（1a / 1b / 1c / 2 / 3）：</b>
 <ol style="font-size:13px;line-height:1.7;margin:4px 0">
 <li><b>静态 backbone 排序（三者全有效）：ConvNeXt-s 0.0930 &gt; DINOv2 ViT-L 0.1003 &gt; ViT-S+ 0.1277</b>。关键：<b>DINOv3 ConvNeXt-s（50M）反超 DINOv2 ViT-L（305M），小 6 倍却更好</b>；ViT-S+（28.9M 最小）最弱但有效。→ 层级 ConvNeXt 特征最划算。</li>
-<li><b>时序有增益</b>：DINOv2 时序 head 0.0832 &lt; 同 backbone 静态 0.1003，约 <b>+0.017 AbsRel</b>、δ1 0.940 vs 0.918。</li>
-<li><b>caveat</b>：from-scratch 20k 步 ≠ head-only 微调，不与 §① baseline 0.0677 同档；评测因 KITTI 宽图缩放到 ~272（1a/1b/1c/2 一致）。3（multiscale）修复重训中，训完补。</li>
+<li><b>时序有增益</b>：修正推理协议后，DINOv2 temporal T4 为 0.0800 &lt; 同 backbone 静态 0.1003，AbsRel 绝对改善 0.0203、δ1 0.944 vs 0.918；它也比旧错误 32 帧推理的 0.0832 改善 3.82%。</li>
+<li><b>旧 multiscale T4 明确失败</b>：AbsRel 是 temporal T4 的 4.80 倍，RMSE 3.44 倍，δ1 低 61.82 个百分点。这与后续 §⑨/⑩ 发现的“绕过 GemDepth baseline readout、独立尺度 gauge、高层 refine 平台化”等结构问题一致，但尚缺逐层诊断，不能宣称单一根因。</li>
+<li><b>caveat</b>：from-scratch 20k 步 ≠ head-only 微调，不与 §① baseline 0.0677 同档。三个静态结果仍来自旧默认 32 帧入口；虽然静态 head 无 temporal module，跨窗 affine 仍可能改变序列输出，后续应以 <code>clip_len=1</code> 重评后再锁定最终静态排序。</li>
 </ol></div>
 
 <h2>⑧ GT-camera oracle · 多尺度 error-feedback 五臂（2026-07-15 · Scene20 held-out）</h2>
