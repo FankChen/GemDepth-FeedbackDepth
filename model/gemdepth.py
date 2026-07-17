@@ -78,6 +78,7 @@ class GemDepth(nn.Module):
         warp_border_margin=1.0,
         warp_occlusion_rel=0.05,
         warp_occlusion_abs=0.10,
+        feedback_gate_init=0.0,
     ):
         super(GemDepth, self).__init__()
 
@@ -274,7 +275,8 @@ class GemDepth(nn.Module):
                 metric_max_depth=metric_max_depth,
                 warp_border_margin=warp_border_margin,
                 warp_occlusion_rel=warp_occlusion_rel,
-                warp_occlusion_abs=warp_occlusion_abs)
+                warp_occlusion_abs=warp_occlusion_abs,
+                feedback_gate_init=feedback_gate_init)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
     def forward(self, x, gt_intrinsics=None, gt_extrinsics=None):

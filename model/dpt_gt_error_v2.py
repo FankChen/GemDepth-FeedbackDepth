@@ -35,7 +35,8 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
                  error_signal='rgbfeat', warp_offsets=(-1, 1),
                  metric_init_depth=20.0, metric_min_depth=1e-3,
                  metric_max_depth=100.0, warp_border_margin=1.0,
-                 warp_occlusion_rel=0.05, warp_occlusion_abs=0.10):
+                 warp_occlusion_rel=0.05, warp_occlusion_abs=0.10,
+                 feedback_gate_init=0.0):
         super().__init__(
             in_channels=in_channels,
             features=features,
@@ -87,6 +88,24 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
         )
         nn.init.zeros_(self.final_error_correction[-1].weight)
 
+        # Error-feedback activation. feedback_gate_init == 0 (default) keeps the
+        # feedback/correction EXACTLY zero (inert == anchored Temporal DPT): the
+        # last conv is zero-init and no gate params exist, so pre-existing v2
+        # checkpoints load unchanged. feedback_gate_init > 0 gives the last conv a
+        # small non-zero init AND a learnable per-stage gate, which breaks the
+        # zero-init gradient deadlock (W2=0 killed dL/dW1 while a near-zero error
+        # killed dL/dW2) so the error pathway can actually be trained.
+        self.errmap_active = float(feedback_gate_init) != 0.0
+        if self.errmap_active:
+            for encoder in self.error_encoders.values():
+                nn.init.normal_(encoder[-1].weight, std=1e-2)
+            nn.init.normal_(self.final_error_correction[-1].weight, std=1e-2)
+            self.feedback_gates = nn.ParameterDict({
+                stage: nn.Parameter(torch.tensor(float(feedback_gate_init)))
+                for stage in self.stage_names[:-1]
+            })
+            self.correction_gate = nn.Parameter(torch.tensor(float(feedback_gate_init)))
+
         self.capture_warps = False
         self.aux_depths = []
         self.stage_depths = {}
@@ -97,6 +116,7 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
         self.valid_maps = {}
         self.warp_visuals = {}
         self.feedback_maps = {}
+        self.stage_features = {}
         self.final_correction = None
 
     @staticmethod
@@ -272,8 +292,18 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
             }
         return channels.reshape(batch * frames, 3, height, width).to(feature.dtype)
 
+    def _apply_feedback(self, stage, error):
+        feedback = self.error_encoders[stage](error)
+        if self.errmap_active:
+            feedback = self.feedback_gates[stage] * feedback
+        return feedback
+
     def _record_stage(self, stage, feature, images, K, poses, batch, frames,
                       output_size):
+        if self.capture_warps:
+            # Diagnostic-only reference (no clone): the minimal validator needs
+            # the exact native feature that corresponds to this stage's d_s.
+            self.stage_features[stage] = feature.detach()
         inverse_depth = self._baseline_readout(feature, output_size)
         self.stage_depths[stage] = inverse_depth.reshape(
             batch, frames, 1, *output_size)
@@ -307,6 +337,7 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
         self.valid_maps = {}
         self.warp_visuals = {}
         self.feedback_maps = {}
+        self.stage_features = {}
         self.final_correction = None
 
         path_4 = self.scratch.refinenet4(
@@ -317,7 +348,7 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
                 None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         depth_4, error_4 = self._record_stage(
             'p4', path_4, images, K, poses, batch, frame_length, output_size)
-        feedback_4 = self.error_encoders['p4'](error_4)
+        feedback_4 = self._apply_feedback('p4', error_4)
         self.feedback_maps['p4'] = feedback_4.detach()
 
         path_3 = self.scratch.refinenet3(
@@ -328,14 +359,14 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
                 None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         depth_3, error_3 = self._record_stage(
             'p3', path_3, images, K, poses, batch, frame_length, output_size)
-        feedback_3 = self.error_encoders['p3'](error_3)
+        feedback_3 = self._apply_feedback('p3', error_3)
         self.feedback_maps['p3'] = feedback_3.detach()
 
         path_2 = self.scratch.refinenet2(
             path_3 + feedback_3, layer_2_rn, False, size=layer_1_rn.shape[-2:])
         depth_2, error_2 = self._record_stage(
             'p2', path_2, images, K, poses, batch, frame_length, output_size)
-        feedback_2 = self.error_encoders['p2'](error_2)
+        feedback_2 = self._apply_feedback('p2', error_2)
         self.feedback_maps['p2'] = feedback_2.detach()
 
         path_1 = self.scratch.refinenet1(
@@ -343,6 +374,8 @@ class DPTHeadGTErrorV2(DPTHeadTemporal):
         depth_1, error_1 = self._record_stage(
             'p1', path_1, images, K, poses, batch, frame_length, output_size)
         correction = self.final_error_correction(error_1)
+        if self.errmap_active:
+            correction = self.correction_gate * correction
         correction = F.interpolate(
             correction, size=output_size, mode='bilinear', align_corners=False)
         self.final_correction = correction.detach()

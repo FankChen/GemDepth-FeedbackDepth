@@ -126,6 +126,34 @@ class DPTGTErrorV2Test(unittest.TestCase):
         mismatch_loss = compute_aux_depth_loss_disp_clip(mismatched, gt, mask)
         self.assertGreater(float(mismatch_loss), 1e-3)
 
+    def test_inactive_default_stays_inert_and_loads_like_v2(self):
+        _, v2 = self.make_heads()
+        # Default build (feedback_gate_init=0) must have no gate params and keep
+        # the error pathway exactly zero, so old v2 checkpoints load unchanged.
+        self.assertFalse(v2.errmap_active)
+        self.assertFalse(hasattr(v2, 'feedback_gates'))
+        zero = torch.zeros(2, 3, 16, 16)
+        feedback = v2._apply_feedback('p2', zero)
+        torch.testing.assert_close(feedback, torch.zeros_like(feedback), atol=0, rtol=0)
+
+    def test_active_feedback_breaks_the_zero_init_deadlock(self):
+        kwargs = dict(
+            in_channels=64, features=32, out_channels=[32, 64, 128, 128],
+            num_frames=2, use_temporal=False, patch_size=14)
+        torch.manual_seed(4)
+        active = DPTHeadGTErrorV2(
+            **kwargs, error_signal='rgbfeat', metric_init_depth=20.0,
+            metric_min_depth=1e-3, metric_max_depth=100.0, feedback_gate_init=0.1)
+        self.assertTrue(active.errmap_active)
+        self.assertEqual(set(active.feedback_gates), {'p4', 'p3', 'p2'})
+        # A non-zero error now produces non-zero feedback / correction (the v2
+        # deadlock was zero-init last conv -> both gate and encoder gradients 0).
+        error = torch.randn(2, 3, 16, 16)
+        feedback = active._apply_feedback('p2', error)
+        self.assertGreater(float(feedback.abs().max()), 0.0)
+        correction = active.correction_gate * active.final_error_correction(error)
+        self.assertGreater(float(correction.abs().max()), 0.0)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -53,6 +53,8 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
             cfg, 'model.warp_occlusion_rel', default=0.05)),
         'warp_occlusion_abs': float(OmegaConf.select(
             cfg, 'model.warp_occlusion_abs', default=0.10)),
+        'feedback_gate_init': float(OmegaConf.select(
+            cfg, 'model.feedback_gate_init', default=0.0)),
     }
 
 
