@@ -151,7 +151,7 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <tr class="method"><td class="name">GT-error · Geometry</td><td>metric-depth consistency + validity</td><td class="worse">0.462033</td><td class="worse">15.347888</td><td class="worse">0.259086</td><td>2088 clips · 8352 frames</td><td class="worse">✅ 劣于 baseline</td></tr>
 <tr class="method"><td class="name">GT-error · RGB+Feature</td><td>RGB + feature residuals + validity</td><td>0.303622</td><td>12.370620</td><td>0.516473</td><td>2088 clips · 8352 frames</td><td>✅ 不及单 Feature / RGB</td></tr>
 <tr class="method"><td class="name">Metric log-depth fix only</td><td>旧 DPT/warp + 修复 metric clamp 死区</td><td>0.229364</td><td>10.451446</td><td>0.609936</td><td>2088 clips · 8352 frames</td><td>✅ 证明 metric branch 修复有效</td></tr>
-<tr class="method"><td class="name">★ Baseline-anchored Temporal DPT + Warp v2</td><td>Temporal DPT anchor + 4层 readout/error feedback + pixel-center warp</td><td class="best">0.084935</td><td class="best">4.958671</td><td class="best">0.897651</td><td>2088 clips · 8352 frames</td><td class="best">✅ 当前整体最优</td></tr>
+<tr class="method"><td class="name">★ Baseline-anchored Temporal DPT + Warp v2</td><td>Temporal DPT anchor + 4层 readout/error feedback + pixel-center warp</td><td class="best">0.084935</td><td class="best">4.958671</td><td class="best">0.897651</td><td>2088 clips · 8352 frames</td><td class="best">✅ 最优=anchored DPT；error 通路 inert（见 §⑩ null-error）</td></tr>
 </table>
 <div class="note"><b>v2 架构定位——不是“纯 Multiscale”：</b>它继承原始 <b>Temporal DPT</b> 的四层 feature pyramid、refinenet4→1、层 3/4 与 path 4/3 temporal modules，并在每一层复用同一套 GemDepth <code>output_conv1/output_conv2</code> readout；“multiscale”仅指 p4/p3/p2/p1 都产生监督与逐层 refine。除此之外，v2 还增加四层 metric log-depth heads、GT-camera warp residual、p4/p3/p2 error feedback 和 p1 correction，因此准确名称是<b>以 Temporal DPT 为锚点的多层 error-feedback 混合架构</b>。feedback/correction 为零初始化，故初始化时主 inverse-depth 路径精确退化为原 Temporal DPT；它既不是表 7 的旧 raw-delta Multiscale，也不是表 8 的纯 Multiscale-only B1。</div>
 <div class="note"><b>✓ 五臂最终结论：</b>
@@ -162,6 +162,7 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <li><b>纯几何 depth-consistency 失败：</b>Geometry 比 baseline 的 AbsRel 高 3.9%、RMSE 高 1.5%、δ1 低 2.90 个百分点；当前 metric-depth 预测误差/遮挡判断会使几何残差成为噪声，不应进入下一阶段。</li>
 </ol></div>
 <div class="note warn"><b>论文边界：</b>这是 <b>GT-camera oracle</b>，只证明“在正确相机几何下，完整 Feature-feedback architecture 能显著改善 held-out 合成域深度”；尚不能声称部署时无需 GT pose，也不能直接外推到 KITTI。四个 error-signal 臂参数量与 loss 结构一致，可公平比较信号；baseline 没有 metric-depth/error-feedback 分支，因此它衡量的是完整方法增益，而不是单独某一通道的纯变量消融。Feature 目前只是<b>下一阶段的候选</b>，在补齐 null-error 容量对照与逐层可视化前，不把 47.6% 写成 Feature error 的净贡献。</div>
+<div class="note warn"><b>⚠ 2026-07-17 决定性更新（null-error 推理控制，全 2088 clips）：</b>对同一 v2 checkpoint、同一 evaluator，用 forward pre-hook 把 error encoders 与 final correction 的输入全部置零（三分支 bias-free → feedback/correction 精确为 0，模型退化为纯 anchored Temporal DPT readout），得到 <b>0.084912 / 4.952908 / 0.897623</b>，与完整 v2 <b>0.084935 / 4.958671 / 0.897651</b> 几乎逐位相同（AbsRel 差 +0.03%、RMSE 关闭后反而低 0.12%、δ1 基本不变）。→ <b>v2 的 0.0849 几乎全部来自 anchored Temporal DPT + 四层监督，GT-camera error-feedback 通路在推理时 inert（甚至微弱有害），不是增益来源。</b>因此上文“完整 Feature-feedback architecture 是当前首选”仅在旧五臂内部排序意义上成立，<b>不能外推为“error map 带来提升”</b>。详见 §⑩。</div>
 <div class="note"><b>评估量说明：</b>底层发现 2090 个 clip；<code>DepthVideoDataset.__len__()</code> 向下取四的倍数，实际一致评估 <b>2088 clips / 8352 frames</b>。五臂样本完全一致，当前排序公平。随机种子 20260714。报告字段已于 <code>3b9e7d8</code> 修正；指标本身无需重算。</div>
 
 <div class="note"><b>表 8 baseline / 表 7 数字为何不能直接比较：</b>表 8 的 baseline 不是表 7 的最简单 temporal DPT，而是 <b>DINOv2 ViT-L + LoRA + T=4 + multiscale refine</b>，仅去掉 metric-depth/error-feedback 分支；训练还显式排除 Scene20，并在 Scene20-only 上评估。表 7 的 0.0832 则是 temporal head、全 VKITTI 训练（包含 Scene20）、KITTI Eigen 测试。两者 head、训练 split、测试域和 evaluator 均不同，所以 <code>0.0832 vs 0.4447</code> 不能解释为 multiscale 退化。要测 multiscale 的净贡献，必须补同一 Scene20-held-out 协议的 temporal baseline。</div>
@@ -214,6 +215,7 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <tr class="method"><td class="name">旧 RGB+Feature</td><td>0.303622</td><td>12.370620</td><td>0.516473</td><td>AbsRel −31.7%</td></tr>
 <tr class="method"><td class="name">Metric log-depth fix only</td><td>0.229364</td><td>10.451446</td><td>0.609936</td><td>AbsRel −48.4%</td></tr>
 <tr class="method"><td class="name">★ Baseline-anchored DPT + Warp v2</td><td class="best">0.084935</td><td class="best">4.958671</td><td class="best">0.897651</td><td class="best">AbsRel −80.9%</td></tr>
+<tr class="base"><td class="name">v2 · null-error（推理时关闭整条 error 通路）</td><td>0.084912</td><td>4.952908</td><td>0.897623</td><td>≈v2（RMSE 反更低）</td></tr>
 </table>
 <div class="note"><b>确定性结果：</b>
 <ol style="font-size:13px;line-height:1.7;margin:4px 0">
@@ -221,7 +223,8 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <li>完整 v2 达到 <b>0.0849 / 4.959 / 0.8977</b>，相对 B1：AbsRel 降 80.9%、RMSE 降 67.2%、δ1 提升 60.96 个百分点；相对 metric-fix-only，AbsRel 再降 63.0%。</li>
 <li>v2 的最终四层 validity 为 p4/p3/p2/p1 = 0.792/0.850/0.874/0.889，metric floor fraction 全为 0，旧 p1 validity=0 的故障已经消失。</li>
 </ol></div>
-<div class="note warn"><b>不能过度解释：</b>v2 同时修改 baseline anchor、四层共享 readout/loss gauge、feedback 注入位置、pixel-center warp、occlusion/border validity、Feature cosine 与 fixed error scale；因此 <b>0.0849 是组合系统结果</b>，不能归因于其中单个模块。Same-split Temporal B0 和 null-error 容量对照仍未补，随机种子也只有一个。</div>
+<div class="note warn"><b>不能过度解释：</b>v2 同时修改 baseline anchor、四层共享 readout/loss gauge、feedback 注入位置、pixel-center warp、occlusion/border validity、Feature cosine 与 fixed error scale；因此 <b>0.0849 是组合系统结果</b>，不能归因于其中单个模块。<b>null-error 容量对照已于 2026-07-17 完成（见下），证明 error 通路 inert；</b>Same-split Temporal B0（独立重训）与多 seed 仍未补。</div>
+<div class="note warn"><b>⚠ null-error 控制（决定性，2026-07-17）：</b>同一 v2 checkpoint、同一 Scene20 evaluator，用 forward pre-hook 把 error encoders 与 final correction 的输入全部置零。三条分支均 bias-free，输入全零 → 输出精确为 0，模型退化为<b>纯 anchored Temporal DPT readout</b>。全 2088 clips 结果 <b>0.084912 / 4.952908 / 0.897623</b>，对比完整 v2 <b>0.084935 / 4.958671 / 0.897651</b>：AbsRel 差 <b>+0.03%</b>、RMSE 关闭后<b>反而低 0.12%</b>、δ1 差 <b>0.003pp</b>。<b>→ 训练后的 v2 在推理时几乎不使用 GT-camera error-feedback；0.0849 的来源是 anchored Temporal DPT + 四层监督，而非 error map。</b>这在全 Scene20 上确认了 §⑨ sample0 counterfactual，不再是单样本现象。<br><b>caveat：</b>这是单 checkpoint 的<b>推理时</b>消融，只证明该训练结果里 error 通路 inert；不排除不同架构/训练配方下 error map 可能有用，也不替代 same-split 重训的 Temporal B0（训练时就没有 error 分支）与多 seed。</div>
 <div class="note"><b>最终 sample0 四层质量：</b>metric depth 与 warp validity 均健康，说明“每层 depth 对应同尺寸 target/warped image”的实现已成立；但 SSI relative error 为 p4 0.23119 → p3 0.22088 → p2 0.22093 → p1 0.22105。只有 p4→p3 明显改善（−4.46%），p3→p2/p1 轻微反弹。因此当前可说<b>四层几何正确、整体模型有效</b>，但还不能说每一层都持续提高深度；高分辨率 p2/p1 refine 仍有优化空间。</div>
 
 <div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard · multiscale 来自阿里云 output_eval/ · GT-camera oracle 来自 results/gt_error_scene20/*.json。TAE 为修复前数据，重跑后本表将更新。</div>

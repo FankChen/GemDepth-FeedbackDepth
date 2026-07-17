@@ -176,3 +176,19 @@ HOG 是旧 `em_single` 的手工梯度方向特征，**不是** GT-camera 五臂
 - 代码闭环：旧 Multiscale 绕过带正初始化的 baseline readout，改用无末端正值约束的 signed delta heads；raw additive recursion 与各层独立 SSI gauge 不相容；顶层 ReLU 将负 raw 输出压成零，而主损失的 `[5e-3,1500]` clamp 又可让零区/爆值区失去有效梯度。finite loss/gradient 检查无法识别这种分布塌缩。
 - 同配方下 Multiscale 相对 Temporal：AbsRel 4.80×、RMSE 3.44×、δ1 −61.82pp。这些数值只记录塌缩严重程度，不能用于估计健康 Multiscale 架构上限；各机制的精确责任比例未单独消融。决定不再修复/重训该旧结构。
 - 三个静态 backbone 的旧指标仍经过默认 32 帧 entry；虽无 temporal module，跨窗 affine 可能改变输出，需后续用 `clip_len=1` 重评后再锁定静态排序。
+
+### ★ null-error 推理控制：v2 增益来自 anchor 而非 error map（2026-07-17）
+
+- 动机：v2 的 0.0849 同时包含 anchor / 四层监督 / metric heads / error feedback / correction，看板一直标注不能拆分。做一个无需重训的推理时消融来隔离 error 通路。
+- 实现：`evaluation/eval/eval_vkitti_gt_error.py --zero_error all`（`exp/gt-error-channels@62b388f`）。forward pre-hook 把 3 个 error encoder 和 final correction 的输入张量整体置零；三者均 bias-free，输入全零 → feedback/correction 精确为 0，模型退化为纯 anchored Temporal DPT readout。不改权重、不重训。
+- 结果（同一 checkpoint、同一 Scene20 evaluator、全 2088 clips / 8352 frames）：
+
+| 方案 | AbsRel↓ | RMSE↓ | δ1↑ |
+|---|---:|---:|---:|
+| full v2 | 0.084935 | 4.958671 | 0.897651 |
+| v2 · null-error(all) | 0.084912 | 4.952908 | 0.897623 |
+
+- 差异：AbsRel +0.03%（full 略差）、RMSE 关闭 error 后**反而低 0.12%**、δ1 差 0.003pp。三项都在噪声级别，且方向对 error 通路不利。
+- 结论：**训练后的 v2 在推理时几乎不使用 GT-camera error-feedback；0.0849 的来源是 anchored Temporal DPT + 四层逆深度监督，不是 error map。** 全 Scene20 确认了 §⑨ sample0 counterfactual（residual 清零指标不变），不再是单样本现象。0.4447→0.0849 的整段增益应归于「把塌缩的 raw-delta Multiscale 换成 anchored Temporal DPT + 共享 gauge 四层监督」，与旧 §⑥/§⑦ 的 Temporal 有效、raw-delta 塌缩一致。
+- caveat：这是**单 checkpoint 的推理时**消融，只证明该训练结果里 error 通路 inert，不排除不同架构/训练配方（feedback 非 zero-init / gating / 改 fusion）下 error map 可能有用；也不替代 same-split 重训的纯 Temporal B0（训练时就没有 error 分支）与多 seed。
+- 后续（未做，用户暂缓）：(1) same-split 重训纯 Temporal B0，确认 0.0849 是否就是 Temporal DPT 本身能力；(2) 若救 error-map 需改架构重训而非沿用当前 inert 通路；(3) 或转 Pose CNN 让 v2 RGB-only 接入多数据集 eval。
