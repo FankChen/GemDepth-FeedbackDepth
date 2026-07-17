@@ -528,6 +528,15 @@ class GemDepth(nn.Module):
                     with torch.autocast(device_type=device_type, dtype=torch.bfloat16,
                                         enabled=(not fp32)):
                         depth, _, _, _ = self.forward(cur_input)
+                if depth.shape[:2] != (1, clip_len):
+                    raise ValueError(
+                        f"Scratch clip output shape mismatch at frame {frame_id}: "
+                        f"got {tuple(depth.shape)}, expected B,T=(1,{clip_len})")
+                if not torch.isfinite(depth).all():
+                    bad = int((~torch.isfinite(depth)).sum().item())
+                    raise FloatingPointError(
+                        f"Non-finite scratch inference output at frame {frame_id}: "
+                        f"bad={bad}/{depth.numel()} clip_len={clip_len}")
                 depth = F.interpolate(
                     depth.flatten(0, 1).unsqueeze(1).float(),
                     size=(frame_height, frame_width), mode='bilinear', align_corners=True)
