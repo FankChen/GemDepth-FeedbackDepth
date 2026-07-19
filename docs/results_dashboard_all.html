@@ -227,6 +227,24 @@ head = DPT 金字塔 4 尺度由粗到细残差细化：<code>depth_i = upsample
 <div class="note warn"><b>⚠ null-error 控制（决定性，2026-07-17）：</b>同一 v2 checkpoint、同一 Scene20 evaluator，用 forward pre-hook 把 error encoders 与 final correction 的输入全部置零。三条分支均 bias-free，输入全零 → 输出精确为 0，模型退化为<b>纯 anchored Temporal DPT readout</b>。全 2088 clips 结果 <b>0.084912 / 4.952908 / 0.897623</b>，对比完整 v2 <b>0.084935 / 4.958671 / 0.897651</b>：AbsRel 差 <b>+0.03%</b>、RMSE 关闭后<b>反而低 0.12%</b>、δ1 差 <b>0.003pp</b>。<b>→ 训练后的 v2 在推理时几乎不使用 GT-camera error-feedback；0.0849 的来源是 anchored Temporal DPT + 四层监督，而非 error map。</b>这在全 Scene20 上确认了 §⑨ sample0 counterfactual，不再是单样本现象。<br><b>caveat：</b>这是单 checkpoint 的<b>推理时</b>消融，只证明该训练结果里 error 通路 inert；不排除不同架构/训练配方下 error map 可能有用，也不替代 same-split 重训的 Temporal B0（训练时就没有 error 分支）与多 seed。</div>
 <div class="note"><b>最终 sample0 四层质量：</b>metric depth 与 warp validity 均健康，说明“每层 depth 对应同尺寸 target/warped image”的实现已成立；但 SSI relative error 为 p4 0.23119 → p3 0.22088 → p2 0.22093 → p1 0.22105。只有 p4→p3 明显改善（−4.46%），p3→p2/p1 轻微反弹。因此当前可说<b>四层几何正确、整体模型有效</b>，但还不能说每一层都持续提高深度；高分辨率 p2/p1 refine 仍有优化空间。</div>
 
+<h2>⑪ 激活 error-feedback 消融（2026-07-19 · Scene20 held-out · 标准 AbsRel）</h2>
+<div class="note"><b>动机与改动：</b>§⑩ 证明 v2 的 error 通路 inert，根因之一是 <b>zero-init 梯度死锁</b>（feedback/correction 末层 <code>zeros_</code> → <code>W₂=0</code> 杀 <code>∂L/∂W₁</code>、近零 error 杀 <code>∂L/∂W₂</code>）。新增 <code>feedback_gate_init</code>（<code>exp/gt-error-channels@024c035</code>）：>0 时末层改 small-normal(std1e-2)+每层可学 gate，打破死锁；默认 0 保持旧 inert、旧 ckpt 照常加载。在<b>完全相同的 Scene20-excluded 训练 / Scene20 评估 / seed0</b> 下重训 4 变体，唯一变量=errmap 是否/如何激活。评测仍用标准 AbsRel/RMSE/δ1（非 TAE）。<b>本轮 baseline = 现有 v2（errmap inert）0.084935 / 4.958671 / 0.897651。</b></div>
+<table>
+<tr><th>变体（激活配方）</th><th>zero_error</th><th>AbsRel↓</th><th>RMSE↓</th><th>δ1↑</th><th>full−null 缺口</th><th>vs base</th></tr>
+<tr class="base"><td class="name">baseline v2（errmap inert）</td><td>—</td><td>0.084935</td><td>4.958671</td><td>0.897651</td><td>+0.03%（§⑩）</td><td>—</td></tr>
+<tr class="method"><td class="name">feat · gate0.1 · border4</td><td>none</td><td class="best">0.083748</td><td class="best">4.8730</td><td>0.9002</td><td rowspan="2">−0.05%</td><td class="best">−1.40%</td></tr>
+<tr class="method"><td class="name">feat · gate0.1 · border4</td><td>all</td><td>0.083792</td><td>4.8697</td><td>0.9002</td><td>−1.35%</td></tr>
+<tr class="method"><td class="name">rgbfeat · gate0.1 · border4（主 M）</td><td>none</td><td>0.084463</td><td>4.9372</td><td class="best">0.9011</td><td rowspan="2">−0.10%</td><td>−0.56%</td></tr>
+<tr class="method"><td class="name">rgbfeat · gate0.1 · border4（主 M）</td><td>all</td><td>0.084545</td><td>4.9363</td><td>0.9010</td><td>−0.46%</td></tr>
+<tr class="method"><td class="name">rgbfeat · gate0.1 · border1</td><td>none</td><td class="worse">0.086667</td><td>4.9687</td><td>0.8948</td><td rowspan="2">+0.03%</td><td class="worse">+2.04%</td></tr>
+<tr class="method"><td class="name">rgbfeat · gate0.1 · border1</td><td>all</td><td>0.086639</td><td>4.9614</td><td>0.8949</td><td>+2.01%</td></tr>
+<tr class="method"><td class="name">rgbfeat · gate0.3 · border4</td><td>none</td><td class="worse">0.088001</td><td>5.1598</td><td>0.8914</td><td rowspan="2">−0.08%</td><td class="worse">+3.61%</td></tr>
+<tr class="method"><td class="name">rgbfeat · gate0.3 · border4</td><td>all</td><td>0.088070</td><td>5.1568</td><td>0.8913</td><td>+3.69%</td></tr>
+</table>
+<div class="note warn"><b>⚠ 硬结论：死锁已打破，但 errmap 推理时仍 inert。</b>四个变体的 <b>full−null 缺口全部 ≤0.1%</b>（与基准 0.03% 同量级）——关掉 error 通路几乎不改变任何一个模型的输出。<b>feat 的 −1.40% 不是 errmap 的功劳：它自己的 null 也有 −1.35%</b>（0.083792 vs 基准 0.084935），即把 errmap 关掉 feat 仍比基准好 −1.35%。→ 该增益来自<b>训练 run 本身</b>，不是“前后帧经 errmap 辅助单帧”。这是第二次实锤（§⑩ v2 null-gap 0.03%，激活后仍 ≤0.1%）。</div>
+<div class="note"><b>消融=训练扰动效应，非推理增益：</b>因 full≈null，差异全在 <b>anchor 本身</b>（训练时被激活 errmap 扰动过）。anchor 质量排序 <b>feat（−1.35%）&gt; rgbfeat（−0.46%）&gt; 基准 &gt; border1（+2.01%）&gt; gate03（+3.69%）</b>：<b>gate0.3 与 border1 反而更差</b>（强反馈/边框噪声在训练期扰坏 anchor），feat+宽border+小gate 中性偏正。即激活 errmap 在训练期像正则/扰动——好设置无害、坏设置有害，<b>但推理时都不出力</b>。border1 更差也侧证 §⑨“边框伪影主导 errmap”的判断（宽 border 训得更稳）。</div>
+<div class="note warn"><b>方向判定（诚实）：</b>在<b>监督 GT + Scene20（anchor 已到 0.085）</b>这个容易台子上，GT-camera 时序重投影 errmap <b>对单帧深度无可测推理增益</b>；根因不是死锁（已修）而是<b>“anchor 已够好、重投影残差≈0、没东西可纠”</b>。要让 errmap 生效须换到<b>单帧会真出错</b>的地方：更难数据/动态遮挡区、更弱 base，或加<b>显式强制用 errmap 的损失</b>（errmap→真误差预测 / 重投影一致性）。caveat：单 seed；未拆“feat vs rgbfeat 训练差”是否纯 run 波动。</div>
+
 <div class="meta" style="margin-top:24px">数据来源：docs/ERRORMAP_DEVLOG.md · eval_full / eval_tae 输出 · 训练 tensorboard · multiscale 来自阿里云 output_eval/ · GT-camera oracle 来自 results/gt_error_scene20/*.json。TAE 为修复前数据，重跑后本表将更新。</div>
 
 </body>

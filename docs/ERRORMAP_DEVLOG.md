@@ -192,3 +192,19 @@ HOG 是旧 `em_single` 的手工梯度方向特征，**不是** GT-camera 五臂
 - 结论：**训练后的 v2 在推理时几乎不使用 GT-camera error-feedback；0.0849 的来源是 anchored Temporal DPT + 四层逆深度监督，不是 error map。** 全 Scene20 确认了 §⑨ sample0 counterfactual（residual 清零指标不变），不再是单样本现象。0.4447→0.0849 的整段增益应归于「把塌缩的 raw-delta Multiscale 换成 anchored Temporal DPT + 共享 gauge 四层监督」，与旧 §⑥/§⑦ 的 Temporal 有效、raw-delta 塌缩一致。
 - caveat：这是**单 checkpoint 的推理时**消融，只证明该训练结果里 error 通路 inert，不排除不同架构/训练配方（feedback 非 zero-init / gating / 改 fusion）下 error map 可能有用；也不替代 same-split 重训的纯 Temporal B0（训练时就没有 error 分支）与多 seed。
 - 后续（未做，用户暂缓）：(1) same-split 重训纯 Temporal B0，确认 0.0849 是否就是 Temporal DPT 本身能力；(2) 若救 error-map 需改架构重训而非沿用当前 inert 通路；(3) 或转 Pose CNN 让 v2 RGB-only 接入多数据集 eval。
+
+### 激活 error-feedback 消融：死锁已破但推理仍 inert（2026-07-19）
+
+- 改动：新增 `feedback_gate_init`（`exp/gt-error-channels@024c035`）。>0 时 error_encoders/final_error_correction 末层改 small-normal(std1e-2)+每层可学 gate，打破 zero-init 死锁（W2=0 杀 dL/dW1、近零 error 杀 dL/dW2）；默认 0 保持旧 inert、旧 ckpt 照常 strict 加载。config `scratch_ed_gt_error_rgbfeat_v2_active.yaml`（gate0.1/border4）+ 3 消融（feat / gate0.3 / border1）`@ec4dc89`。同 Scene20-excluded 训练 / Scene20 评估 / seed0，唯一变量=errmap 激活与否/如何。标准 AbsRel（非 TAE）。baseline=v2 inert 0.084935/4.958671/0.897651。
+- 全 2088 clips 结果（full=none / null=all）：
+
+| 变体 | full AbsRel | null AbsRel | full−null | full vs base |
+|---|---:|---:|---:|---:|
+| feat·gate0.1·border4 | 0.083748 | 0.083792 | −0.05% | −1.40% |
+| rgbfeat·gate0.1·border4(主M) | 0.084463 | 0.084545 | −0.10% | −0.56% |
+| rgbfeat·gate0.1·border1 | 0.086667 | 0.086639 | +0.03% | +2.04% |
+| rgbfeat·gate0.3·border4 | 0.088001 | 0.088070 | −0.08% | +3.61% |
+
+- **硬结论：死锁已打破但 errmap 推理时仍 inert。** 四变体 full−null 缺口全 ≤0.1%（同基准 0.03% 量级），关掉 error 通路几乎不改输出。**feat 的 −1.40% 不是 errmap 功劳**：其 null 也 −1.35%（0.083792 vs 0.084935），关掉 errmap 仍好 −1.35% → 增益来自训练 run 本身，非“前后帧经 errmap 辅助单帧”。第二次实锤（§⑩ v2 null-gap 0.03%，激活后仍 ≤0.1%）。
+- 消融=训练扰动效应：full≈null 故差异全在 anchor。anchor 排序 feat(−1.35%)>rgbfeat(−0.46%)>base>border1(+2.01%)>gate03(+3.69%)。gate0.3/border1 反而更差=强反馈/边框噪声在训练期扰坏 anchor；feat+宽border+小gate 中性偏正。border1 更差侧证 §⑨“边框伪影主导 errmap”。
+- 方向判定（诚实）：监督 GT + Scene20（anchor 已 0.085）这个容易台子上，GT-camera 时序重投影 errmap 无可测推理增益；根因不是死锁（已修）而是 anchor 已够好、重投影残差≈0、没东西可纠。要生效须换到单帧会真出错处（更难数据/动态遮挡区/更弱 base）或加显式强制用 errmap 的损失（errmap→真误差预测 / 重投影一致性）。caveat：单 seed；feat vs rgbfeat 训练差是否纯波动未拆。
