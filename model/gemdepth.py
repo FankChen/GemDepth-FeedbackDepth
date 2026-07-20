@@ -131,8 +131,8 @@ class GemDepth(nn.Module):
                   f"embed_dims={self.pretrained.embed_dims}")
 
         if self.backbone_kind == 'convnext':
-            if head_type != 'temporal':
-                raise ValueError("ConvNeXt currently supports only head_type='temporal'")
+            if head_type not in ('temporal', 'multiscale'):
+                raise ValueError("ConvNeXt currently supports head_type in {'temporal', 'multiscale'}")
             if use_gem or use_astt:
                 raise ValueError("ConvNeXt hierarchical features require use_gem=false and use_astt=false")
 
@@ -239,7 +239,11 @@ class GemDepth(nn.Module):
             else:
                 self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         elif head_type == 'multiscale':
-            self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+            if self.backbone_kind == 'convnext':
+                from model.dpt_multiscale_convnext import DPTHeadMultiScaleRefineConvNeXt
+                self.head = DPTHeadMultiScaleRefineConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+            else:
+                self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
     def forward(self, x):
