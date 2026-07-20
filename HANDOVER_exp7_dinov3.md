@@ -80,7 +80,9 @@ self.backbone_kind = 'convnext' if self.pretrained.is_hierarchical else 'vit'
 
 ---
 
-## 5. 实验启动命令（博世 LSF / bsub）
+## 5. 实验启动命令
+
+### 5.1 博世（LSF / bsub）
 
 启动脚本 `scripts/train_single_a100.bsub` 已配好：队列 `batch_h200`、`module load conda/4.8.5 cuda/12.4.0`、`PY=.../envs/gemdepth/bin/python`、`TORCH_CUDA_ARCH_LIST=9.0`。它内部调用 `scripts/train_single_a100.sh <ARM>`。
 
@@ -100,6 +102,30 @@ ARM=ed_dinov3convnext_multiscale  bsub < scripts/train_single_a100.bsub
 - 日志：`jobs/gemdepth_single_a100.<JobID>.stdout`
 - 底层等价：`accelerate launch --num_processes 2 --mixed_precision bf16 train.py --config-name <config>`
 - 仅 1 卡时：配置改 `num_gpus:1`、提交加 `NUM_PROC=1`，并把 `batch_size` 8→4 防 OOM。
+
+### 5.2 阿里云（bash + nohup，无 LSF）
+
+阿里云没有 LSF，直接用 `scripts/train_single_a100.sh` 后台跑。VKITTI 默认路径 `/mnt/workspace/vkitti/vkitti/` 在阿里云就是对的，**无需设 `VKITTI_ROOT`**。
+
+```bash
+cd /mnt/workspace/liren/PP-DPT      # 阿里云 worktree（按实际路径）
+git fetch origin && git checkout exp/scratch-ed-backbones && git pull
+
+unset HF_ENDPOINT HF_HOME           # 关键：否则 timm/HF 下 DINOv3 权重会走坏镜像
+
+# 逐个后台启动（2 卡；PY 用系统 python3 或 conda gemdepth 的 python）
+CUDA_VISIBLE_DEVICES=0,1 PY=/usr/local/bin/python3 NUM_PROC=2 \
+  nohup bash scripts/train_single_a100.sh ed_dinov3convnext_multiscale > jobs/cnx_ms.log 2>&1 &
+CUDA_VISIBLE_DEVICES=0,1 PY=/usr/local/bin/python3 NUM_PROC=2 \
+  nohup bash scripts/train_single_a100.sh ed_dinov3vits_multiscale     > jobs/vits_ms.log 2>&1 &
+CUDA_VISIBLE_DEVICES=0,1 PY=/usr/local/bin/python3 NUM_PROC=2 \
+  nohup bash scripts/train_single_a100.sh ed_dinov3convnext_temporal   > jobs/cnx_tp.log 2>&1 &
+CUDA_VISIBLE_DEVICES=0,1 PY=/usr/local/bin/python3 NUM_PROC=2 \
+  nohup bash scripts/train_single_a100.sh ed_dinov3vits_temporal       > jobs/vits_tp.log 2>&1 &
+```
+- **别让多个任务抢同一对 GPU**：要么串行跑，要么给不同的 `CUDA_VISIBLE_DEVICES`（如 `0,1` 与 `2,3`）。
+- 监控：`tail -f jobs/cnx_ms.log`；续跑：`bash scripts/train_single_a100.sh <arm> -resume`。
+- 仅 1 卡：`CUDA_VISIBLE_DEVICES=0 NUM_PROC=1`，且配置 `num_gpus:1`、`batch_size` 8→4。
 
 ---
 
