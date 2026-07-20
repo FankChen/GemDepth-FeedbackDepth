@@ -46,6 +46,9 @@ def _run(use_temporal, device='cpu'):
 
     assert depth.shape == (batch * frames, 1, patch_h * patch_size, patch_w * patch_size), depth.shape
     assert torch.isfinite(depth).all()
+    # 抗死 ReLU 修复验证：初始(未训练)输出为正常数(约 0.5)，不塌成 0。
+    assert depth.min().item() >= 0.0 and depth.mean().item() > 0.4, \
+        (depth.min().item(), depth.mean().item())
     assert len(head.aux_depths) == 4
     for aux in head.aux_depths:
         assert aux.dim() == 5 and aux.shape[:3] == (batch, frames, 1), tuple(aux.shape)
@@ -66,6 +69,18 @@ def test_convnext_multiscale_static():
     _run(use_temporal=False)
 
 
+def test_original_multiscale_antidying_init():
+    # The original (ViT/DINOv2/DINOv3-ViT) multiscale head must carry the SAME
+    # anti-dying init on its delta heads: last conv weight zero, coarsest bias 0.5.
+    from model.dpt_multiscale import DPTHeadMultiScaleRefine
+    head = DPTHeadMultiScaleRefine(384, features=64, out_channels=[64, 128, 256, 256],
+                                   num_frames=2, use_temporal=False, patch_size=16)
+    for index, delta_head in enumerate(head.delta_heads):
+        assert delta_head[-1].weight.abs().sum().item() == 0.0, f'scale {index} weight not zero'
+        expected = 0.5 if index == 0 else 0.0
+        assert abs(delta_head[-1].bias.item() - expected) < 1e-6, (index, delta_head[-1].bias.item())
+
+
 def test_convnext_multiscale_temporal():
     # The temporal motion modules use xformers memory_efficient_attention, which is
     # CUDA-only, so this path can only be exercised on a free GPU. The motion calls are
@@ -83,5 +98,6 @@ def test_convnext_multiscale_temporal():
 
 if __name__ == '__main__':
     test_convnext_multiscale_static()
+    test_original_multiscale_antidying_init()
     test_convnext_multiscale_temporal()
     print('DPTHeadMultiScaleRefineConvNeXt smoke OK')

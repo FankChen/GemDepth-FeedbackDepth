@@ -54,6 +54,14 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
         self.delta_heads = nn.ModuleList([
             self._make_delta_head(features) for _ in range(4)
         ])
+        # 【抗死 ReLU 修复】multiscale 绕过了 output_conv2 的抗死初始化(zero-weight + 正 bias)，
+        # delta_heads 默认初始化的带符号输出经 GemDepth.forward 外层 F.relu 会塌成全零(+少数爆值)，
+        # 即 §⑦ DINOv2 multiscale 0.3841 的灾难性塌缩。照搬 temporal 头同款保险：
+        # 末层清零权重使初始 delta = 常数 bias；最粗尺度 +0.5 → 初始深度为正常数、存活 relu，
+        # 其余尺度 bias=0(初始为无操作 refine)，delta 权重从 0 学起，不进塌缩盆地。
+        for scale_index, delta_head in enumerate(self.delta_heads):
+            nn.init.zeros_(delta_head[-1].weight)                                     # 末层权重清零
+            nn.init.constant_(delta_head[-1].bias, 0.5 if scale_index == 0 else 0.0)  # 最粗尺度正 bias 0.5
 
         # Per-scale depth predictions cached on every forward pass so the
         # training loop can apply multi-scale supervision (see train.py's
