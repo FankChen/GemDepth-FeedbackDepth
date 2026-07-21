@@ -150,3 +150,10 @@ def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-
     valid = torch.stack(valid_stack, dim=0).max(dim=0).values
     err = photo * valid
     return err, valid
+
+
+# Generic per-layer signal error map. The photometric error map is the special case where
+# the warped signal is the RGB image; here the signal can be any (B,T,C,H,W) feature tensor
+# (e.g. a projected DPT feature or a HOG descriptor). The warping/residual computation is
+# identical, so we reuse ``photometric_error_map`` which already averages over the channel dim.
+signal_error_map = photometric_error_map

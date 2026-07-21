@@ -14,7 +14,10 @@ from model.tools.pos_embed import  get_1d_sincos_pos_embed_from_grid,RoPE2D
 from model.dinov2 import DINOv2
 from model.dpt_temporal import DPTHeadTemporal
 from model.dpt_errormap import DPTHeadErrorMap
+from model.dpt_perlayer import DPTHeadPerLayer
+from model.dpt_multiscale import DPTHeadMultiScaleRefine
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
+from model.util.lora import inject_lora
 from model.utils.util import compute_scale_and_shift, get_interpolate_frames
 from model.tools.geometry import GlobalRepresentationEncoder,normalize_pose_translations,transform_pose_using_quats_and_trans_2_to_1
 from model.tools.pose_enc import pose_encoding_to_extri_intri
@@ -52,7 +55,19 @@ class GemDepth(nn.Module):
         ffn_bias=True,
         qk_norm=True,
         init_values=0.01,
-        head_type='temporal'
+        head_type='temporal',
+        use_gem=True,
+        use_astt=True,
+        use_temporal=True,
+        lora=False,
+        lora_r=8,
+        lora_alpha=16,
+        lora_dropout=0.0,
+        lora_targets=('qkv', 'proj'),
+        dinov2_weights=None,
+        backbone='dinov2',
+        backbone_weights=None,
+        load_backbone_pretrained=True,
     ):
         super(GemDepth, self).__init__()
 
@@ -60,11 +75,70 @@ class GemDepth(nn.Module):
             'vits': [2, 5, 8, 11],
             'vitl': [4, 11, 17, 23]
         }
-        
+
+        self.use_gem = use_gem
+        self.use_astt = use_astt
         self.encoder = encoder
-        self.pretrained = DINOv2(model_name=encoder)
-        self.rope_vggt = RotaryPositionEmbedding2D(frequency=100)
-        if pos_embed.startswith("RoPE"):  
+        self.backbone_name = backbone
+        self.lora = lora
+
+        # Backbone: DINOv2 (default, original path) or a DINOv3 backbone via model/backbones.py.
+        # DINOv2 is built + (optionally) LoRA-wrapped here; DINOv3 uses build_backbone (timm model,
+        # LoRA injected inside). Only the backbone differs — everything downstream is shared.
+        if backbone == 'dinov2':
+            self.pretrained = DINOv2(model_name=encoder)
+            self.backbone_kind = 'dinov2'
+            self.patch_size = 14
+            if dinov2_weights and load_backbone_pretrained:
+                if str(dinov2_weights).startswith('timm://'):
+                    # timm's DINOv2 ViT-L weights are hosted on Hugging Face and
+                    # match Meta's official checkpoint exactly for all 342 model
+                    # tensors. timm omits only mask_token, which is never used by
+                    # this unmasked depth pipeline.
+                    import timm
+                    timm_name = str(dinov2_weights)[len('timm://'):]
+                    timm_model = timm.create_model(timm_name, pretrained=True, num_classes=0)
+                    sd = timm_model.state_dict()
+                    missing, unexpected = self.pretrained.load_state_dict(sd, strict=False)
+                    assert missing == ['mask_token'] and not unexpected, \
+                        f"Unexpected timm DINOv2 mismatch: missing={missing}, unexpected={unexpected}"
+                    del timm_model
+                    print(f"[dinov2] loaded {len(sd)} official tensors from timm/HF {timm_name}; "
+                          "mask_token unused")
+                else:
+                    sd = torch.load(dinov2_weights, map_location='cpu', weights_only=False)
+                    sd = sd.get('model', sd) if isinstance(sd, dict) else sd
+                    # Fail closed: a partial DINO load silently changes the experiment
+                    # into a frozen-random-backbone run.
+                    self.pretrained.load_state_dict(sd, strict=True)
+                    print(f"[dinov2] loaded all {len(sd)} backbone tensors from {dinov2_weights}")
+            if lora:
+                n_lora = inject_lora(self.pretrained, r=lora_r, alpha=lora_alpha,
+                                     dropout=lora_dropout, targets=tuple(lora_targets))
+                print(f"[lora] injected LoRA (r={lora_r}, alpha={lora_alpha}) into "
+                      f"{n_lora} DINOv2 linear layers, targets={tuple(lora_targets)}")
+            self.enc_embed_dim = self.pretrained.embed_dim
+        else:
+            from model.backbones import build_backbone
+            self.pretrained = build_backbone(backbone, weights=backbone_weights, lora=lora,
+                                             lora_r=lora_r, lora_alpha=lora_alpha,
+                                             lora_dropout=lora_dropout,
+                                             pretrained=load_backbone_pretrained)
+            self.backbone_kind = 'convnext' if self.pretrained.is_hierarchical else 'vit'
+            self.patch_size = self.pretrained.patch_size
+            self.enc_embed_dim = self.pretrained.embed_dims[0]
+            print(f"[backbone] {backbone} kind={self.backbone_kind} patch_size={self.patch_size} "
+                  f"embed_dims={self.pretrained.embed_dims}")
+
+        if self.backbone_kind == 'convnext':
+            if head_type not in ('temporal', 'multiscale'):
+                raise ValueError("ConvNeXt currently supports head_type in {'temporal', 'multiscale'}")
+            if use_gem or use_astt:
+                raise ValueError("ConvNeXt hierarchical features require use_gem=false and use_astt=false")
+
+        # ---- ASTT spatial RoPE (only used when ASTT is enabled) ----
+        self.rope = None
+        if pos_embed.startswith("RoPE"):
             if RoPE2D is None:
                 raise ImportError(
                     "Cannot find cuRoPE2D, please install it following the README instructions"
@@ -73,83 +147,105 @@ class GemDepth(nn.Module):
             self.rope = RoPE2D(freq=freq)
         else:
             raise NotImplementedError("Unknown pos_embed " + pos_embed)
-        self.pos_encoder = PositionalEncoding(
-            embed_dim,
-            dropout=0.,
-            max_len=num_frames
-        )
-        self.global_blocks = nn.ModuleList([
-            vggt_Block(
-                dim=embed_dim,
-                num_heads=num_heads//2,
-                mlp_ratio=mlp_ratio,
-                qkv_bias=qkv_bias,
-                proj_bias=proj_bias,
-                ffn_bias=ffn_bias,
-                init_values=init_values,
-                qk_norm=qk_norm,
-                rope=self.rope_vggt,
-            ) for _ in range(depth1)
-        ])
-        self.frame_blocks = nn.ModuleList([
-            vggt_Block(
-                dim=embed_dim,
-                num_heads=num_heads//2,
-                mlp_ratio=mlp_ratio,
-                qkv_bias=qkv_bias,
-                proj_bias=proj_bias,
-                ffn_bias=ffn_bias,
-                init_values=init_values,
-                qk_norm=qk_norm,
-                rope=self.rope_vggt,
-            ) for _ in range(depth1)
-        ])
-        
-        self.spatial_blocks = nn.ModuleList([
-            Block(
-                dim=embed_dim,
-                num_heads=num_heads,
-                mlp_ratio=mlp_ratio,
-                qkv_bias=True,
-                norm_layer=norm_layer,
-                rope=self.rope ,
-                attn_implementation=attn_implementation
-            ) for _ in range(depth2)
-        ])
-        self.time_blocks = nn.ModuleList([
-            Block(
-                dim=embed_dim,
-                num_heads=num_heads*4,
-                mlp_ratio=mlp_ratio,
-                qkv_bias=True,
-                norm_layer=norm_layer,
-                rope=None,
-                attn_implementation=attn_implementation
-            ) for _ in range(depth2)
-        ])
-        self.register_buffer(
-            "image_idx_emb",
-            torch.from_numpy(
-                get_1d_sincos_pos_embed_from_grid(embed_dim, np.arange(50))
-            ).float(),
-            persistent=False,
-        )
-        self.pos=PositionGetter()
-        self.dec_norm = norm_layer(embed_dim)
-        self.camera_token = nn.Parameter(torch.randn(1, 2, 1, embed_dim))
-        self.register_token = nn.Parameter(torch.randn(1, 2, num_register_tokens, embed_dim))
-        self.patch_start_idx = 1 + num_register_tokens
-        self.camera_head = CameraHead(dim_in=2*embed_dim) 
+
+        self.pos = PositionGetter()   # spatial position generator (shared)
+
+        # ---- GEM: Geometry-Embedding Module (optional) ----
+        if self.use_gem:
+            self.rope_vggt = RotaryPositionEmbedding2D(frequency=100)
+            self.pos_encoder = PositionalEncoding(
+                embed_dim,
+                dropout=0.,
+                max_len=num_frames
+            )
+            self.global_blocks = nn.ModuleList([
+                vggt_Block(
+                    dim=embed_dim,
+                    num_heads=num_heads//2,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    ffn_bias=ffn_bias,
+                    init_values=init_values,
+                    qk_norm=qk_norm,
+                    rope=self.rope_vggt,
+                ) for _ in range(depth1)
+            ])
+            self.frame_blocks = nn.ModuleList([
+                vggt_Block(
+                    dim=embed_dim,
+                    num_heads=num_heads//2,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    ffn_bias=ffn_bias,
+                    init_values=init_values,
+                    qk_norm=qk_norm,
+                    rope=self.rope_vggt,
+                ) for _ in range(depth1)
+            ])
+            self.camera_token = nn.Parameter(torch.randn(1, 2, 1, embed_dim))
+            self.register_token = nn.Parameter(torch.randn(1, 2, num_register_tokens, embed_dim))
+            self.patch_start_idx = 1 + num_register_tokens
+            self.camera_head = CameraHead(dim_in=2*embed_dim)
+            self.cam_rot_encoder = GlobalRepresentationEncoder(name="cam_rot_quats_encoder", in_chans=4)
+            self.cam_trans_encoder = GlobalRepresentationEncoder(name="cam_trans_encoder", in_chans=3)
+            self.cam_trans_scale_encoder = GlobalRepresentationEncoder(name="scale_encoder", in_chans=1)
+        else:
+            self.patch_start_idx = 0
+
+        # ---- ASTT: Alternating Spatio-Temporal Transformer (optional) ----
+        if self.use_astt:
+            self.spatial_blocks = nn.ModuleList([
+                Block(
+                    dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=True,
+                    norm_layer=norm_layer,
+                    rope=self.rope,
+                    attn_implementation=attn_implementation
+                ) for _ in range(depth2)
+            ])
+            self.time_blocks = nn.ModuleList([
+                Block(
+                    dim=embed_dim,
+                    num_heads=num_heads*4,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=True,
+                    norm_layer=norm_layer,
+                    rope=None,
+                    attn_implementation=attn_implementation
+                ) for _ in range(depth2)
+            ])
+            self.dec_norm = norm_layer(embed_dim)
+            self.register_buffer(
+                "image_idx_emb",
+                torch.from_numpy(
+                    get_1d_sincos_pos_embed_from_grid(embed_dim, np.arange(50))
+                ).float(),
+                persistent=False,
+            )
+
         self.head_type = head_type
         if head_type == 'errormap':
-            self.head = DPTHeadErrorMap(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
+            self.head = DPTHeadErrorMap(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
+        elif head_type == 'perlayer':
+            self.head = DPTHeadPerLayer(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
         elif head_type == 'temporal':
-            self.head = DPTHeadTemporal(self.pretrained.embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe)
+            if self.backbone_kind == 'convnext':
+                from model.dpt_convnext import DPTHeadTemporalConvNeXt
+                self.head = DPTHeadTemporalConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+            else:
+                self.head = DPTHeadTemporal(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+        elif head_type == 'multiscale':
+            if self.backbone_kind == 'convnext':
+                from model.dpt_multiscale_convnext import DPTHeadMultiScaleRefineConvNeXt
+                self.head = DPTHeadMultiScaleRefineConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+            else:
+                self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
-        self.cam_rot_encoder=GlobalRepresentationEncoder(name="cam_rot_quats_encoder",in_chans=4)
-        self.cam_trans_encoder=GlobalRepresentationEncoder(name="cam_trans_encoder",in_chans=3)
-        self.cam_trans_scale_encoder=GlobalRepresentationEncoder(name="scale_encoder",in_chans=1)
     def forward(self, x):
         feats=[]
         tokens=[]
@@ -164,8 +260,26 @@ class GemDepth(nn.Module):
         input_images = x
         frame_idx = 0
         global_idx = 0
-        patch_h, patch_w = H // 14, W // 14
-        features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
+        patch_h, patch_w = H // self.patch_size, W // self.patch_size
+        if self.backbone_kind == 'convnext':
+            # Hierarchical ConvNeXt: feed the native NCHW pyramid straight to the DPT head,
+            # bypassing all token-based pos / GEM / ASTT logic (encoder+decoder only).
+            conv_feats = [f.float() for f in self.pretrained(x.flatten(0, 1))]
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                depth = self.head(conv_feats, patch_h, patch_w, T)
+                depth = F.interpolate(depth, size=(H, W), mode="bilinear", align_corners=True)
+                depth = F.relu(depth)
+            return depth.squeeze(1).unflatten(0, (B, T)), None, None, None
+        if self.backbone_kind == 'dinov2':
+            features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
+        elif self.backbone_kind == 'vit':
+            # DINOv3 ViT: 4 NCHW maps (uniform stride) -> (token, dummy_cls) matching the DPT head API.
+            features = []
+            for f in self.pretrained(x.flatten(0, 1)):
+                tok = f.flatten(2).permute(0, 2, 1).contiguous()  # (BT, h*w, C)
+                features.append((tok, tok.new_zeros((tok.shape[0], tok.shape[2]))))
+        else:
+            raise NotImplementedError(f"Unknown backbone_kind {self.backbone_kind}")
         for j, x in enumerate(features):
             x, cls_token = x[0], x[1]
             feats.append(x)
@@ -176,101 +290,107 @@ class GemDepth(nn.Module):
                 pos_special.append(torch.zeros(B * T, self.patch_start_idx, 2).to(feats[j].device).to(pos[j].dtype))
                 pos_cam.append(torch.cat([pos_special[j], pos[j]], dim=1))
         BT,L,C=feats[3].shape
-        
-        #  GEM module to generate pose
-        camera_token = self.slice_expand_and_flatten(self.camera_token, B, T)
-        register_token = self.slice_expand_and_flatten(self.register_token, B, T)
-        tokens_all = torch.cat([camera_token, register_token, feats[3]], dim=1)
-        _,P,_=tokens_all.shape
-        tokens_all,frame_idx,frame_intermediates=self._process_frame_attention(tokens_all, B, T, P, C, frame_idx, pos=pos_cam[0])
-        tokens_all,global_idx,global_intermediates=self._process_global_attention(tokens_all, B, T, P, C, global_idx, pos=pos_cam[0])
-        concat_inter = torch.cat([frame_intermediates,global_intermediates], dim=-1)
-        with torch.autocast("cuda", enabled=False):
-            pose_enc_list = self.camera_head(concat_inter)
-            extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc_list[-1], H, W)
-            #pose mask
-            device =feats[0].device
-            dtype = feats[0].dtype
-            overall_geometric_input_mask = (
-                torch.rand(B, device=device)
-                < 0.9
-            )
-            overall_geometric_input_mask = overall_geometric_input_mask.repeat(T)
-            per_sample_geometric_input_mask = torch.rand(
-                B * T, device=device
-            ) < 0.95
-            per_sample_geometric_input_mask = (
-                per_sample_geometric_input_mask & overall_geometric_input_mask
-            )
-            # Get the camera input mask
-            per_sample_cam_input_mask = (
-                torch.rand(B, device=device)
-                < 0.5
-            )
-            per_sample_cam_input_mask = per_sample_cam_input_mask.repeat(T)
-            per_sample_cam_input_mask = (
-                per_sample_cam_input_mask & per_sample_geometric_input_mask
-            )
-            # Initialize the pose quats and trans for all views as identity
-            pose_quats_across_views = torch.tensor(
-                [0.0, 0.0, 0.0, 1.0], dtype=dtype, device=device
-            ).repeat(B*T, 1)  # (q_x, q_y, q_z, q_w)
-            pose_trans_across_views = torch.zeros(
-                (B*T, 3), dtype=dtype, device=device
-            )
-            # pose embedding
-            trans = pose_enc_list[-1][..., :3]
-            quat = pose_enc_list[-1][..., 3:7]
-            trans_0=trans[:,0].unsqueeze(1).repeat(1,T,1)
-            quat_0=quat[:,0].unsqueeze(1).repeat(1,T,1)
-            trans=trans.flatten(0,1)[per_sample_cam_input_mask]
-            quat=quat.flatten(0,1)[per_sample_cam_input_mask]
-            trans_0=trans_0.flatten(0,1)[per_sample_cam_input_mask]
-            quat_0=quat_0.flatten(0,1)[per_sample_cam_input_mask]
-            (quat,trans) = transform_pose_using_quats_and_trans_2_to_1(quat_0,trans_0,quat,trans)   
-            pose_quats_across_views[per_sample_cam_input_mask] = (quat.to(dtype=dtype))
-            pose_trans_across_views[per_sample_cam_input_mask] = (trans.to(dtype=dtype))  
-            pose_quats_features = self.cam_rot_encoder(pose_quats_across_views) # B*T, embed_dim
-            pose_trans_across_views=pose_trans_across_views.unflatten(0, (B, T))
-            scaled_pose_trans, pose_trans_norm_factors = (
-                normalize_pose_translations(
-                    pose_trans_across_views, return_norm_factor=True
+
+        # ---- GEM: predict camera pose + geometric embeddings (optional) ----
+        pose_enc_list = extrinsic = intrinsic = None
+        pose_quats_features = pose_trans_features = pose_trans_scale_features = None
+        if self.use_gem:
+            camera_token = self.slice_expand_and_flatten(self.camera_token, B, T)
+            register_token = self.slice_expand_and_flatten(self.register_token, B, T)
+            tokens_all = torch.cat([camera_token, register_token, feats[3]], dim=1)
+            _,P,_=tokens_all.shape
+            tokens_all,frame_idx,frame_intermediates=self._process_frame_attention(tokens_all, B, T, P, C, frame_idx, pos=pos_cam[0])
+            tokens_all,global_idx,global_intermediates=self._process_global_attention(tokens_all, B, T, P, C, global_idx, pos=pos_cam[0])
+            concat_inter = torch.cat([frame_intermediates,global_intermediates], dim=-1)
+            with torch.autocast("cuda", enabled=False):
+                pose_enc_list = self.camera_head(concat_inter)
+                extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc_list[-1], H, W)
+                #pose mask
+                device =feats[0].device
+                dtype = feats[0].dtype
+                overall_geometric_input_mask = (
+                    torch.rand(B, device=device)
+                    < 0.9
                 )
-            )
-            pose_trans_norm_factors = pose_trans_norm_factors.unsqueeze(-1).repeat(T, 1)
-            pose_trans_features = self.cam_trans_encoder(scaled_pose_trans.flatten(0,1)) 
-            log_pose_trans_norm_factors_across_views = torch.log(
-                pose_trans_norm_factors + 1e-8
-            )
-            pose_trans_scale_features = self.cam_trans_scale_encoder(log_pose_trans_norm_factors_across_views)
-        
-        #index embbeding
-        for b in range(B):    
-            for i in range(T):  
-                image_ids.extend([i] * L)  
-        image_ids = torch.tensor(image_ids).reshape(B * T, L).to(feats[0][0].device)
-        num_images = (torch.max(image_ids) + 1).cpu().item()
-        image_idx_emb = self.image_idx_emb[:num_images]
-        image_pos = image_idx_emb[image_ids]
-        
+                overall_geometric_input_mask = overall_geometric_input_mask.repeat(T)
+                per_sample_geometric_input_mask = torch.rand(
+                    B * T, device=device
+                ) < 0.95
+                per_sample_geometric_input_mask = (
+                    per_sample_geometric_input_mask & overall_geometric_input_mask
+                )
+                # Get the camera input mask
+                per_sample_cam_input_mask = (
+                    torch.rand(B, device=device)
+                    < 0.5
+                )
+                per_sample_cam_input_mask = per_sample_cam_input_mask.repeat(T)
+                per_sample_cam_input_mask = (
+                    per_sample_cam_input_mask & per_sample_geometric_input_mask
+                )
+                # Initialize the pose quats and trans for all views as identity
+                pose_quats_across_views = torch.tensor(
+                    [0.0, 0.0, 0.0, 1.0], dtype=dtype, device=device
+                ).repeat(B*T, 1)  # (q_x, q_y, q_z, q_w)
+                pose_trans_across_views = torch.zeros(
+                    (B*T, 3), dtype=dtype, device=device
+                )
+                # pose embedding
+                trans = pose_enc_list[-1][..., :3]
+                quat = pose_enc_list[-1][..., 3:7]
+                trans_0=trans[:,0].unsqueeze(1).repeat(1,T,1)
+                quat_0=quat[:,0].unsqueeze(1).repeat(1,T,1)
+                trans=trans.flatten(0,1)[per_sample_cam_input_mask]
+                quat=quat.flatten(0,1)[per_sample_cam_input_mask]
+                trans_0=trans_0.flatten(0,1)[per_sample_cam_input_mask]
+                quat_0=quat_0.flatten(0,1)[per_sample_cam_input_mask]
+                (quat,trans) = transform_pose_using_quats_and_trans_2_to_1(quat_0,trans_0,quat,trans)   
+                pose_quats_across_views[per_sample_cam_input_mask] = (quat.to(dtype=dtype))
+                pose_trans_across_views[per_sample_cam_input_mask] = (trans.to(dtype=dtype))  
+                pose_quats_features = self.cam_rot_encoder(pose_quats_across_views) # B*T, embed_dim
+                pose_trans_across_views=pose_trans_across_views.unflatten(0, (B, T))
+                scaled_pose_trans, pose_trans_norm_factors = (
+                    normalize_pose_translations(
+                        pose_trans_across_views, return_norm_factor=True
+                    )
+                )
+                pose_trans_norm_factors = pose_trans_norm_factors.unsqueeze(-1).repeat(T, 1)
+                pose_trans_features = self.cam_trans_encoder(scaled_pose_trans.flatten(0,1)) 
+                log_pose_trans_norm_factors_across_views = torch.log(
+                    pose_trans_norm_factors + 1e-8
+                )
+                pose_trans_scale_features = self.cam_trans_scale_encoder(log_pose_trans_norm_factors_across_views)
+
         #ASTT module
-        for m in range(3,4):
-            feats[m]=feats[m]+pose_quats_features.unsqueeze(1)+pose_trans_features.unsqueeze(1)+pose_trans_scale_features.unsqueeze(1)
-            feats[m]=self.dec_norm(feats[m])
-            feats[m]+=image_pos
-            feats[m] = rearrange(feats[m], "(b t) l c -> b (t l) c",b=B,t=T,l=L,c=C)
-            pos[m] = rearrange(pos[m], "(b t) l two -> b (t l) two",b=B,t=T,l=L)
-            for blk1,blk2 in zip(self.spatial_blocks,self.time_blocks):
-                feats[m] = blk1(feats[m],pos[m])
-                feats[m] = rearrange(feats[m], "b (t l) c -> (b l) t c",b=B,t=T,l=L,c=C)
-                feats[m] = blk2(feats[m])
-                feats[m] = rearrange(feats[m], "(b l) t c -> b (t l) c",b=B,t=T,l=L,c=C)
-            feats[m] = rearrange(feats[m], "b (t l) c -> (b t) l c",b=B,t=T,l=L,c=C)
-        features_attn=tuple(zip(feats, tokens))
+        if self.use_astt:
+            #index embbeding
+            for b in range(B):
+                for i in range(T):
+                    image_ids.extend([i] * L)
+            image_ids = torch.tensor(image_ids).reshape(B * T, L).to(feats[0][0].device)
+            num_images = (torch.max(image_ids) + 1).cpu().item()
+            image_idx_emb = self.image_idx_emb[:num_images]
+            image_pos = image_idx_emb[image_ids]
+            for m in range(3,4):
+                if self.use_gem:
+                    feats[m]=feats[m]+pose_quats_features.unsqueeze(1)+pose_trans_features.unsqueeze(1)+pose_trans_scale_features.unsqueeze(1)
+                feats[m]=self.dec_norm(feats[m])
+                feats[m]=feats[m]+image_pos
+                feats[m] = rearrange(feats[m], "(b t) l c -> b (t l) c",b=B,t=T,l=L,c=C)
+                pos[m] = rearrange(pos[m], "(b t) l two -> b (t l) two",b=B,t=T,l=L)
+                for blk1,blk2 in zip(self.spatial_blocks,self.time_blocks):
+                    feats[m] = blk1(feats[m],pos[m])
+                    feats[m] = rearrange(feats[m], "b (t l) c -> (b l) t c",b=B,t=T,l=L,c=C)
+                    feats[m] = blk2(feats[m])
+                    feats[m] = rearrange(feats[m], "(b l) t c -> b (t l) c",b=B,t=T,l=L,c=C)
+                feats[m] = rearrange(feats[m], "b (t l) c -> (b t) l c",b=B,t=T,l=L,c=C)
+        # The DPT heads intentionally run in fp32. Explicit conversion is required:
+        # disabling autocast alone does not promote bf16 backbone activations.
+        features_attn=tuple((feat.float(), token.float()) for feat, token in zip(feats, tokens))
         
         #dpt_head
-        with torch.autocast("cuda", enabled=False):
-            if self.head_type == 'errormap':
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            if self.head_type in ('errormap', 'perlayer'):
                 depth = self.head(features_attn, patch_h, patch_w, T,
                                   images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
             else:
@@ -359,12 +479,21 @@ class GemDepth(nn.Module):
         # combined = combined.view(B,S*X,C)
         return combined
     
-    def infer_video_depth(self, frames, target_fps, input_size=518, device='cuda', fp32=False):
+    def infer_video_depth(self, frames, target_fps, input_size=518, device='cuda', fp32=False,
+                          clip_len=None):
+        """Infer inverse depth for a video.
+
+        ``clip_len=None`` preserves GemDepth's original 32-frame overlapping
+        inference and cross-window affine alignment. A positive ``clip_len``
+        runs independent non-overlapping clips (padding only the final clip),
+        which is the exact protocol for scratch models trained with T=1 or T=4.
+        """
         frame_height, frame_width = frames[0].shape[:2]
+        input_divisor = 32 if self.backbone_kind == 'convnext' else self.patch_size
         ratio = max(frame_height, frame_width) / min(frame_height, frame_width)
         if ratio > 1.78:  # we recommend to process video with ratio smaller than 16:9 due to memory limitation
             input_size = int(input_size * 1.777 / ratio)
-            input_size = round(input_size / 14) * 14
+            input_size = max(input_divisor, round(input_size / input_divisor) * input_divisor)
 
         transform = Compose([
             Resize(
@@ -372,7 +501,7 @@ class GemDepth(nn.Module):
                 height=input_size,
                 resize_target=False,
                 keep_aspect_ratio=True,
-                ensure_multiple_of=14,
+                ensure_multiple_of=input_divisor,
                 resize_method='lower_bound',
                 image_interpolation_method=cv2.INTER_CUBIC,
             ),
@@ -381,8 +510,46 @@ class GemDepth(nn.Module):
         ])
 
         frame_list = [frames[i] for i in range(frames.shape[0])]
-        frame_step = INFER_LEN - OVERLAP
         org_video_len = len(frame_list)
+
+        if clip_len is not None:
+            assert isinstance(clip_len, int) and clip_len > 0, \
+                f"clip_len must be a positive integer or None, got {clip_len}"
+            depth_list = []
+            device_type = torch.device(device).type
+            for frame_id in tqdm(range(0, org_video_len, clip_len)):
+                actual_len = min(clip_len, org_video_len - frame_id)
+                clip_frames = frame_list[frame_id:frame_id + actual_len]
+                clip_frames += [clip_frames[-1].copy()] * (clip_len - actual_len)
+                cur_list = [
+                    torch.from_numpy(transform({
+                        'image': frame.astype(np.float32) / 255.0
+                    })['image']).unsqueeze(0).unsqueeze(0)
+                    for frame in clip_frames
+                ]
+                cur_input = torch.cat(cur_list, dim=1).to(device)
+                with torch.no_grad():
+                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16,
+                                        enabled=(not fp32)):
+                        depth, _, _, _ = self.forward(cur_input)
+                if depth.shape[:2] != (1, clip_len):
+                    raise ValueError(
+                        f"Scratch clip output shape mismatch at frame {frame_id}: "
+                        f"got {tuple(depth.shape)}, expected B,T=(1,{clip_len})")
+                if not torch.isfinite(depth).all():
+                    bad = int((~torch.isfinite(depth)).sum().item())
+                    raise FloatingPointError(
+                        f"Non-finite scratch inference output at frame {frame_id}: "
+                        f"bad={bad}/{depth.numel()} clip_len={clip_len}")
+                depth = F.interpolate(
+                    depth.flatten(0, 1).unsqueeze(1).float(),
+                    size=(frame_height, frame_width), mode='bilinear', align_corners=True)
+                depth_list.extend(depth[i, 0].cpu().numpy() for i in range(actual_len))
+
+            assert len(depth_list) == org_video_len
+            return np.stack(depth_list, axis=0), target_fps
+
+        frame_step = INFER_LEN - OVERLAP
         append_frame_len = (frame_step - (org_video_len % frame_step)) % frame_step + (INFER_LEN - frame_step)
         frame_list = frame_list + [frame_list[-1].copy()] * append_frame_len
 
@@ -397,7 +564,8 @@ class GemDepth(nn.Module):
                 cur_input[:, :OVERLAP, ...] = pre_input[:, KEYFRAMES, ...]
 
             with torch.no_grad():
-                with torch.autocast(device_type=device, enabled=(not fp32)):
+                with torch.autocast(device_type=torch.device(device).type,
+                                    dtype=torch.bfloat16, enabled=(not fp32)):
                     depth,_,_,_= self.forward(cur_input) # depth shape: [1, T, H, W]
 
             depth = depth.to(cur_input.dtype)

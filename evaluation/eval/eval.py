@@ -9,6 +9,7 @@ import os
 import torch
 from metric import *
 import metric
+from alignment import require_finite, stable_scale_and_shift
 device = 'cuda'
 eval_metrics = [
     "abs_relative_difference",
@@ -70,30 +71,43 @@ def eval_depthcrafter(infer_paths, depth_gt_paths, factors, args):
     infs = []
     seq_length = args.max_eval_len
     dataset_max_depth = args.max_depth_eval
+    loaded_paths = []
     for i in range(len(infer_paths)):
         if not os.path.exists(infer_paths[i]):
-            continue
+            raise FileNotFoundError(
+                f'Missing prediction file; rerun inference completely: '
+                f'{infer_paths[i]}')
         depth_gt = get_gt(depth_gt_paths[i], factors[i], args)
         depth_gt = depth_gt[args.a:args.b, args.c:args.d]
-        
+        depth_gt = require_finite(
+            depth_gt, 'Ground-truth depth', depth_gt_paths[i]).astype(np.float32)
         infer = get_infer(infer_paths[i], args, target_size=depth_gt.shape)
+        infer = require_finite(
+            infer, 'Predicted inverse depth', infer_paths[i]).astype(np.float32)
         gts.append(depth_gt)
         infs.append(infer)
+        loaded_paths.append(infer_paths[i])
+    if not infs:
+        raise FileNotFoundError(
+            f'No prediction files found for sequence; first expected path: '
+            f'{infer_paths[0] if infer_paths else "<empty sequence>"}')
     gts = np.stack(gts, axis=0)
     
     infs = np.stack(infs, axis=0)
     infs = infs[:seq_length]
     gts = gts[:seq_length]
     valid_mask = np.logical_and((gts>1e-3), (gts<dataset_max_depth))
-    
+    if not valid_mask.any():
+        raise ValueError(
+            f'No valid GT pixels for sequence beginning at {loaded_paths[0]}')
     gt_disp_masked = 1. / (gts[valid_mask].reshape((-1,1)).astype(np.float64) + 1e-8)
     infs = np.clip(infs, a_min=1e-3, a_max=None)
     pred_disp_masked = infs[valid_mask].reshape((-1,1)).astype(np.float64)
-    _ones = np.ones_like(pred_disp_masked)
-    A = np.concatenate([pred_disp_masked, _ones], axis=-1)
-    X = np.linalg.lstsq(A, gt_disp_masked, rcond=None)[0]
-    scale, shift = X
+    scale, shift = stable_scale_and_shift(
+        pred_disp_masked, gt_disp_masked)
     aligned_pred = scale * infs + shift
+    require_finite(
+        aligned_pred, 'SSI-aligned inverse depth', loaded_paths[0])
     aligned_pred = np.clip(aligned_pred, a_min=1e-3, a_max=None)
     pred_depth = depth2disparity(aligned_pred)
     gt_depth = gts

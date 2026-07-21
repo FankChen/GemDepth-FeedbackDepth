@@ -1,0 +1,47 @@
+# Single-A100 METHOD arm: per-layer DPT head (per-layer refine z_l + warp residual dz_l with
+# deep supervision), freeze everything except the head, fine-tune on VKITTI from the pretrained
+# GemDepth weights, evaluate on KITTI. Only the DPT head differs from single_a100_baseline.yaml.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_perlayer
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_perlayer
+  freeze_mode: head_only      # only the DPT head (incl. per-layer refine/warp modules) is trainable
+  grad_accum: 4               # effective batch = batch_size * grad_accum
+  aux_depth_weight: 0.1       # deep-supervise the per-layer refined depths (head.aux_depths)
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5            # head params land in the "other" group
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  video_path: "./checkpoint/gemdepth.pth"
+  head_type: perlayer
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 10000
+project_name: video_single_a100_perlayer
+resume: false

@@ -12,6 +12,9 @@ root_dir = os.path.dirname(parent_dir)
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 from model.gemdepth import GemDepth
+from model.factory import build_gemdepth_from_config
+from omegaconf import OmegaConf
+from protocol import infer_video_with_protocol, resolve_inference_clip_len
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -24,17 +27,34 @@ if __name__ == '__main__':
                         help='Path to the model checkpoint (model-only state dict).')
     parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap'],
                         help='DPT head variant; must match the checkpoint being loaded.')
+    parser.add_argument('--config', type=str, default='',
+                        help='Experiment config yaml. When set, the model is built via the shared '
+                             'factory (model/factory.py) so inference matches training EXACTLY '
+                             '(backbone / head_type / use_temporal / use_gem / use_astt / lora). '
+                             'Required for the scratch encoder+decoder experiments.')
 
     args = parser.parse_args()
+    clip_len = None
     for dataset in args.datasets:
         with open(args.json_file, 'r') as fs:
             path_json = json.load(fs)
         DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-        model_configs = {
-            'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
-            'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
-        }
-        gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type)
+        if args.config:
+            # Build identically to training. Backbone weights come from the checkpoint
+            # (strict load below), so skip re-downloading pretrained backbones.
+            cfg = OmegaConf.load(args.config)
+            gemdepth = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
+            clip_len = resolve_inference_clip_len(cfg)
+            if clip_len is not None:
+                print(
+                    f"[inference] scratch protocol: non-overlapping "
+                    f"clip_len={clip_len} (matches training T)")
+        else:
+            model_configs = {
+                'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+                'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
+            }
+            gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type)
         checkpoint = torch.load(args.ckpt, map_location='cpu',weights_only=False)
         gemdepth.load_state_dict(checkpoint, strict=True)
         gemdepth = gemdepth.to(DEVICE).eval()
@@ -54,7 +74,14 @@ if __name__ == '__main__':
                     videos.append(img)
                 videos = np.stack(videos, axis=0)
                 target_fps=1
-                depths, fps = gemdepth.infer_video_depth(videos, target_fps, input_size=args.input_size, device=DEVICE, fp32=True)
+                depths, fps = infer_video_with_protocol(
+                    gemdepth, videos, target_fps,
+                    input_size=args.input_size, device=DEVICE, fp32=True,
+                    clip_len=clip_len, dataset=dataset, sequence=key)
+                if depths.shape[0] != len(infer_paths):
+                    raise ValueError(
+                        f"Inference frame-count mismatch: output={depths.shape[0]} "
+                        f"expected={len(infer_paths)} dataset={dataset} sequence={key}")
                 for i in range(len(infer_paths)):
                     infer_path = infer_paths[i]
                     os.makedirs(os.path.dirname(infer_path), exist_ok=True)

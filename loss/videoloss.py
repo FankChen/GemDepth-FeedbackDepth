@@ -73,29 +73,43 @@ def normalize_prediction_robust(target, mask, ms=None):
     return target / (s.view(-1, 1, 1)), (m.detach(), s.detach())
 
 
-def compute_scale_and_shift(prediction, target, mask):
-    # system matrix: A = [[a_00, a_01], [a_10, a_11]]
-    a_00 = torch.sum(mask * prediction * prediction, (1, 2))
-    a_01 = torch.sum(mask * prediction, (1, 2))
-    a_11 = torch.sum(mask, (1, 2))
+def compute_scale_and_shift(prediction, target, mask, max_scale=100.0,
+                            min_variance=1e-8):
+    """Fit a per-sample affine alignment without normal-equation cancellation.
 
-    # right hand side: b = [b_0, b_1]
-    b_0 = torch.sum(mask * prediction * target, (1, 2))
-    b_1 = torch.sum(mask * target, (1, 2))
+    The former determinant implementation evaluated
+    ``sum(p**2) * n - sum(p)**2`` in float32. For nearly constant predictions,
+    those two large terms cancel and can produce arbitrary negative/tiny
+    determinants. The centered covariance formulation is mathematically
+    equivalent on well-conditioned inputs and is accumulated in float64.
+    Degenerate predictions use unit scale; fitted scales are bounded to prevent
+    an ill-conditioned alignment from directly amplifying residual gradients.
+    """
+    output_dtype = (torch.float32 if prediction.dtype in (torch.float16, torch.bfloat16)
+                    else prediction.dtype)
+    p = prediction.to(torch.float64)
+    t = target.to(torch.float64)
+    w = mask.to(torch.float64)
 
-    # solution: x = A^-1 . b = [[a_11, -a_01], [-a_10, a_00]] / (a_00 * a_11 - a_01 * a_10) . b
-    x_0 = torch.zeros_like(b_0)
-    x_1 = torch.zeros_like(b_1)
+    count = w.sum(dim=(1, 2))
+    safe_count = count.clamp(min=1.0)
+    mean_p = (w * p).sum(dim=(1, 2)) / safe_count
+    mean_t = (w * t).sum(dim=(1, 2)) / safe_count
+    centered_p = p - mean_p[:, None, None]
+    centered_t = t - mean_t[:, None, None]
+    variance = (w * centered_p.square()).sum(dim=(1, 2))
+    covariance = (w * centered_p * centered_t).sum(dim=(1, 2))
 
-    det = a_00 * a_11 - a_01 * a_01
-    valid = det.nonzero()
+    variance_floor = safe_count * float(min_variance)
+    well_conditioned = (count > 0) & (variance > variance_floor)
+    fitted_scale = covariance / variance.clamp(min=variance_floor)
+    scale = torch.where(well_conditioned, fitted_scale, torch.ones_like(fitted_scale))
+    scale = torch.nan_to_num(
+        scale, nan=1.0, posinf=float(max_scale), neginf=-float(max_scale))
+    scale = scale.clamp(min=-float(max_scale), max=float(max_scale))
+    shift = torch.where(count > 0, mean_t - scale * mean_p, torch.zeros_like(mean_t))
 
-    x_0[valid] = (a_11[valid] * b_0[valid] - a_01[valid]
-                  * b_1[valid]) / (det[valid] + 1e-6)
-    x_1[valid] = (-a_01[valid] * b_0[valid] + a_00[valid]
-                  * b_1[valid]) / (det[valid] + 1e-6)
-
-    return x_0, x_1
+    return scale.to(output_dtype), shift.to(output_dtype)
 
 class TrimmedProcrustesLoss(nn.Module):
     def __init__(self, alpha=0.5, scales=4, trim=0.2, reduction="batch-based"):
@@ -234,6 +248,8 @@ class TemporalGradientMatchingLoss(nn.Module):
                 total += self.data_loss(prediction=pred_temp_grad.flatten(0, 1), target=target_temp_grad.flatten(0, 1), mask=temp_mask.flatten(0, 1)) * pow(self.temp_grad_decay, scale)
                 cnt += 1
 
+        if cnt == 0:  # single frame (T=1): no temporal pairs -> no temporal-gradient loss
+            return prediction.new_zeros(())
         return total / cnt
 
 class compute_camera_loss(nn.Module):
@@ -566,22 +582,6 @@ class VideoDepthLoss(nn.Module):
         target_inverse[valid_mask] = 1 /target[valid_mask]
         B,T,H,W=prediction.shape
         prediction = torch.clamp(prediction, min=5e-3, max=1500)
-        extrinsic_gt=torch.stack(extrinsic_gt,dim=1)
-        for i in range(B):
-            pred=prediction[i]
-            depth_gt=target[i]
-            valid_mask=(torch.logical_and((depth_gt>1e-3), (depth_gt<400))).float()
-            with torch.no_grad():
-                gt_disp_masked = 1. / (depth_gt[valid_mask.bool()].reshape(-1, 1) + 1e-8)
-                depth_pred = torch.clamp(pred, min=1e-3)
-                pred_disp_masked = depth_pred[valid_mask.bool()].reshape(-1, 1)
-                A = torch.cat([pred_disp_masked, torch.ones_like(pred_disp_masked)], dim=-1)
-                X = torch.linalg.lstsq(A, gt_disp_masked).solution  # PyTorch 2.0+
-                scale, shift = X[0].item(), X[1].item()
-            aligned_pred = torch.clamp(scale * depth_pred + shift, min=1e-3)
-            pred_depth = torch.where(aligned_pred > 0, 1.0 / aligned_pred, 0)
-            pred_depth = torch.clamp(pred_depth, min=1e-3,max=400)
-        K=torch.linalg.inv(intrinsic_gt)
         #compute loss
         total = 0
         #ssi, gm, tgm
@@ -593,6 +593,7 @@ class VideoDepthLoss(nn.Module):
         total += loss_dict['stable_loss']
         #camera_loss
         if self.pose_flag:
+            extrinsic_gt=torch.stack(extrinsic_gt,dim=1)
             loss_dict['pose_loss'],loss_dict['trans'],loss_dict['quat']=self.camera_loss(prediction, target, mask, extrinsic_gt, intrinsic_gt, extrinsic_pred, pose_enc_list)
             total += loss_dict['pose_loss'] * self.beta
         loss_dict['total_loss'] = total

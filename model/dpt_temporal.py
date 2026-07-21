@@ -27,10 +27,14 @@ class DPTHeadTemporal(DPTHead):
         out_channels=[256, 512, 1024, 1024], 
         use_clstoken=False,
         num_frames=32,
-        pe='ape'
+        pe='ape',
+        use_temporal=True,
+        patch_size=14,
     ):
         super().__init__(in_channels, features, use_bn, out_channels, use_clstoken)
 
+        self.use_temporal = use_temporal
+        self.patch_size = patch_size
         assert num_frames > 0
         motion_module_kwargs = EasyDict(num_attention_heads                = 8,
                                         num_transformer_block              = 1,
@@ -39,22 +43,41 @@ class DPTHeadTemporal(DPTHead):
                                         zero_initialize                    = True,
                                         pos_embedding_type                 = pe)
 
-        self.motion_modules = nn.ModuleList([
-            TemporalModule(in_channels=out_channels[2], 
-                           **motion_module_kwargs),
-            TemporalModule(in_channels=out_channels[3],
-                           **motion_module_kwargs),
-            TemporalModule(in_channels=features,
-                           **motion_module_kwargs),
-            TemporalModule(in_channels=features,
-                           **motion_module_kwargs)
-        ])
+        if use_temporal:
+            self.motion_modules = nn.ModuleList([
+                TemporalModule(in_channels=out_channels[2],
+                               **motion_module_kwargs),
+                TemporalModule(in_channels=out_channels[3],
+                               **motion_module_kwargs),
+                TemporalModule(in_channels=features,
+                               **motion_module_kwargs),
+                TemporalModule(in_channels=features,
+                               **motion_module_kwargs)
+            ])
+        else:
+            # Static single-image experiments must be encoder+decoder only: do
+            # not instantiate unused temporal parameters or put them in DDP.
+            self.motion_modules = nn.ModuleList()
         self.proj = nn.ModuleList([
             nn.Linear(
                 in_channels,
                 out_channel,
             ) for out_channel in out_channels
         ])
+
+        # Dying-ReLU guard for from-scratch training. output_conv2 ends with
+        # [Conv(->32), ReLU, Conv(32->1), ReLU, Identity]. If a random init makes
+        # the final 1x1 conv all-negative, the following ReLU zeros both the output
+        # and its gradient, permanently freezing the head at a degenerate all-zero
+        # depth (observed collapsing DINOv3 ViT-S+ from scratch: loss flat, output=0).
+        # Zero-init that conv's weight + a small positive bias so the output starts
+        # positive and gradients always flow, regardless of backbone feature scale.
+        final_conv = self.scratch.output_conv2[2]
+        if isinstance(final_conv, nn.Conv2d) and final_conv.out_channels == 1:
+            nn.init.zeros_(final_conv.weight)
+            if final_conv.bias is not None:
+                nn.init.constant_(final_conv.bias, 0.5)
+
     def get_path4(self, out_features, patch_h, patch_w,frame_length):
         out = []
         pose_list=[]
@@ -76,8 +99,9 @@ class DPTHeadTemporal(DPTHead):
         layer_1, layer_2, layer_3, layer_4 = out
         B, T = layer_1.shape[0] // frame_length, frame_length
 
-        layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
-        layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+            layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         return layer_3, layer_4 
     
     def forward(self, out_features, patch_h, patch_w, frame_length,layer_3_att=None,layer_4_att=None,mode=None):
@@ -104,8 +128,9 @@ class DPTHeadTemporal(DPTHead):
         
         B, T = layer_1.shape[0] // frame_length, frame_length
 
-        layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
-        layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            layer_3 = self.motion_modules[0](layer_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+            layer_4 = self.motion_modules[1](layer_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
 
         if layer_3_att is not None:
             layer_3 = layer_3_att+layer_3
@@ -118,20 +143,22 @@ class DPTHeadTemporal(DPTHead):
         layer_4_rn = self.scratch.layer4_rn(layer_4) # 16,256,19,19
 
         path_4 = self.scratch.refinenet4(layer_4_rn,mode, size=layer_3_rn.shape[2:]) # 16,256,37,37
-        path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            path_4 = self.motion_modules[2](path_4.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4), None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         path_3 = self.scratch.refinenet3(path_4, layer_3_rn, mode, size=layer_2_rn.shape[2:]) # 16,256,74,74
-        path_3 = self.motion_modules[3](path_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4),None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
+        if self.use_temporal:
+            path_3 = self.motion_modules[3](path_3.unflatten(0, (B, T)).permute(0, 2, 1, 3, 4),None, None).permute(0, 2, 1, 3, 4).flatten(0, 1)
         path_2 = self.scratch.refinenet2(path_3, layer_2_rn,mode, size=layer_1_rn.shape[2:]) # 16,256,148,148
         path_1 = self.scratch.refinenet1(path_2,layer_1_rn, mode) # 16,256,296,296
 
         out = self.scratch.output_conv1(path_1)
         if mode:
             out = F.interpolate(out.to(torch.float32), 
-                    (int(patch_h * 14), int(patch_w * 14)), 
+                    (int(patch_h * self.patch_size), int(patch_w * self.patch_size)),
                     mode="bilinear", align_corners=True)
             out = out.to(torch.bfloat16) #16,128,518,518
         else:
-            out = F.interpolate(out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True)
+            out = F.interpolate(out, (int(patch_h * self.patch_size), int(patch_w * self.patch_size)), mode="bilinear", align_corners=True)
         # out = F.interpolate(
         #     out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True
         # )
