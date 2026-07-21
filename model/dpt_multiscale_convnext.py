@@ -99,9 +99,10 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
                 init_depth=None, layer_3_att=None, layer_4_att=None, mode=None):
         """Coarse-to-fine multi-scale depth refinement over the ConvNeXt pyramid.
 
-        Returns the refined full-resolution depth ``[B*T, 1, H, W]`` and caches
-        ``self.aux_depths`` (per-scale ``[B, T, 1, h, w]``, coarse -> fine) for
-        multi-scale supervision by the training loop.
+        In training mode returns a list of per-scale depth predictions
+        (coarse -> fine), each upsampled to full input resolution
+        ``[B*T, 1, H, W]``. In eval/inference mode returns a single tensor,
+        the finest-scale refined depth.
         """
         mode = False
 
@@ -120,7 +121,6 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
                                        mode="bilinear", align_corners=True)
 
         scale_depths = []
-        self.aux_depths = []
         for i, feat in enumerate(paths):
             # Upsample the running depth to the current feature resolution.
             if depth_prev.shape[2:] != feat.shape[2:]:
@@ -133,13 +133,16 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             depth_cur = depth_prev.detach() + delta_z
 
             scale_depths.append(depth_cur)
-            h, w = depth_cur.shape[-2:]
-            self.aux_depths.append(depth_cur.reshape(B, T, 1, h, w))
             depth_prev = depth_cur
 
-        final_depth = F.interpolate(
-            scale_depths[-1],
-            (int(patch_h * self.head_patch_size), int(patch_w * self.head_patch_size)),
-            mode="bilinear", align_corners=True)
+        full_size = (int(patch_h * self.head_patch_size), int(patch_w * self.head_patch_size))
+        resized_multilevel_depths = [
+            F.interpolate(zi, full_size, mode="bilinear", align_corners=True)
+            for zi in scale_depths
+        ]
 
-        return final_depth
+        # Training: return every scale (coarse -> fine) for multi-scale loss.
+        # Eval/inference: return only the finest full-resolution depth.
+        if self.training:
+            return resized_multilevel_depths
+        return resized_multilevel_depths[-1]

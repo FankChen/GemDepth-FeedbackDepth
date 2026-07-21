@@ -15,8 +15,8 @@ import torch
 from omegaconf import OmegaConf
 
 from loss.videoloss import VideoDepthLoss
+from loss.multiscale_videoloss import MultiScaleVideoDepthLoss
 from model.factory import build_gemdepth_from_config
-from train import compute_aux_depth_loss_disp
 
 
 ARMS = {
@@ -116,16 +116,20 @@ def main():
 
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         prediction, pose_enc, extrinsic, _ = model(image)
-    assert prediction.shape == target.shape, (prediction.shape, target.shape)
-    assert torch.isfinite(prediction).all(), "Non-finite depth prediction"
-
-    loss_dict = VideoDepthLoss(pose_flag=False)(
-        prediction, target, mask, intrinsic, poses, pose_enc, extrinsic)
+    # The multi-scale refinement head returns a list of per-scale predictions
+    # (coarse -> fine); a single tensor otherwise.
+    if isinstance(prediction, (list, tuple)):
+        for p in prediction:
+            assert p.shape == target.shape, (p.shape, target.shape)
+            assert torch.isfinite(p).all(), "Non-finite depth prediction"
+        loss_dict = MultiScaleVideoDepthLoss(pose_flag=False)(
+            list(prediction), target, mask, intrinsic, poses, pose_enc, extrinsic)
+    else:
+        assert prediction.shape == target.shape, (prediction.shape, target.shape)
+        assert torch.isfinite(prediction).all(), "Non-finite depth prediction"
+        loss_dict = VideoDepthLoss(pose_flag=False)(
+            prediction, target, mask, intrinsic, poses, pose_enc, extrinsic)
     loss = loss_dict["total_loss"]
-    aux_loss = None
-    if float(cfg_value(cfg, "training.aux_depth_weight", 0.0)) > 0:
-        aux_loss = compute_aux_depth_loss_disp(model.head.aux_depths, target.unsqueeze(2), mask.unsqueeze(2))
-        loss = loss + float(cfg.training.aux_depth_weight) * aux_loss
     assert torch.isfinite(loss), f"Non-finite loss: {loss_dict}"
 
     if not args.forward_only:
@@ -146,9 +150,12 @@ def main():
 
     torch.cuda.synchronize()
     peak_gib = torch.cuda.max_memory_allocated() / 1024 ** 3
-    aux_text = "none" if aux_loss is None else f"{aux_loss.item():.6f}"
-    print(f"[smoke] PASS arm={args.arm} output={tuple(prediction.shape)} "
-          f"loss={loss.item():.6f} aux={aux_text} peak_allocated={peak_gib:.2f}GiB", flush=True)
+    if isinstance(prediction, (list, tuple)):
+        output_shape = f"list[{len(prediction)}] x {tuple(prediction[-1].shape)}"
+    else:
+        output_shape = tuple(prediction.shape)
+    print(f"[smoke] PASS arm={args.arm} output={output_shape} "
+          f"loss={loss.item():.6f} peak_allocated={peak_gib:.2f}GiB", flush=True)
 
     del optimizer, model, image, target, mask, prediction, loss
     gc.collect()

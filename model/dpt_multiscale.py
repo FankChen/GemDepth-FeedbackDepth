@@ -135,12 +135,11 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
                 zeros at the coarsest scale.
 
         Returns:
-            final_depth: refined depth at full input resolution.
-
-        Side effects:
-            self.aux_depths is set to the list of per-scale depth predictions
-            (coarse -> fine), each reshaped to [B, T, 1, h, w], for multi-scale
-            supervision by the training loop.
+            In training mode: a list of per-scale depth predictions
+            (coarse -> fine), each upsampled to full input resolution
+            ([B*T, 1, H, W]), for multi-scale supervision.
+            In eval/inference mode: a single tensor, the finest-scale refined
+            depth at full input resolution.
         """
         mode = False
 
@@ -153,31 +152,37 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
         # loss gradient never flows back into whatever produced it.
         coarse_size = paths[0].shape[2:]
         if init_depth is None:
-            depth_prev = paths[0].new_zeros((paths[0].shape[0], 1, *coarse_size))
+            depth_prev = paths[0].new_ones((paths[0].shape[0], 1, *coarse_size)) * 40
         else:
             depth_prev = F.interpolate(init_depth.detach().to(paths[0].dtype), size=coarse_size,
                                        mode="bilinear", align_corners=True)
 
-        scale_depths = []
-        self.aux_depths = []
+        multilevel_depths = []
         for i, feat in enumerate(paths):
             # Upsample the running depth to the current feature resolution.
             if depth_prev.shape[2:] != feat.shape[2:]:
                 depth_prev = F.interpolate(depth_prev, size=feat.shape[2:],
                                            mode="bilinear", align_corners=True)
-
             delta_z = self.delta_heads[i](feat)
             # Gradient truncation across scales: the running depth is detached,
             # so the loss at this scale only trains this scale's delta_Z.
             depth_cur = depth_prev.detach() + delta_z
-
-            scale_depths.append(depth_cur)
-            h, w = depth_cur.shape[-2:]
-            self.aux_depths.append(depth_cur.reshape(B, T, 1, h, w))
+            print(f"[delta_z] scale {i} depth min={delta_z.min().item():.6f} "
+                    f"max={delta_z.max().item():.6f} mean={delta_z.mean().item():.6f} std={delta_z.std().item():.6f}")
+            
+            multilevel_depths.append(depth_cur)
+            print(f"[DPTHeadMultiScaleRefine] scale {i} depth min={depth_cur.min().item():.6f} "
+                  f"max={depth_cur.max().item():.6f} mean={depth_cur.mean().item():.6f} std={depth_cur.std().item():.6f}")
             depth_prev = depth_cur
 
-        final_depth = F.interpolate(scale_depths[-1],
-                                    (int(patch_h * self.patch_size), int(patch_w * self.patch_size)),
-                                    mode="bilinear", align_corners=True)
+        full_size = (int(patch_h * self.patch_size), int(patch_w * self.patch_size))
+        resized_multilevel_depths = [
+            F.interpolate(zi, full_size, mode="bilinear", align_corners=True)
+            for zi in multilevel_depths
+        ]
 
-        return final_depth
+        # Training: return every scale (coarse -> fine) for multi-scale loss.
+        # Eval/inference: return only the finest full-resolution depth.
+        if self.training:
+            return resized_multilevel_depths
+        return resized_multilevel_depths[-1]

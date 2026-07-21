@@ -131,8 +131,8 @@ class GemDepth(nn.Module):
                   f"embed_dims={self.pretrained.embed_dims}")
 
         if self.backbone_kind == 'convnext':
-            if head_type not in ('temporal', 'multiscale'):
-                raise ValueError("ConvNeXt currently supports head_type in {'temporal', 'multiscale'}")
+            if head_type not in ('temporal', 'multiscale', 'multiscale_softplus'):
+                raise ValueError("ConvNeXt currently supports head_type in {'temporal', 'multiscale', 'multiscale_softplus'}")
             if use_gem or use_astt:
                 raise ValueError("ConvNeXt hierarchical features require use_gem=false and use_astt=false")
 
@@ -244,8 +244,35 @@ class GemDepth(nn.Module):
                 self.head = DPTHeadMultiScaleRefineConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
             else:
                 self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+        elif head_type == 'multiscale_softplus':
+            # Same raw-delta multiscale head as 'multiscale', but the final inverse-depth output is
+            # squashed through softplus (strictly positive, no dead zone) to fix the from-scratch
+            # collapse. Design (signed deltas, cross-scale detach, aux) is otherwise identical.
+            from model.dpt_multiscale_softplus import (
+                DPTHeadMultiScaleRefineSoftplus, DPTHeadMultiScaleRefineConvNeXtSoftplus)
+            if self.backbone_kind == 'convnext':
+                self.head = DPTHeadMultiScaleRefineConvNeXtSoftplus(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+            else:
+                self.head = DPTHeadMultiScaleRefineSoftplus(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         else:
             raise ValueError(f"Unknown head_type={head_type}")
+
+    def _postprocess_depth(self, depth, B, T, H, W):
+        """Resize + ReLU a raw head depth map and reshape to (B, T, H, W).
+
+        Accepts either a single tensor or a list/tuple of per-scale depth maps
+        (multi-scale refinement head in training mode). Returns the same
+        container type (single tensor -> tensor, list -> list).
+        """
+        def _one(d):
+            d = F.interpolate(d, size=(H, W), mode="bilinear", align_corners=True)
+            d = F.relu(d)
+            return d.squeeze(1).unflatten(0, (B, T))
+
+        if isinstance(depth, (list, tuple)):
+            return [_one(d) for d in depth]
+        return _one(depth)
+
     def forward(self, x):
         feats=[]
         tokens=[]
@@ -267,9 +294,8 @@ class GemDepth(nn.Module):
             conv_feats = [f.float() for f in self.pretrained(x.flatten(0, 1))]
             with torch.autocast(device_type=x.device.type, enabled=False):
                 depth = self.head(conv_feats, patch_h, patch_w, T)
-                depth = F.interpolate(depth, size=(H, W), mode="bilinear", align_corners=True)
-                depth = F.relu(depth)
-            return depth.squeeze(1).unflatten(0, (B, T)), None, None, None
+                depth = self._postprocess_depth(depth, B, T, H, W)
+            return depth, None, None, None
         if self.backbone_kind == 'dinov2':
             features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
         elif self.backbone_kind == 'vit':
@@ -395,9 +421,8 @@ class GemDepth(nn.Module):
                                   images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
             else:
                 depth = self.head(features_attn, patch_h, patch_w,T)
-            depth = F.interpolate(depth, size=(H, W), mode="bilinear", align_corners=True)
-            depth = F.relu(depth)
-        return depth.squeeze(1).unflatten(0, (B, T)),pose_enc_list, extrinsic,intrinsic
+            depth = self._postprocess_depth(depth, B, T, H, W)
+        return depth, pose_enc_list, extrinsic, intrinsic
     
     def _process_frame_attention(self, tokens, B, S, P, C, frame_idx, pos=None):
         """

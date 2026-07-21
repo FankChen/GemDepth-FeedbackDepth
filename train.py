@@ -14,6 +14,8 @@ from accelerate.utils import set_seed
 from accelerate import DataLoaderConfiguration
 from accelerate.utils import DistributedDataParallelKwargs
 from loss.videoloss import VideoDepthLoss, compute_scale_and_shift
+from loss.multiscale_videoloss import MultiScaleVideoDepthLoss
+from loss.multiscale_video_l1_loss import MultiScaleVideoL1Loss
 from torch.utils.tensorboard import SummaryWriter
 import glob
 import re
@@ -35,66 +37,6 @@ def tensor_health(tensor):
         summary['min'] = float(finite_values.min().item())
         summary['max'] = float(finite_values.max().item())
     return summary
-
-
-def compute_aux_depth_loss(aux_depths, depth_gt, mask):
-    """Masked multi-scale L1 supervision for the error-map head's intermediate depths.
-
-    aux_depths: list of tensors shaped (B,T,1,h,w) or (B*T,1,h,w).
-    depth_gt / mask: (B,T,1,H,W).
-    """
-    gt = depth_gt.flatten(0, 1).float()
-    m = mask.flatten(0, 1).float()
-    total = gt.new_zeros(())
-    for d in aux_depths:
-        if d.dim() == 5:
-            d = d.flatten(0, 1)
-        h, w = d.shape[-2:]
-        gt_s = F.interpolate(gt, size=(h, w), mode='nearest')
-        m_s = F.interpolate(m, size=(h, w), mode='nearest')
-        diff = (d.float() - gt_s).abs() * m_s
-        total = total + diff.sum() / m_s.sum().clamp(min=1.0)
-    return total / max(len(aux_depths), 1)
-
-
-def compute_aux_depth_loss_disp(aux_depths, depth_gt, mask):
-    """Inverse-depth-space multi-scale aux supervision with per-sample scale+shift alignment.
-
-    Companion to ``compute_aux_depth_loss``. The original does absolute L1 against
-    metric depth, which pulls the model output into metric-depth space and conflicts
-    with the main SSI loss (which supervises inverse depth = 1/depth). This version
-    supervises each scale in the SAME inverse-depth space: GT inverse depth = 1/depth_gt,
-    and each scale's prediction is aligned to it with a DETACHED closed-form scale+shift
-    before a masked L1, so the aux branch no longer fights the main loss.
-
-    Note: this inverse-depth quantity is loosely called "disparity" in MiDaS-style
-    terminology (hence the gt_disp / _disp names), but strictly it is inverse depth,
-    not binocular stereo disparity.
-
-    aux_depths: list of tensors shaped (B,T,1,h,w) or (B*T,1,h,w).
-    depth_gt / mask: (B,T,1,H,W).
-    """
-    gt = depth_gt.flatten(0, 1).float()
-    m = mask.flatten(0, 1).float()
-    gt_disp = torch.zeros_like(gt)
-    valid = m > 0.5
-    gt_disp[valid] = 1.0 / gt[valid].clamp(min=1e-3)
-    total = gt.new_zeros(())
-    for d in aux_depths:
-        if d.dim() == 5:
-            d = d.flatten(0, 1)
-        d = d.float()
-        h, w = d.shape[-2:]
-        gt_s = F.interpolate(gt_disp, size=(h, w), mode='nearest')
-        m_s = F.interpolate(m, size=(h, w), mode='nearest')
-        # Detached closed-form scale+shift aligning the prediction to GT inverse depth,
-        # so only the shape (not absolute scale) is supervised — same idea as the main SSI loss.
-        with torch.no_grad():
-            scale, shift = compute_scale_and_shift(d.squeeze(1), gt_s.squeeze(1), m_s.squeeze(1))
-        d_aligned = scale.view(-1, 1, 1, 1) * d + shift.view(-1, 1, 1, 1)
-        diff = (d_aligned - gt_s).abs() * m_s
-        total = total + diff.sum() / m_s.sum().clamp(min=1.0)
-    return total / max(len(aux_depths), 1)
 
 
 def find_latest_ckpt(checkpoint_dir: str) -> str | None:
@@ -255,13 +197,6 @@ def main(cfg):
             "encoder_decoder_only requires model.use_gem=false and model.use_astt=false"
         assert not video_path, \
             "encoder_decoder_only scratch experiments must not load a full GemDepth checkpoint"
-        if head_type == 'multiscale':
-            assert float(OmegaConf.select(
-                cfg, 'training.aux_depth_weight', default=0.0)) > 0, \
-                "Scratch multiscale requires multi-scale auxiliary supervision"
-            assert str(OmegaConf.select(
-                cfg, 'training.aux_depth_space', default='')) == 'disparity', \
-                "Scratch multiscale auxiliary supervision must use inverse-depth/disparity space"
     if require_pretrained_backbone:
         if backbone == 'dinov2':
             assert dinov2_weights, "A required DINOv2 pretrained source was not configured"
@@ -458,11 +393,7 @@ def main(cfg):
     # Camera (pose) loss only makes sense when GEM predicts poses; disable it otherwise.
     pose_flag = bool(cfg.pose_flag) and use_gem
     invariant_loss_func = VideoDepthLoss(pose_flag = pose_flag)
-    aux_depth_weight = float(OmegaConf.select(cfg, 'training.aux_depth_weight', default=0.0))
-    # 'depth' (default) = original absolute metric-depth L1; 'disparity' = SSI-aligned
-    # inverse-depth-space aux loss (matches the main loss). The keyword value stays
-    # 'disparity' (MiDaS-style alias for inverse depth). Only the fix config sets it.
-    aux_depth_space = str(OmegaConf.select(cfg, 'training.aux_depth_space', default='depth'))
+    multiscale_loss_func = MultiScaleVideoL1Loss() #MultiScaleVideoDepthLoss(pose_flag = pose_flag)
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") \
@@ -475,37 +406,36 @@ def main(cfg):
                 continue 
             image = data['image']
             depth_gt = data['depth']
-            mask = (depth_gt>0).float()
+            mask = ((depth_gt>1e-3) & (depth_gt<=80)).float() # TODO: the range may change on different datasets. 
             intrinsic_gt=data['IntM']
             extrinsic_gt=data['poses'] 
             with accelerator.accumulate(model):
                 with accelerator.autocast():
                     depth_pred,pose_enc_list,extrinsic_pred,intrinsic_pred= model(image)
-                loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred) 
+                # The multi-scale refinement head returns a list of per-scale depth
+                # predictions -> route to the multi-scale video depth loss. A single
+                # tensor -> the standard video depth loss.
+                if isinstance(depth_pred, (list, tuple)):
+                    preds = [d.squeeze(2) for d in depth_pred]
+                    loss_dict = multiscale_loss_func(preds, depth_gt.squeeze(2), mask.squeeze(2),
+                                                     intrinsic_gt, extrinsic_gt, pose_enc_list, extrinsic_pred)
+                else:
+                    loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred)
                 loss=loss_dict['total_loss']
                 aux_loss = None
-                if aux_depth_weight > 0:
-                    head = accelerator.unwrap_model(model).head
-                    aux_depths = getattr(head, 'aux_depths', None)
-                    if aux_depths:
-                        if aux_depth_space == 'disparity':
-                            aux_loss = compute_aux_depth_loss_disp(aux_depths, depth_gt, mask)
-                        else:
-                            aux_loss = compute_aux_depth_loss(aux_depths, depth_gt, mask)
-                        loss = loss + aux_depth_weight * aux_loss
                 if not torch.isfinite(loss).all():
                     tracked = {
                         'combined_loss': loss,
-                        'depth_pred': depth_pred,
                         'aux_loss': aux_loss,
                     }
+                    if isinstance(depth_pred, (list, tuple)):
+                        tracked.update({f'depth_pred/{i}': d for i, d in enumerate(depth_pred)})
+                    else:
+                        tracked['depth_pred'] = depth_pred
                     tracked.update({
                         f'main/{key}': value for key, value in loss_dict.items()
                         if torch.is_tensor(value)
                     })
-                    head = accelerator.unwrap_model(model).head
-                    for index, value in enumerate(getattr(head, 'aux_depths', ())):
-                        tracked[f'aux_depth/{index}'] = value
                     finite_summary = {
                         key: tensor_health(value) for key, value in tracked.items()
                     }

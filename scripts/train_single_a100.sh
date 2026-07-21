@@ -17,15 +17,17 @@ case "$ARM" in
     errormap) CONFIG=single_a100_errormap ;;
     multiscale) CONFIG=single_a100_multiscale ;;
     multiscale_fix) CONFIG=single_a100_multiscale_fix ;;
-    ed_dinov2_static)     CONFIG=scratch_ed_dinov2_static; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov2_temporal)   CONFIG=scratch_ed_dinov2_temporal; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov2_multiscale) CONFIG=scratch_ed_dinov2_multiscale; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov3vits_static) CONFIG=scratch_ed_dinov3vits_static; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov3convnext_static) CONFIG=scratch_ed_dinov3convnext_static; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov3vits_temporal) CONFIG=scratch_ed_dinov3vits_temporal; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov3convnext_temporal) CONFIG=scratch_ed_dinov3convnext_temporal; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov3vits_multiscale) CONFIG=scratch_ed_dinov3vits_multiscale; DEFAULT_NUM_PROC=2 ;;
-    ed_dinov3convnext_multiscale) CONFIG=scratch_ed_dinov3convnext_multiscale; DEFAULT_NUM_PROC=2 ;;
+    ed_dinov2_static)     CONFIG=scratch_ed_dinov2_static; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov2_temporal)   CONFIG=scratch_ed_dinov2_temporal; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov2_multiscale) CONFIG=scratch_ed_dinov2_multiscale; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3vits_static) CONFIG=scratch_ed_dinov3vits_static; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3convnext_static) CONFIG=scratch_ed_dinov3convnext_static; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3vits_temporal) CONFIG=scratch_ed_dinov3vits_temporal; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3convnext_temporal) CONFIG=scratch_ed_dinov3convnext_temporal; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3vits_multiscale) CONFIG=scratch_ed_dinov3vits_multiscale; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3convnext_multiscale) CONFIG=scratch_ed_dinov3convnext_multiscale; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3vits_multiscale_softplus) CONFIG=scratch_ed_dinov3vits_multiscale_softplus; DEFAULT_NUM_PROC=1 ;;
+    ed_dinov3convnext_multiscale_softplus) CONFIG=scratch_ed_dinov3convnext_multiscale_softplus; DEFAULT_NUM_PROC=1 ;;
     *) echo "Unknown arm: $ARM (baseline|errormap|multiscale|multiscale_fix|ed_dinov2_{static,temporal,multiscale}|ed_dinov3vits_{static,temporal,multiscale}|ed_dinov3convnext_{static,temporal,multiscale})" && exit 1 ;;
 esac
 DEFAULT_NUM_PROC=${DEFAULT_NUM_PROC:-1}

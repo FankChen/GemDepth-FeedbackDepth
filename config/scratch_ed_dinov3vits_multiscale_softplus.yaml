@@ -1,18 +1,16 @@
-# Experiment 7 (multiscale): encoder+decoder ONLY, FROM SCRATCH, DINOv3 ViT-S+, MULTISCALE, 4-frame.
+# Experiment 7 (multiscale-SOFTPLUS fix): encoder+decoder ONLY, FROM SCRATCH, DINOv3 ViT-S+, 4-frame.
 #
-# Same from-scratch recipe as scratch_ed_dinov3vits_temporal.yaml, but the DPT head is the
-# multi-scale coarse-to-fine refine head (head_type=multiscale -> DPTHeadMultiScaleRefine, the
-# original raw-delta `depth_i = upsample(depth_{i-1}).detach() + delta_Z_i`). Aux supervision is
-# in INVERSE-DEPTH space (aux_depth_space=disparity) to match the main SSI loss.
-#
-# NOTE: the from-scratch raw-delta multiscale collapsed for DINOv2 (exp 3, all-zero output).
-# This DINOv3 arm carries the same risk; monitor output health (train loss + zero-fraction).
+# Identical to scratch_ed_dinov3vits_multiscale.yaml EXCEPT head_type=multiscale_softplus.
+# Same raw-delta multiscale head (signed per-scale delta, cross-scale .detach(), disparity aux),
+# but the final inverse-depth output is squashed through softplus -> strictly positive with NO
+# dead zone. Fixes the from-scratch all-zero collapse WITHOUT changing the multiscale design
+# (the .detach() gradient-truncation is intentionally UNCHANGED). See model/dpt_multiscale_softplus.py.
 training:
   seed: 0
-  checkpoint_dir: ./checkpoint/scratch_ed_dinov3vits_multiscale
+  checkpoint_dir: ./checkpoint/scratch_ed_dinov3vits_multiscale_softplus
   save_freq: 2000
   val_freq: 10000
-  log_dir: ./logs/scratch_ed_dinov3vits_multiscale
+  log_dir: ./logs/scratch_ed_dinov3vits_multiscale_softplus
   freeze_mode: default        # backbone frozen; DPT head + LoRA adapters trainable
   grad_accum: 1               # per-GPU batch=4, 2 GPUs -> effective batch = 8
   aux_depth_weight: 1.0       # multi-scale head: supervise every scale's refined depth
@@ -39,7 +37,7 @@ dataset:
     seq_len: 4
 
 dataloader:
-  batch_size: 2              # total across GPUs; per-GPU = 8 // num_processes(2) = 4
+  batch_size: 8              # total across GPUs; per-GPU = 8 // num_processes(2) = 4
   num_workers: 8
 
 model:
@@ -48,7 +46,7 @@ model:
   backbone_weights: null        # null -> timm pretrained (HF); or a local .pth path
   require_pretrained_backbone: true
   encoder_decoder_only: true
-  head_type: multiscale
+  head_type: multiscale_softplus
   use_gem: false
   use_astt: false
   use_temporal: true            # 4-frame temporal modeling
@@ -57,9 +55,9 @@ model:
   lora_alpha: 16
   lora_dropout: 0.0
 
-encoder: 'vits'                 # borrows model_configs features/out_channels; DPT in_channels = enc_embed_dim auto
+encoder: 'vitl'                 # borrows model_configs features/out_channels; DPT in_channels = enc_embed_dim auto
 pose_flag: false
-num_gpus: 1
+num_gpus: 2
 total_step: 20000
-project_name: scratch_ed_dinov3vits_multiscale
+project_name: scratch_ed_dinov3vits_multiscale_softplus
 resume: false
