@@ -76,4 +76,5 @@ class MultiScaleVideoL1Loss(nn.Module):
             loss_dict[f'scale_{i}'] = scale_loss
 
         loss_dict['total_loss'] = total
+        
         return loss_dict

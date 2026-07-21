@@ -39,7 +39,7 @@ dataset:
     seq_len: 4
 
 dataloader:
-  batch_size: 2              # total across GPUs; per-GPU = 8 // num_processes(2) = 4
+  batch_size: 8              # total across GPUs; per-GPU = 8 // num_processes(2) = 4
   num_workers: 8
 
 model:

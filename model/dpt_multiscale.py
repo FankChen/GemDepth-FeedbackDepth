@@ -167,12 +167,7 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
             # Gradient truncation across scales: the running depth is detached,
             # so the loss at this scale only trains this scale's delta_Z.
             depth_cur = depth_prev.detach() + delta_z
-            print(f"[delta_z] scale {i} depth min={delta_z.min().item():.6f} "
-                    f"max={delta_z.max().item():.6f} mean={delta_z.mean().item():.6f} std={delta_z.std().item():.6f}")
-            
             multilevel_depths.append(depth_cur)
-            print(f"[DPTHeadMultiScaleRefine] scale {i} depth min={depth_cur.min().item():.6f} "
-                  f"max={depth_cur.max().item():.6f} mean={depth_cur.mean().item():.6f} std={depth_cur.std().item():.6f}")
             depth_prev = depth_cur
 
         full_size = (int(patch_h * self.patch_size), int(patch_w * self.patch_size))
@@ -181,8 +176,12 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
             for zi in multilevel_depths
         ]
 
-        # Training: return every scale (coarse -> fine) for multi-scale loss.
-        # Eval/inference: return only the finest full-resolution depth.
+        # Training: return every scale at its NATIVE pyramid resolution (coarse -> fine).
+        # gemdepth._postprocess_depth keeps the training list at native res, and the loss
+        # (MultiScaleVideoL1Loss._resize_gt) downsamples GT to each scale -> real coarse-to-fine
+        # (coarse fits blurry GT, fine fits detailed GT), instead of every scale fitting the same
+        # full-res GT (which collapsed the refinement to single-scale / scale-0-only).
+        # Eval/inference: return only the finest depth, upsampled to full input resolution.
         if self.training:
-            return resized_multilevel_depths
+            return multilevel_depths
         return resized_multilevel_depths[-1]

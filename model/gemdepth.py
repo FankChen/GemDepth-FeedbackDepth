@@ -264,13 +264,17 @@ class GemDepth(nn.Module):
         (multi-scale refinement head in training mode). Returns the same
         container type (single tensor -> tensor, list -> list).
         """
-        def _one(d):
-            d = F.interpolate(d, size=(H, W), mode="bilinear", align_corners=True)
+        def _one(d, resize=True):
+            if resize:
+                d = F.interpolate(d, size=(H, W), mode="bilinear", align_corners=True)
             d = F.relu(d)
             return d.squeeze(1).unflatten(0, (B, T))
 
+        # Multi-scale training list: keep each scale at its NATIVE resolution (no upsample) so the
+        # loss can downsample GT to each scale (real coarse-to-fine). Single tensor (eval / temporal
+        # head): upsample to the full input resolution.
         if isinstance(depth, (list, tuple)):
-            return [_one(d) for d in depth]
+            return [_one(d, resize=False) for d in depth]
         return _one(depth)
 
     def forward(self, x):

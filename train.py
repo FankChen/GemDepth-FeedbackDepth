@@ -422,6 +422,8 @@ def main(cfg):
                 else:
                     loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred)
                 loss=loss_dict['total_loss']
+                if total_step % 200 == 0:
+                    print("[loss] step %d " % total_step + " ".join(f"{k}={v.item():.4f}" for k, v in loss_dict.items() if torch.is_tensor(v)))
                 aux_loss = None
                 if not torch.isfinite(loss).all():
                     tracked = {
