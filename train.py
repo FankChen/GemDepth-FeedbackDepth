@@ -396,11 +396,24 @@ def main(cfg):
     # Multi-scale loss selectable by config so the L2-vs-native-video-loss ablation runs from one
     # codebase without editing source between runs. multiscale_loss: 'l2' (default) or 'video'.
     multiscale_loss_name = str(OmegaConf.select(cfg, 'multiscale_loss', default='l2')).lower()
+    # IGEV/RAFT-style per-scale weighting. multiscale_gamma unset/<=0 -> uniform (unchanged).
+    # Set (e.g. 0.8) -> weights (coarse->fine) = [g^(N-1), ..., g^1, g^0], so the finest scale
+    # (the one used at eval) gets weight 1 and coarser scales get exponentially less. The loss
+    # normalizes these to sum 1, so only the ratios matter.
+    multiscale_gamma = OmegaConf.select(cfg, 'multiscale_gamma', default=None)
+    multiscale_scale_weights = None
+    if multiscale_gamma is not None and float(multiscale_gamma) > 0:
+        g = float(multiscale_gamma)
+        n_ms_scales = int(OmegaConf.select(cfg, 'multiscale_scales', default=4))
+        multiscale_scale_weights = [g ** (n_ms_scales - 1 - i) for i in range(n_ms_scales)]
+        print(f"[loss] multiscale_gamma={g} -> scale_weights(coarse->fine)="
+              f"{[round(w, 4) for w in multiscale_scale_weights]}")
     if multiscale_loss_name in ('video', 'videoloss', 'video_loss', 'multiscale_video'):
-        multiscale_loss_func = MultiScaleVideoDepthLoss(pose_flag=pose_flag)
+        multiscale_loss_func = MultiScaleVideoDepthLoss(pose_flag=pose_flag,
+                                                        scale_weights=multiscale_scale_weights)
         print(f"[loss] multiscale_loss=video -> MultiScaleVideoDepthLoss(pose_flag={pose_flag})")
     else:
-        multiscale_loss_func = MultiScaleVideoL1Loss()
+        multiscale_loss_func = MultiScaleVideoL1Loss(scale_weights=multiscale_scale_weights)
         print("[loss] multiscale_loss=l2 -> MultiScaleVideoL1Loss()")
     total_step = start_step
     should_keep_training = True
