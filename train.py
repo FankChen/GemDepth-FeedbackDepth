@@ -393,7 +393,15 @@ def main(cfg):
     # Camera (pose) loss only makes sense when GEM predicts poses; disable it otherwise.
     pose_flag = bool(cfg.pose_flag) and use_gem
     invariant_loss_func = VideoDepthLoss(pose_flag = pose_flag)
-    multiscale_loss_func = MultiScaleVideoL1Loss() #MultiScaleVideoDepthLoss(pose_flag = pose_flag)
+    # Multi-scale loss selectable by config so the L2-vs-native-video-loss ablation runs from one
+    # codebase without editing source between runs. multiscale_loss: 'l2' (default) or 'video'.
+    multiscale_loss_name = str(OmegaConf.select(cfg, 'multiscale_loss', default='l2')).lower()
+    if multiscale_loss_name in ('video', 'videoloss', 'video_loss', 'multiscale_video'):
+        multiscale_loss_func = MultiScaleVideoDepthLoss(pose_flag=pose_flag)
+        print(f"[loss] multiscale_loss=video -> MultiScaleVideoDepthLoss(pose_flag={pose_flag})")
+    else:
+        multiscale_loss_func = MultiScaleVideoL1Loss()
+        print("[loss] multiscale_loss=l2 -> MultiScaleVideoL1Loss()")
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") \

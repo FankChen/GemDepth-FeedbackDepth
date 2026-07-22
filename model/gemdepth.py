@@ -68,6 +68,7 @@ class GemDepth(nn.Module):
         backbone='dinov2',
         backbone_weights=None,
         load_backbone_pretrained=True,
+        multiscale_native_res=True,
     ):
         super(GemDepth, self).__init__()
 
@@ -81,6 +82,12 @@ class GemDepth(nn.Module):
         self.encoder = encoder
         self.backbone_name = backbone
         self.lora = lora
+        # Multi-scale training-list resolution mode (only affects head_type='multiscale' training):
+        #   True  -> keep each scale at its native pyramid resolution; the loss downsamples GT per
+        #            scale (real coarse-to-fine). This is the native-resolution fix.
+        #   False -> upsample every scale to full input resolution, so all scales fit the same full
+        #            GT (reproduces the original "all scales align to GT" behaviour).
+        self.multiscale_native_res = multiscale_native_res
 
         # Backbone: DINOv2 (default, original path) or a DINOv3 backbone via model/backbones.py.
         # DINOv2 is built + (optionally) LoRA-wrapped here; DINOv3 uses build_backbone (timm model,
@@ -270,11 +277,13 @@ class GemDepth(nn.Module):
             d = F.relu(d)
             return d.squeeze(1).unflatten(0, (B, T))
 
-        # Multi-scale training list: keep each scale at its NATIVE resolution (no upsample) so the
-        # loss can downsample GT to each scale (real coarse-to-fine). Single tensor (eval / temporal
-        # head): upsample to the full input resolution.
+        # Multi-scale training list. multiscale_native_res=True (default): keep each scale at its
+        # NATIVE resolution (no upsample) so the loss can downsample GT to each scale (real
+        # coarse-to-fine). multiscale_native_res=False: upsample every scale to the full input
+        # resolution (all scales fit the same full GT = the original behaviour). Single tensor
+        # (eval / temporal head): always upsample to the full input resolution.
         if isinstance(depth, (list, tuple)):
-            return [_one(d, resize=False) for d in depth]
+            return [_one(d, resize=not self.multiscale_native_res) for d in depth]
         return _one(depth)
 
     def forward(self, x):
