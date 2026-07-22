@@ -1,0 +1,62 @@
+# Exp 8-A (ConvNeXt, CONTROL / 原版行为): multiscale head, ALL scales upsampled to full GT + L2.
+# ConvNeXt counterpart of scratch_ed_dinov3vits_ms_A_orig_l2. multiscale_native_res=false ->
+# gemdepth upsamples every per-scale depth to full input res -> multi-scale degenerates to
+# single-scale. Output = METRIC depth -> eval MUST invert (1/D).
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/scratch_ed_dinov3convnext_ms_A_orig_l2
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_dinov3convnext_ms_A_orig_l2
+  freeze_mode: default
+  grad_accum: 1
+  aux_depth_weight: 1.0
+  aux_depth_space: disparity
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti/}']
+    crop_size: 448            # deepest ConvNeXt stride 32 -> 448/32=14
+    seq_len: 4
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 448
+    seq_len: 4
+
+dataloader:
+  batch_size: 8
+  num_workers: 8
+
+model:
+  video_path: null
+  backbone: dinov3_convnext_s
+  backbone_weights: null
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  head_type: multiscale
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+  multiscale_native_res: false   # CONTROL: upsample every scale to full GT (original behaviour)
+
+encoder: 'vitl'                  # ConvNeXt borrows decoder features/out_channels; stage dims auto
+pose_flag: false
+multiscale_loss: l2              # MultiScaleVideoL1Loss (per-pixel metric L2)
+num_gpus: 1
+total_step: 20000
+project_name: scratch_ed_dinov3convnext_ms_A_orig_l2
+resume: false

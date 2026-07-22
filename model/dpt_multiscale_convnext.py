@@ -115,7 +115,10 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
         # loss gradient never flows back into whatever produced it.
         coarse_size = paths[0].shape[2:]
         if init_depth is None:
-            depth_prev = paths[0].new_zeros((paths[0].shape[0], 1, *coarse_size))
+            # Match DPTHeadMultiScaleRefine (ViT): start from a positive metric constant (40) so the
+            # coarsest depth survives the outer ReLU and the L2 / metric target scale is reachable
+            # (ConvNeXt previously started from zeros, which differs from the ViT head).
+            depth_prev = paths[0].new_ones((paths[0].shape[0], 1, *coarse_size)) * 40
         else:
             depth_prev = F.interpolate(init_depth.detach().to(paths[0].dtype), size=coarse_size,
                                        mode="bilinear", align_corners=True)
@@ -141,8 +144,11 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             for zi in scale_depths
         ]
 
-        # Training: return every scale (coarse -> fine) for multi-scale loss.
+        # Training: return every scale at its NATIVE pyramid resolution (coarse -> fine), matching
+        # DPTHeadMultiScaleRefine (ViT). gemdepth._postprocess_depth then keeps them native
+        # (multiscale_native_res=True -> real coarse-to-fine, loss downsamples GT per scale) or
+        # upsamples every scale to full input resolution (False -> original all-scales-align-to-GT).
         # Eval/inference: return only the finest full-resolution depth.
         if self.training:
-            return resized_multilevel_depths
+            return scale_depths
         return resized_multilevel_depths[-1]
