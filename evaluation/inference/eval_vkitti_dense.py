@@ -121,6 +121,49 @@ def colorize_err(pred, gt, valid, vmax=0.3):
     return rgb
 
 
+def load_model(config, ckpt, device):
+    cfg = OmegaConf.load(config)
+    model = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
+    model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=False), strict=True)
+    model = model.to(device).eval()
+    clip_len = resolve_inference_clip_len(cfg)
+    seq_len = int(OmegaConf.select(cfg, "dataset.train.seq_len", default=4))
+    return model, clip_len, seq_len
+
+
+def eval_model(model, seqs, invert, max_depth, input_size, clip_len, device):
+    """Run one model over all held-out sequences.
+
+    Returns (absrel_list, rmse_list, d1_list, viz) where viz maps
+    seq_name -> ((mid_i, gt, pred_depth, valid, absrel), rgb_paths). The viz frame is the middle
+    valid frame of each sequence; because `valid` depends only on the GT, the same seq_name selects
+    the SAME frame across models -> two models are directly comparable per-frame.
+    """
+    absrel, rmse, d1, viz = [], [], [], {}
+    for name, rgb_paths, dep_paths in seqs:
+        videos = np.stack([cv2.cvtColor(cv2.imread(p), cv2.COLOR_BGR2RGB) for p in rgb_paths], 0)
+        depths, _ = infer_video_with_protocol(
+            model, videos, 1, input_size=input_size, device=device, fp32=True,
+            clip_len=clip_len, dataset="vkitti", sequence=name)
+        seq_frames = []
+        for i in range(len(rgb_paths)):
+            gt, valid = load_gt(dep_paths[i], max_depth)
+            if not valid.any():
+                continue
+            pred_depth = align_to_depth(depths[i], gt, valid, invert, max_depth)
+            a, r, d = metrics(pred_depth, gt, valid)
+            absrel.append(a); rmse.append(r); d1.append(d)
+            seq_frames.append((i, gt, pred_depth, valid, a))
+        if seq_frames:
+            viz[name] = (seq_frames[len(seq_frames) // 2], rgb_paths)
+    return absrel, rmse, d1, viz
+
+
+def _summary(tag, absrel, rmse, d1, nseq):
+    print(f"[vkitti DENSE {tag}] AbsRel={np.mean(absrel):.4f}  RMSE={np.mean(rmse):.4f}  "
+          f"delta1={np.mean(d1):.4f}   (over {len(absrel)} frames, {nseq} seqs)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
@@ -129,6 +172,12 @@ def main():
                     default=os.environ.get("VKITTI_ROOT", "/mnt/workspace/vkitti/vkitti/"))
     ap.add_argument("--invert", action="store_true",
                     help="metric output (A/B/D): take 1/D before alignment; omit for video/temporal")
+    # optional second model -> C-vs-temporal style DENSE comparison figure
+    ap.add_argument("--config2", default=None, help="second model config -> dense comparison figure")
+    ap.add_argument("--ckpt2", default=None)
+    ap.add_argument("--invert2", action="store_true", help="invert (1/D) for the second model")
+    ap.add_argument("--label1", default="model1")
+    ap.add_argument("--label2", default="model2")
     ap.add_argument("--max_depth", type=float, default=80.0)
     ap.add_argument("--input_size", type=int, default=518)
     ap.add_argument("--limit_seqs", type=int, default=8, help="cap #held-out sequences for speed")
@@ -137,68 +186,79 @@ def main():
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    cfg = OmegaConf.load(args.config)
-    model = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
-    model.load_state_dict(torch.load(args.ckpt, map_location="cpu", weights_only=False), strict=True)
-    model = model.to(device).eval()
-    clip_len = resolve_inference_clip_len(cfg)
-    seq_len = int(OmegaConf.select(cfg, "dataset.train.seq_len", default=4))
-
+    model1, clip_len1, seq_len = load_model(args.config, args.ckpt, device)
     seqs = list_vkitti_heldout(args.vkitti_root, seq_len, limit_seqs=args.limit_seqs)
     if not seqs:
         raise SystemExit(f"[vkitti] no held-out sequences under {args.vkitti_root} "
                          f"(expected <Scene>/<variation>/frames/rgb/Camera_0/...)")
-    print(f"[vkitti] {len(seqs)} held-out sequences from {args.vkitti_root}  (invert={args.invert})")
+    print(f"[vkitti] {len(seqs)} held-out sequences from {args.vkitti_root}")
 
-    all_absrel, all_rmse, all_d1, viz = [], [], [], []
-    for name, rgb_paths, dep_paths in seqs:
-        videos = np.stack([cv2.cvtColor(cv2.imread(p), cv2.COLOR_BGR2RGB) for p in rgb_paths], 0)
-        depths, _ = infer_video_with_protocol(
-            model, videos, 1, input_size=args.input_size, device=device, fp32=True,
-            clip_len=clip_len, dataset="vkitti", sequence=name)
-        seq_frames = []
-        for i in range(len(rgb_paths)):
-            gt, valid = load_gt(dep_paths[i], args.max_depth)
-            if not valid.any():
-                continue
-            pred_depth = align_to_depth(depths[i], gt, valid, args.invert, args.max_depth)
-            a, r, d = metrics(pred_depth, gt, valid)
-            all_absrel.append(a); all_rmse.append(r); all_d1.append(d)
-            seq_frames.append((i, gt, pred_depth, valid, a))
-        if seq_frames and len(viz) < args.viz_n:
-            i, gt, pred, valid, a = seq_frames[len(seq_frames) // 2]
-            rgb = cv2.cvtColor(cv2.imread(rgb_paths[i]), cv2.COLOR_BGR2RGB)
-            viz.append((name, rgb, gt, pred, valid, a))
+    a1, r1, d1, viz1 = eval_model(model1, seqs, args.invert, args.max_depth,
+                                  args.input_size, clip_len1, device)
+    os.makedirs(os.path.dirname(args.out_viz) or ".", exist_ok=True)
 
-    print(f"[vkitti DENSE] AbsRel={np.mean(all_absrel):.4f}  RMSE={np.mean(all_rmse):.4f}  "
-          f"delta1={np.mean(all_d1):.4f}   (over {len(all_absrel)} frames, {len(seqs)} seqs)")
+    # ---------------- single-model mode ----------------
+    if not args.config2:
+        _summary(args.label1, a1, r1, d1, len(seqs))
+        rows = list(viz1.items())[:args.viz_n]
+        n = len(rows)
+        if n:
+            fig, axes = plt.subplots(n, 4, figsize=(4 * 3.2, n * 1.9))
+            if n == 1:
+                axes = axes[None, :]
+            titles = ["RGB", "GT (dense)", "pred depth (dense, 未mask)", "AbsRel"]
+            for row, (name, ((i, gt, pred, valid, a), rgb_paths)) in enumerate(rows):
+                rgb = cv2.cvtColor(cv2.imread(rgb_paths[i]), cv2.COLOR_BGR2RGB)
+                panels = [rgb, colorize(gt, valid, show_valid=valid),
+                          colorize(pred, valid, show_valid=None), colorize_err(pred, gt, valid)]
+                for col, img in enumerate(panels):
+                    ax = axes[row, col]; ax.imshow(img); ax.set_xticks([]); ax.set_yticks([])
+                    if row == 0:
+                        ax.set_title(titles[col], fontsize=9)
+                axes[row, 0].set_ylabel(name, fontsize=7)
+                axes[row, 2].set_xlabel(f"AbsRel={a:.3f}", fontsize=8)
+            fig.suptitle(f"VKITTI2 held-out (DENSE) · {args.label1} mean AbsRel={np.mean(a1):.4f}",
+                         fontsize=10)
+            fig.tight_layout(rect=[0, 0, 1, 0.97]); fig.savefig(args.out_viz, dpi=150)
+            print(f"[vkitti] dense viz -> {args.out_viz}")
+        return
 
-    n = len(viz)
+    # ---------------- two-model comparison (e.g. C vs temporal) ----------------
+    model2, clip_len2, _ = load_model(args.config2, args.ckpt2, device)
+    a2, r2, d2, viz2 = eval_model(model2, seqs, args.invert2, args.max_depth,
+                                  args.input_size, clip_len2, device)
+    _summary(args.label1, a1, r1, d1, len(seqs))
+    _summary(args.label2, a2, r2, d2, len(seqs))
+
+    names = [nm for nm in viz1 if nm in viz2][:args.viz_n]
+    n = len(names)
     if n:
-        fig, axes = plt.subplots(n, 4, figsize=(4 * 3.2, n * 1.9))
+        fig, axes = plt.subplots(n, 6, figsize=(6 * 3.0, n * 1.9))
         if n == 1:
             axes = axes[None, :]
-        titles = ["RGB", "GT (dense)", "pred depth (dense, 未mask)", "AbsRel"]
-        for row, (name, rgb, gt, pred, valid, a) in enumerate(viz):
-            panels = [
-                rgb,
-                colorize(gt, valid, show_valid=valid),          # GT: dense minus sky
-                colorize(pred, valid, show_valid=None),         # pred: EVERY pixel -> proves dense
-                colorize_err(pred, gt, valid),
-            ]
+        titles = ["RGB", "GT (dense)", args.label1, args.label2,
+                  f"AbsRel {args.label1}", f"AbsRel {args.label2}"]
+        for row, name in enumerate(names):
+            (i, gt, pred1, valid, aa1), rgb_paths = viz1[name]
+            (_, _, pred2, _, aa2), _ = viz2[name]
+            rgb = cv2.cvtColor(cv2.imread(rgb_paths[i]), cv2.COLOR_BGR2RGB)
+            panels = [rgb,
+                      colorize(gt, valid, show_valid=valid),
+                      colorize(pred1, valid, show_valid=None),   # both preds UNMASKED -> prove dense
+                      colorize(pred2, valid, show_valid=None),
+                      colorize_err(pred1, gt, valid),
+                      colorize_err(pred2, gt, valid)]
             for col, img in enumerate(panels):
-                ax = axes[row, col]
-                ax.imshow(img); ax.set_xticks([]); ax.set_yticks([])
+                ax = axes[row, col]; ax.imshow(img); ax.set_xticks([]); ax.set_yticks([])
                 if row == 0:
                     ax.set_title(titles[col], fontsize=9)
             axes[row, 0].set_ylabel(name, fontsize=7)
-            axes[row, 2].set_xlabel(f"AbsRel={a:.3f}", fontsize=8)
-        fig.suptitle(f"VKITTI2 held-out (DENSE, in-domain) · mean AbsRel={np.mean(all_absrel):.4f}",
-                     fontsize=10)
-        os.makedirs(os.path.dirname(args.out_viz) or ".", exist_ok=True)
-        fig.tight_layout(rect=[0, 0, 1, 0.97])
-        fig.savefig(args.out_viz, dpi=150)
-        print(f"[vkitti] dense viz -> {args.out_viz}")
+            axes[row, 2].set_xlabel(f"AbsRel={aa1:.3f}", fontsize=8)
+            axes[row, 3].set_xlabel(f"AbsRel={aa2:.3f}", fontsize=8)
+        fig.suptitle(f"VKITTI2 held-out (DENSE) · {args.label1} {np.mean(a1):.4f}  vs  "
+                     f"{args.label2} {np.mean(a2):.4f}  (mean AbsRel)", fontsize=10)
+        fig.tight_layout(rect=[0, 0, 1, 0.97]); fig.savefig(args.out_viz, dpi=150)
+        print(f"[vkitti] dense comparison viz -> {args.out_viz}")
 
 
 if __name__ == "__main__":
