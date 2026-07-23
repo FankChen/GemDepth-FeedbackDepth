@@ -158,6 +158,8 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
                                        mode="bilinear", align_corners=True)
 
         multilevel_depths = []
+        deltas = []
+        prev_upsampled = []
         for i, feat in enumerate(paths):
             # Upsample the running depth to the current feature resolution.
             if depth_prev.shape[2:] != feat.shape[2:]:
@@ -168,6 +170,8 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
             # so the loss at this scale only trains this scale's delta_Z.
             depth_cur = depth_prev.detach() + delta_z
             multilevel_depths.append(depth_cur)
+            deltas.append(delta_z)
+            prev_upsampled.append(depth_prev)
             depth_prev = depth_cur
 
         full_size = (int(patch_h * self.patch_size), int(patch_w * self.patch_size))
@@ -175,6 +179,17 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
             F.interpolate(zi, full_size, mode="bilinear", align_corners=True)
             for zi in multilevel_depths
         ]
+
+        # Cache per-scale intermediates (eval only) so a visualization script can inspect the
+        # coarse-to-fine refinement: each scale's depth, its delta_Z residual, and the upsampled
+        # running depth it refines. Detached, GPU-side, overwritten every forward -> negligible cost;
+        # does NOT change the return value or training behaviour.
+        if not self.training:
+            self.viz_cache = {
+                'multilevel_native': [d.detach() for d in multilevel_depths],
+                'deltas': [dz.detach() for dz in deltas],
+                'prev_upsampled': [p.detach() for p in prev_upsampled],
+            }
 
         # Training: return every scale at its NATIVE pyramid resolution (coarse -> fine).
         # gemdepth._postprocess_depth keeps the training list at native res, and the loss

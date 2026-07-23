@@ -124,6 +124,8 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
                                        mode="bilinear", align_corners=True)
 
         scale_depths = []
+        deltas = []
+        prev_upsampled = []
         for i, feat in enumerate(paths):
             # Upsample the running depth to the current feature resolution.
             if depth_prev.shape[2:] != feat.shape[2:]:
@@ -136,6 +138,8 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             depth_cur = depth_prev.detach() + delta_z
 
             scale_depths.append(depth_cur)
+            deltas.append(delta_z)
+            prev_upsampled.append(depth_prev)
             depth_prev = depth_cur
 
         full_size = (int(patch_h * self.head_patch_size), int(patch_w * self.head_patch_size))
@@ -143,6 +147,16 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             F.interpolate(zi, full_size, mode="bilinear", align_corners=True)
             for zi in scale_depths
         ]
+
+        # Cache per-scale intermediates (eval only) for the multi-level visualization script,
+        # identical to DPTHeadMultiScaleRefine (ViT). Detached, GPU-side, overwritten each forward;
+        # does NOT change the return value or training behaviour.
+        if not self.training:
+            self.viz_cache = {
+                'multilevel_native': [d.detach() for d in scale_depths],
+                'deltas': [dz.detach() for dz in deltas],
+                'prev_upsampled': [p.detach() for p in prev_upsampled],
+            }
 
         # Training: return every scale at its NATIVE pyramid resolution (coarse -> fine), matching
         # DPTHeadMultiScaleRefine (ViT). gemdepth._postprocess_depth then keeps them native
