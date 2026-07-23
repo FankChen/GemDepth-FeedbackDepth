@@ -137,6 +137,17 @@ def colorize_err(pred, gt, valid, vmax=0.3):
     return rgb
 
 
+def colorize_diff(a, b, valid, cmap="RdBu_r"):
+    """Signed depth diff a-b (diverging): red = a deeper, blue = a shallower; black = no GT."""
+    d = np.zeros_like(a, dtype=np.float32)
+    d[valid] = a[valid] - b[valid]
+    v = np.percentile(np.abs(d[valid]), 95) if valid.any() else 1.0
+    n = np.clip(d / (v + 1e-8), -1, 1) * 0.5 + 0.5
+    rgb = (plt.get_cmap(cmap)(n)[..., :3] * 255).astype(np.uint8)
+    rgb[~valid] = 0
+    return rgb
+
+
 def load_model(config, ckpt, device):
     cfg = OmegaConf.load(config)
     model = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
@@ -252,10 +263,11 @@ def main():
     names = [nm for nm in viz1 if nm in viz2][:args.viz_n]
     n = len(names)
     if n:
-        fig, axes = plt.subplots(n, 6, figsize=(6 * 3.0, n * 1.9))
+        fig, axes = plt.subplots(n, 7, figsize=(7 * 3.0, n * 1.9))
         if n == 1:
             axes = axes[None, :]
         titles = ["RGB", "GT (dense)", args.label1, args.label2,
+                  f"{args.label1}\u2212{args.label2} (depth)",
                   f"AbsRel {args.label1}", f"AbsRel {args.label2}"]
         for row, name in enumerate(names):
             (i, gt, pred1, valid, aa1), rgb_paths = viz1[name]
@@ -265,6 +277,7 @@ def main():
                       colorize(gt, valid, show_valid=valid),
                       colorize(pred1, valid, show_valid=None),   # both preds UNMASKED -> prove dense
                       colorize(pred2, valid, show_valid=None),
+                      colorize_diff(pred1, pred2, valid),        # C-tem: red=C deeper, blue=C shallower
                       colorize_err(pred1, gt, valid),
                       colorize_err(pred2, gt, valid)]
             for col, img in enumerate(panels):
@@ -275,7 +288,8 @@ def main():
             axes[row, 2].set_xlabel(f"AbsRel={aa1:.3f}", fontsize=8)
             axes[row, 3].set_xlabel(f"AbsRel={aa2:.3f}", fontsize=8)
         fig.suptitle(f"VKITTI2 held-out (DENSE) · {args.label1} {np.mean(a1):.4f}  vs  "
-                     f"{args.label2} {np.mean(a2):.4f}  (mean AbsRel)", fontsize=10)
+                     f"{args.label2} {np.mean(a2):.4f}  (mean AbsRel)  ·  "
+                     f"col5 = {args.label1}\u2212{args.label2} depth diff", fontsize=10)
         fig.tight_layout(rect=[0, 0, 1, 0.97]); fig.savefig(args.out_viz, dpi=150)
         print(f"[vkitti] dense comparison viz -> {args.out_viz}")
 
