@@ -82,16 +82,32 @@ def load_gt(path, max_depth):
     return d, valid
 
 
-def align_to_depth(pred, gt, valid, invert, max_depth):
+def align_to_depth(pred, gt, valid, invert, max_depth, space="disparity"):
+    """Affine-align a prediction to the dense GT and return metric depth.
+
+    `invert` describes the RAW model output (True = metric depth for A/B/D, False = disparity for
+    C/temporal); `space` chooses WHERE the scale+shift is solved:
+      - "disparity" (default, matches the KITTI/MiDaS eval protocol): align in inverse-depth space.
+      - "depth": align in metric-depth space (fair sanity check for the metric-L2 models A/B/D).
+    The two are orthogonal, so any (output, protocol) combination is handled consistently.
+    """
     p = pred.astype(np.float32)
     if p.shape != gt.shape:
         p = cv2.resize(p, (gt.shape[1], gt.shape[0]))
-    pd = 1.0 / np.clip(p, 1e-3, None) if invert else p        # metric -> disparity for A/B/D
-    pd = np.clip(pd, 1e-3, None)
-    gt_disp = 1.0 / (gt[valid].reshape(-1, 1).astype(np.float64) + 1e-8)
-    scale, shift = stable_scale_and_shift(pd[valid].reshape(-1, 1).astype(np.float64), gt_disp)
-    aligned = np.clip(scale * pd + shift, 1e-3, None)
-    return np.clip(1.0 / aligned, 1e-3, max_depth)
+    p = np.clip(p, 1e-3, None)
+    if invert:                                   # A/B/D output METRIC depth
+        pred_depth_raw, pred_disp_raw = p, 1.0 / p
+    else:                                        # C/temporal output DISPARITY (inverse depth)
+        pred_disp_raw, pred_depth_raw = p, 1.0 / p
+    if space == "depth":                         # metric-space affine align (fair for A/B/D)
+        s, t = stable_scale_and_shift(pred_depth_raw[valid].reshape(-1, 1).astype(np.float64),
+                                      gt[valid].reshape(-1, 1).astype(np.float64))
+        depth = s * pred_depth_raw + t
+    else:                                        # disparity-space align (default, KITTI protocol)
+        gt_disp = 1.0 / (gt[valid].reshape(-1, 1).astype(np.float64) + 1e-8)
+        s, t = stable_scale_and_shift(pred_disp_raw[valid].reshape(-1, 1).astype(np.float64), gt_disp)
+        depth = 1.0 / np.clip(s * pred_disp_raw + t, 1e-6, None)
+    return np.clip(depth, 1e-3, max_depth)
 
 
 def metrics(pred_depth, gt, valid):
@@ -131,7 +147,7 @@ def load_model(config, ckpt, device):
     return model, clip_len, seq_len
 
 
-def eval_model(model, seqs, invert, max_depth, input_size, clip_len, device):
+def eval_model(model, seqs, invert, max_depth, input_size, clip_len, device, space="disparity"):
     """Run one model over all held-out sequences.
 
     Returns (absrel_list, rmse_list, d1_list, viz) where viz maps
@@ -150,7 +166,7 @@ def eval_model(model, seqs, invert, max_depth, input_size, clip_len, device):
             gt, valid = load_gt(dep_paths[i], max_depth)
             if not valid.any():
                 continue
-            pred_depth = align_to_depth(depths[i], gt, valid, invert, max_depth)
+            pred_depth = align_to_depth(depths[i], gt, valid, invert, max_depth, space)
             a, r, d = metrics(pred_depth, gt, valid)
             absrel.append(a); rmse.append(r); d1.append(d)
             seq_frames.append((i, gt, pred_depth, valid, a))
@@ -172,6 +188,9 @@ def main():
                     default=os.environ.get("VKITTI_ROOT", "/mnt/workspace/vkitti/vkitti/"))
     ap.add_argument("--invert", action="store_true",
                     help="metric output (A/B/D): take 1/D before alignment; omit for video/temporal")
+    ap.add_argument("--align_space", choices=["disparity", "depth"], default="disparity",
+                    help="scale+shift space: 'disparity' = KITTI/MiDaS protocol (default); "
+                         "'depth' = metric-space align, fair sanity check for the L2 models A/B/D")
     # optional second model -> C-vs-temporal style DENSE comparison figure
     ap.add_argument("--config2", default=None, help="second model config -> dense comparison figure")
     ap.add_argument("--ckpt2", default=None)
@@ -194,7 +213,7 @@ def main():
     print(f"[vkitti] {len(seqs)} held-out sequences from {args.vkitti_root}")
 
     a1, r1, d1, viz1 = eval_model(model1, seqs, args.invert, args.max_depth,
-                                  args.input_size, clip_len1, device)
+                                  args.input_size, clip_len1, device, args.align_space)
     os.makedirs(os.path.dirname(args.out_viz) or ".", exist_ok=True)
 
     # ---------------- single-model mode ----------------
@@ -226,7 +245,7 @@ def main():
     # ---------------- two-model comparison (e.g. C vs temporal) ----------------
     model2, clip_len2, _ = load_model(args.config2, args.ckpt2, device)
     a2, r2, d2, viz2 = eval_model(model2, seqs, args.invert2, args.max_depth,
-                                  args.input_size, clip_len2, device)
+                                  args.input_size, clip_len2, device, args.align_space)
     _summary(args.label1, a1, r1, d1, len(seqs))
     _summary(args.label2, a2, r2, d2, len(seqs))
 

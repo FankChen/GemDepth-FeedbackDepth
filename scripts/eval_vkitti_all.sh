@@ -16,9 +16,10 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 PY=${PY:-python}
 FILTER="${1:-all}"
-OUT=runlogs/vkitti_dense
+SUF=${ALIGN_SPACE:+_$ALIGN_SPACE}
+OUT=runlogs/vkitti_dense${SUF}
 mkdir -p "$OUT"
-CSV=runlogs/vkitti_dense_summary.csv
+CSV=runlogs/vkitti_dense_summary${SUF}.csv
 echo "backbone,exp,loss,AbsRel,RMSE,delta1" > "$CSV"
 
 run () {  # backbone exp loss stem invert(0/1)
@@ -31,6 +32,7 @@ run () {  # backbone exp loss stem invert(0/1)
   echo; echo "=== [$backbone / $exp]  $stem  (invert=$invert) ==="
   $PY evaluation/inference/eval_vkitti_dense.py \
       --config "config/${stem}.yaml" --ckpt "$ckpt" $flag \
+      --align_space "${ALIGN_SPACE:-disparity}" \
       --label1 "${backbone}-${exp}" --out_viz "$OUT/${stem}.png" 2>&1 | tee "$log"
   local line a r d
   line=$(grep -oE '\[vkitti DENSE.*' "$log" | tail -1)
