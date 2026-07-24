@@ -69,6 +69,8 @@ class GemDepth(nn.Module):
         backbone_weights=None,
         load_backbone_pretrained=True,
         multiscale_native_res=True,
+        multiscale_fullres_mode='none',
+        multiscale_depth_feedback=False,
     ):
         super(GemDepth, self).__init__()
 
@@ -88,6 +90,8 @@ class GemDepth(nn.Module):
         #   False -> upsample every scale to full input resolution, so all scales fit the same full
         #            GT (reproduces the original "all scales align to GT" behaviour).
         self.multiscale_native_res = multiscale_native_res
+        self.multiscale_fullres_mode = multiscale_fullres_mode
+        self.multiscale_depth_feedback = multiscale_depth_feedback
 
         # Backbone: DINOv2 (default, original path) or a DINOv3 backbone via model/backbones.py.
         # DINOv2 is built + (optionally) LoRA-wrapped here; DINOv3 uses build_backbone (timm model,
@@ -248,7 +252,7 @@ class GemDepth(nn.Module):
         elif head_type == 'multiscale':
             if self.backbone_kind == 'convnext':
                 from model.dpt_multiscale_convnext import DPTHeadMultiScaleRefineConvNeXt
-                self.head = DPTHeadMultiScaleRefineConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
+                self.head = DPTHeadMultiScaleRefineConvNeXt(self.pretrained.embed_dims, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size, fullres_mode=self.multiscale_fullres_mode, depth_feedback=self.multiscale_depth_feedback)
             else:
                 self.head = DPTHeadMultiScaleRefine(self.enc_embed_dim, features, use_bn, out_channels=out_channels, use_clstoken=use_clstoken, num_frames=num_frames, pe=pe, use_temporal=use_temporal, patch_size=self.patch_size)
         elif head_type == 'multiscale_softplus':

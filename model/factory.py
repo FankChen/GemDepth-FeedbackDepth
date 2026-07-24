@@ -36,6 +36,8 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
         'backbone_weights': OmegaConf.select(cfg, 'model.backbone_weights', default=None),
         'load_backbone_pretrained': bool(load_backbone_pretrained),
         'multiscale_native_res': bool(OmegaConf.select(cfg, 'model.multiscale_native_res', default=True)),
+        'multiscale_fullres_mode': str(OmegaConf.select(cfg, 'model.multiscale_fullres_mode', default='none')),
+        'multiscale_depth_feedback': bool(OmegaConf.select(cfg, 'model.multiscale_depth_feedback', default=False)),
     }
 
 

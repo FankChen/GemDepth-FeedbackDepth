@@ -24,15 +24,35 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
 
     def __init__(self, in_channels_list, features=256, use_bn=False,
                  out_channels=[256, 512, 1024, 1024], use_clstoken=False,
-                 num_frames=32, pe='ape', use_temporal=False, patch_size=4):
+                 num_frames=32, pe='ape', use_temporal=False, patch_size=4,
+                 fullres_mode='none', depth_feedback=False):
         super().__init__(in_channels_list, features, use_bn, out_channels,
                          use_clstoken, num_frames=num_frames, pe=pe,
                          use_temporal=use_temporal, patch_size=patch_size)
 
+        # Resolution at which each scale's delta head runs / outputs (see forward):
+        #   'none'       -> native pyramid resolution (original behaviour)
+        #   'last'       -> finest scale only: conv & output at full input resolution (Method A)
+        #   'all'        -> every scale: conv & output at full resolution (outputs all full-res)
+        #   'all_native' -> every scale: conv at full resolution, output resampled back to native
+        #                   resolution (full-res convolution, coarse-to-fine supervision preserved)
+        assert fullres_mode in ('none', 'last', 'all', 'all_native'), fullres_mode
+        self.fullres_mode = fullres_mode
+        # Depth feedback: encode the running depth (previous scale's accumulated z, detached) into
+        # 32 channels and concat onto this scale's feature, so the delta head refines with knowledge
+        # of the current depth instead of predicting it blind from features alone.
+        self.depth_feedback = bool(depth_feedback)
+        enc_ch = 32 if self.depth_feedback else 0
+        if self.depth_feedback:
+            self.depth_encoder = nn.Sequential(
+                nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
+                nn.ReLU(True),
+            )
+
         # One residual-regression head per pyramid scale (coarse -> fine).
         # No final activation: delta_Z may be positive or negative.
         self.delta_heads = nn.ModuleList([
-            self._make_delta_head(features) for _ in range(4)
+            self._make_delta_head(features, in_ch=features + enc_ch) for _ in range(4)
         ])
         # 【抗死 ReLU 修复】同 DPTHeadMultiScaleRefine：multiscale 绕过 output_conv2 的抗死初始化，
         # 默认初始化的带符号 delta 经外层 F.relu 会塌成全零。末层清零权重 + 最粗尺度 +0.5，
@@ -46,9 +66,11 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
         self.aux_depths = []
 
     @staticmethod
-    def _make_delta_head(features):
+    def _make_delta_head(features, in_ch=None):
+        if in_ch is None:
+            in_ch = features
         return nn.Sequential(
-            nn.Conv2d(features, features // 2, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_ch, features // 2, kernel_size=3, stride=1, padding=1),
             nn.ReLU(True),
             nn.Conv2d(features // 2, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(True),
@@ -131,23 +153,53 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
         prev_upsampled = []
         last_index = len(paths) - 1
         for i, feat in enumerate(paths):
-            # [Method A] The finest scale is the final output and receives no
-            # further refinement from a later scale, yet previously its whole
-            # delta head ran only at the native pyramid resolution and the depth
-            # was merely bilinearly upsampled afterwards (no convolution ever ran
-            # at full input resolution). Upsample this scale's FEATURE to full
-            # resolution first, so every conv layer of delta_heads[-1] runs at
-            # full resolution -- mirroring the temporal head's output_conv2 pass.
-            # Coarser scales are left untouched: they are refined by subsequent
-            # iterations, so they do not need a full-resolution pass.
-            if i == last_index and feat.shape[2:] != full_size:
-                feat = F.interpolate(feat, size=full_size, mode="bilinear", align_corners=True)
-            # Upsample the running depth to the current feature resolution.
-            if depth_prev.shape[2:] != feat.shape[2:]:
-                depth_prev = F.interpolate(depth_prev, size=feat.shape[2:],
+            native_size = feat.shape[2:]
+            # Decide the resolution the delta head runs at (conv_size) and the resolution this
+            # scale's output depth lives at (out_size), from fullres_mode:
+            #   'none'       -> conv & output at native pyramid resolution (original).
+            #   'last'       -> finest scale only: conv & output at full input resolution (Method A).
+            #   'all'        -> every scale: conv & output at full resolution (all outputs full-res,
+            #                   so coarse-to-fine survives only in the FEATURES, not the depth res).
+            #   'all_native' -> every scale: conv at full resolution, output resampled back to
+            #                   native resolution -> full-res convolution while keeping real
+            #                   coarse-to-fine resolution supervision.
+            if self.fullres_mode == 'last':
+                conv_size = full_size if i == last_index else native_size
+                out_size = conv_size
+            elif self.fullres_mode == 'all':
+                conv_size = full_size
+                out_size = full_size
+            elif self.fullres_mode == 'all_native':
+                conv_size = full_size
+                out_size = native_size
+            else:  # 'none'
+                conv_size = native_size
+                out_size = native_size
+
+            # Feature at conv_size (upsampled only when a full-res mode asks for it).
+            feat_c = feat if feat.shape[2:] == conv_size else \
+                F.interpolate(feat, size=conv_size, mode="bilinear", align_corners=True)
+            # Running depth brought to this scale's output resolution for the residual add.
+            if depth_prev.shape[2:] != out_size:
+                depth_prev = F.interpolate(depth_prev, size=out_size,
                                            mode="bilinear", align_corners=True)
 
-            delta_z = self.delta_heads[i](feat)
+            if self.depth_feedback:
+                # Encode the running depth (previous scale's accumulated z) and concat onto the
+                # feature. Detached, so the loss at this scale still only trains this scale's delta
+                # head (cross-scale gradient truncation preserved), but the head now *sees* the
+                # depth it is correcting instead of predicting blind from features alone.
+                dfeat = depth_prev.detach()
+                if dfeat.shape[2:] != conv_size:
+                    dfeat = F.interpolate(dfeat, size=conv_size, mode="bilinear", align_corners=True)
+                feat_in = torch.cat([feat_c, self.depth_encoder(dfeat)], dim=1)
+            else:
+                feat_in = feat_c
+
+            delta_z = self.delta_heads[i](feat_in)                  # at conv_size
+            if delta_z.shape[2:] != out_size:                        # bring delta to output res
+                delta_z = F.interpolate(delta_z, size=out_size,
+                                        mode="bilinear", align_corners=True)
             # Gradient truncation across scales: the running depth is detached,
             # so the loss at this scale only trains this scale's delta_Z.
             depth_cur = depth_prev.detach() + delta_z
