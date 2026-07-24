@@ -157,10 +157,25 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
             depth_prev = F.interpolate(init_depth.detach().to(paths[0].dtype), size=coarse_size,
                                        mode="bilinear", align_corners=True)
 
+        # Full input resolution (patch grid * patch size), e.g. 288x960.
+        full_size = (int(patch_h * self.patch_size), int(patch_w * self.patch_size))
+
         multilevel_depths = []
         deltas = []
         prev_upsampled = []
+        last_index = len(paths) - 1
         for i, feat in enumerate(paths):
+            # [Method A] The finest scale is the final output and receives no
+            # further refinement from a later scale, yet previously its whole
+            # delta head ran only at the native pyramid resolution and the depth
+            # was merely bilinearly upsampled afterwards (no convolution ever ran
+            # at full input resolution). Upsample this scale's FEATURE to full
+            # resolution first, so every conv layer of delta_heads[-1] runs at
+            # full resolution -- mirroring the temporal head's output_conv2 pass.
+            # Coarser scales are left untouched: they are refined by subsequent
+            # iterations, so they do not need a full-resolution pass.
+            if i == last_index and feat.shape[2:] != full_size:
+                feat = F.interpolate(feat, size=full_size, mode="bilinear", align_corners=True)
             # Upsample the running depth to the current feature resolution.
             if depth_prev.shape[2:] != feat.shape[2:]:
                 depth_prev = F.interpolate(depth_prev, size=feat.shape[2:],
@@ -174,7 +189,6 @@ class DPTHeadMultiScaleRefine(DPTHeadTemporal):
             prev_upsampled.append(depth_prev)
             depth_prev = depth_cur
 
-        full_size = (int(patch_h * self.patch_size), int(patch_w * self.patch_size))
         resized_multilevel_depths = [
             F.interpolate(zi, full_size, mode="bilinear", align_corners=True)
             for zi in multilevel_depths
