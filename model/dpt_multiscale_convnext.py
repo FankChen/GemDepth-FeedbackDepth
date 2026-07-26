@@ -25,7 +25,7 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
     def __init__(self, in_channels_list, features=256, use_bn=False,
                  out_channels=[256, 512, 1024, 1024], use_clstoken=False,
                  num_frames=32, pe='ape', use_temporal=False, patch_size=4,
-                 fullres_mode='none', depth_feedback=False):
+                 fullres_mode='none', depth_feedback=False, fp32_head=False):
         super().__init__(in_channels_list, features, use_bn, out_channels,
                          use_clstoken, num_frames=num_frames, pe=pe,
                          use_temporal=use_temporal, patch_size=patch_size)
@@ -48,6 +48,12 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
                 nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
                 nn.ReLU(True),
             )
+
+        # fp32_head: run each scale's delta head convs in FP32 (autocast disabled), matching the
+        # baseline temporal head which computes its final depth regression (output_conv2) in FP32.
+        # Purely protective for the precision-sensitive final regression; costs extra compute/memory
+        # and is most expensive under full-res modes (all / all_native run the convs at full res).
+        self.fp32_head = bool(fp32_head)
 
         # One residual-regression head per pyramid scale (coarse -> fine).
         # No final activation: delta_Z may be positive or negative.
@@ -196,7 +202,14 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             else:
                 feat_in = feat_c
 
-            delta_z = self.delta_heads[i](feat_in)                  # at conv_size
+            if self.fp32_head:
+                # Match the baseline temporal head: compute the depth regression conv in FP32.
+                ori_dtype = feat_in.dtype
+                with torch.autocast(device_type="cuda", enabled=False):
+                    delta_z = self.delta_heads[i](feat_in.float())  # at conv_size, FP32
+                delta_z = delta_z.to(ori_dtype)
+            else:
+                delta_z = self.delta_heads[i](feat_in)              # at conv_size
             if delta_z.shape[2:] != out_size:                        # bring delta to output res
                 delta_z = F.interpolate(delta_z, size=out_size,
                                         mode="bilinear", align_corners=True)

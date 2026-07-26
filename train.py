@@ -408,6 +408,13 @@ def main(cfg):
         multiscale_scale_weights = [g ** (n_ms_scales - 1 - i) for i in range(n_ms_scales)]
         print(f"[loss] multiscale_gamma={g} -> scale_weights(coarse->fine)="
               f"{[round(w, 4) for w in multiscale_scale_weights]}")
+    # Explicit per-scale weights (coarse->fine) override gamma. Lets the coarse-heavy /
+    # fine-heavy / ends-heavy weighting ablation run from config without touching source. The loss
+    # normalizes them to sum 1, so only the ratios matter.
+    explicit_scale_weights = OmegaConf.select(cfg, 'multiscale_scale_weights', default=None)
+    if explicit_scale_weights is not None:
+        multiscale_scale_weights = [float(w) for w in explicit_scale_weights]
+        print(f"[loss] multiscale_scale_weights(coarse->fine)={multiscale_scale_weights}")
     if multiscale_loss_name in ('video', 'videoloss', 'video_loss', 'multiscale_video'):
         multiscale_loss_func = MultiScaleVideoDepthLoss(pose_flag=pose_flag,
                                                         scale_weights=multiscale_scale_weights)

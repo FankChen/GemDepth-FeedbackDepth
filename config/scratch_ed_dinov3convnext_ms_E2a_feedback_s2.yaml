@@ -1,0 +1,62 @@
+# Exp E2a seed=2: multi-seed reproduction of E2a (depth feedback at native pyramid resolution).
+# Identical to scratch_ed_dinov3convnext_ms_E2a_feedback except training.seed and the output dirs,
+# so the E2a improvement over C can be checked against seed noise. Video loss.
+training:
+  seed: 2
+  checkpoint_dir: ./checkpoint/scratch_ed_dinov3convnext_ms_E2a_feedback_s2
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_dinov3convnext_ms_E2a_feedback_s2
+  freeze_mode: default
+  grad_accum: 1
+  aux_depth_weight: 1.0
+  aux_depth_space: disparity
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti/}']
+    crop_size: 448
+    seq_len: 4
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 448
+    seq_len: 4
+
+dataloader:
+  batch_size: 8
+  num_workers: 8
+
+model:
+  video_path: null
+  backbone: dinov3_convnext_s
+  backbone_weights: null
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  head_type: multiscale
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+  multiscale_native_res: true
+  multiscale_fullres_mode: none      # native pyramid resolution (coarse-to-fine preserved)
+  multiscale_depth_feedback: true    # encode running depth z, concat onto feature
+
+encoder: 'vitl'
+pose_flag: false
+multiscale_loss: video           # MultiScaleVideoDepthLoss (disparity + SSI + gradient + temporal)
+num_gpus: 1
+total_step: 20000
+project_name: scratch_ed_dinov3convnext_ms_E2a_feedback_s2

@@ -38,6 +38,7 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
         'multiscale_native_res': bool(OmegaConf.select(cfg, 'model.multiscale_native_res', default=True)),
         'multiscale_fullres_mode': str(OmegaConf.select(cfg, 'model.multiscale_fullres_mode', default='none')),
         'multiscale_depth_feedback': bool(OmegaConf.select(cfg, 'model.multiscale_depth_feedback', default=False)),
+        'multiscale_fp32_head': bool(OmegaConf.select(cfg, 'model.multiscale_fp32_head', default=False)),
     }
 
 
