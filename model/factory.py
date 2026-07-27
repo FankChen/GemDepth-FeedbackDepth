@@ -35,6 +35,11 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
         'backbone': str(OmegaConf.select(cfg, 'model.backbone', default='dinov2')),
         'backbone_weights': OmegaConf.select(cfg, 'model.backbone_weights', default=None),
         'load_backbone_pretrained': bool(load_backbone_pretrained),
+        # 【多尺度头三个消融开关】读取自 config 的 model.* 字段，透传给
+        # DPTHeadMultiScaleRefineConvNeXt（见 model/dpt_multiscale_convnext.py 文件头的实验对照表）：
+        #   multiscale_fullres_mode:   'none'/'last'/'all'/'all_native' -> C/E2a, C_fullres, E1/E2b, E3/E4
+        #   multiscale_depth_feedback: 是否让 delta_head 看到当前累积深度 -> E2a/E2b/E4 用 true
+        #   multiscale_fp32_head:      delta_head 卷积是否强制 FP32（对齐 baseline） -> 仅 fp32 对照组用 true
         'multiscale_native_res': bool(OmegaConf.select(cfg, 'model.multiscale_native_res', default=True)),
         'multiscale_fullres_mode': str(OmegaConf.select(cfg, 'model.multiscale_fullres_mode', default='none')),
         'multiscale_depth_feedback': bool(OmegaConf.select(cfg, 'model.multiscale_depth_feedback', default=False)),

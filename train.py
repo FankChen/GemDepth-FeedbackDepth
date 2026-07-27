@@ -411,6 +411,11 @@ def main(cfg):
     # Explicit per-scale weights (coarse->fine) override gamma. Lets the coarse-heavy /
     # fine-heavy / ends-heavy weighting ablation run from config without touching source. The loss
     # normalizes them to sum 1, so only the ratios matter.
+    # 【实验对应】config 顶层 multiscale_scale_weights: [w0,w1,w2,w3]（粗->细）。
+    #   E2a_wcoarse -> [0.4, 0.3, 0.2, 0.1]  粗多细少：偏重残差链的"地基"
+    #   E2a_wfine   -> [0.1, 0.2, 0.3, 0.4]  细多粗少：偏重评测实际用到的最细层
+    #   E2a_wends   -> [0.4, 0.1, 0.1, 0.4]  两头多中间少：U 型，粗细都重、中间两层陪跑
+    #   其余实验（C/E1/E2a/E2b/E3/E4/...）都不设这个 key -> None -> 均匀 1/4 各占 25%（原始行为）。
     explicit_scale_weights = OmegaConf.select(cfg, 'multiscale_scale_weights', default=None)
     if explicit_scale_weights is not None:
         multiscale_scale_weights = [float(w) for w in explicit_scale_weights]

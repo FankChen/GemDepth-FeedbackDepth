@@ -11,6 +11,29 @@
 # ConvNeXt can run the exact same from-scratch multiscale experiment as the ViT
 # backbones (experiment 7). Everything downstream (scratch / refinenet / temporal
 # motion modules) is reused unchanged.
+#
+# ============================================================================
+# 【实验对照表】三个构造参数 fullres_mode / depth_feedback / fp32_head 是本文件全部
+# 消融实验的开关，下面把「实验名 -> 具体取值」列出来，配合 forward() 里的详细注释看：
+#
+#   实验名                      fullres_mode   depth_feedback   fp32_head   备注
+#   C (基线多尺度)                'none'         False            False       起点，4 层各自原生分辨率
+#   C_fullres / 方法A            'last'         False            False       仅最细层放大到全分辨率
+#   E1 (·全分辨率)        'all'          False            False       4 层全放大，输出也全 448
+#                                                                            （丢失分辨率 coarse-to-fine）
+#   E3 (卷积full/输出native)     'all_native'   False            False       卷积在448算，delta 缩回原生尺寸
+#                                                                            （全分辨率卷积 + 保留 c2f）
+#   E2a (native+深度反馈)        'none'         True             False       delta_head 额外看到编码后的
+#                                                                            当前累积深度，不再盲改
+#   E2b (全分辨率+反馈)          'all'          True             False       E1 + E2a 叠加（实测变差）
+#   E4 (E3+反馈)                 'all_native'   True             False       E3 + E2a 叠加（新，待验证）
+#   E2a_fp32head / E4_..._fp32   同 E2a/E4      同 E2a/E4        True        对照组：delta_head 卷积强制
+#                                                                            FP32，对齐 baseline 的
+#                                                                            output_conv2 精度保护
+#
+# 层间 loss 权重（粗多细少/细多粗少/两头多）不是本文件的开关，是 train.py 里读取
+# config 顶层 `multiscale_scale_weights` 传给 MultiScaleVideoDepthLoss 的，见该文件。
+# ============================================================================
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,17 +53,22 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
                          use_clstoken, num_frames=num_frames, pe=pe,
                          use_temporal=use_temporal, patch_size=patch_size)
 
-        # Resolution at which each scale's delta head runs / outputs (see forward):
-        #   'none'       -> native pyramid resolution (original behaviour)
-        #   'last'       -> finest scale only: conv & output at full input resolution (Method A)
-        #   'all'        -> every scale: conv & output at full resolution (outputs all full-res)
-        #   'all_native' -> every scale: conv at full resolution, output resampled back to native
-        #                   resolution (full-res convolution, coarse-to-fine supervision preserved)
+        # Resolution at which each scale's delta head runs / outputs (see forward). 用法：由
+        # config 里的 model.multiscale_fullres_mode 传入（见 model/factory.py），对应实验见
+        # 上面的文件头【实验对照表】：
+        #   'none'       -> native pyramid resolution (original behaviour)             == C / E2a
+        #   'last'       -> finest scale only: conv & output at full input resolution  == C_fullres(方法A)
+        #   'all'        -> every scale: conv & output at full resolution (outputs     == E1 / E2b
+        #                   all full-res, 丢失分辨率 coarse-to-fine 监督)
+        #   'all_native' -> every scale: conv at full resolution, output resampled     == E3 / E4
+        #                   back to native resolution (全分辨率卷积、保留 c2f 监督)
         assert fullres_mode in ('none', 'last', 'all', 'all_native'), fullres_mode
         self.fullres_mode = fullres_mode
-        # Depth feedback: encode the running depth (previous scale's accumulated z, detached) into
-        # 32 channels and concat onto this scale's feature, so the delta head refines with knowledge
-        # of the current depth instead of predicting it blind from features alone.
+        # Depth feedback（是否让 delta_head 看到「当前累积深度」，而不是只看特征盲改）。
+        # 由 config 里的 model.multiscale_depth_feedback 传入。True 用于 E2a / E2b / E4；
+        # False（默认）用于 C / C_fullres / E1 / E3。
+        # 具体做法：把上一层累积的深度 depth_prev（detach 过，不回传梯度）过 Conv(1->32)+ReLU
+        # 编码成 32 通道，再 cat 到本层 256 通道特征后面，delta_head 的输入通道从 256 变 288。
         self.depth_feedback = bool(depth_feedback)
         enc_ch = 32 if self.depth_feedback else 0
         if self.depth_feedback:
@@ -50,9 +78,13 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             )
 
         # fp32_head: run each scale's delta head convs in FP32 (autocast disabled), matching the
-        # baseline temporal head which computes its final depth regression (output_conv2) in FP32.
-        # Purely protective for the precision-sensitive final regression; costs extra compute/memory
-        # and is most expensive under full-res modes (all / all_native run the convs at full res).
+        # baseline temporal head which computes its final depth regression (output_conv2) in FP32
+        # (see model/dpt_convnext.py DPTHeadTemporalConvNeXt.forward, the same autocast(enabled=False)
+        # guard). 由 config 里的 model.multiscale_fp32_head 传入，默认 False（除 baseline 外所有
+        # 实验都没有这层精度保护）。True 用于对照组 E2a_fp32head / E4_convfull_feedback_fp32，
+        # 用来单独检验"delta_head 补上 FP32 精度保护"这一项是否有效。
+        # 纯粹是精度保护，不改变数学语义；代价是算力/显存（在 all / all_native 全分辨率模式下最贵，
+        # 因为那时卷积本来就是在 448 全分辨率上做的，再套 FP32 更慢）。
         self.fp32_head = bool(fp32_head)
 
         # One residual-regression head per pyramid scale (coarse -> fine).
@@ -160,15 +192,16 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
         last_index = len(paths) - 1
         for i, feat in enumerate(paths):
             native_size = feat.shape[2:]
+            # 主要改动和变量控制：
             # Decide the resolution the delta head runs at (conv_size) and the resolution this
-            # scale's output depth lives at (out_size), from fullres_mode:
-            #   'none'       -> conv & output at native pyramid resolution (original).
-            #   'last'       -> finest scale only: conv & output at full input resolution (Method A).
+            # scale's output depth lives at (out_size), from fullres_mode (实验对应见文件头注释)：
+            #   'none'       -> conv & output at native pyramid resolution (original).      [C / E2a]
+            #   'last'       -> finest scale only: conv & output at full input resolution.  [C_fullres]
             #   'all'        -> every scale: conv & output at full resolution (all outputs full-res,
-            #                   so coarse-to-fine survives only in the FEATURES, not the depth res).
+            #                   so coarse-to-fine survives only in the FEATURES, not the depth res). [E1 / E2b]
             #   'all_native' -> every scale: conv at full resolution, output resampled back to
             #                   native resolution -> full-res convolution while keeping real
-            #                   coarse-to-fine resolution supervision.
+            #                   coarse-to-fine resolution supervision.                      [E3 / E4]
             if self.fullres_mode == 'last':
                 conv_size = full_size if i == last_index else native_size
                 out_size = conv_size
@@ -183,18 +216,19 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
                 out_size = native_size
 
             # Feature at conv_size (upsampled only when a full-res mode asks for it).
+            # 这块是给全分辨率，fea上采样到 conv_size，delta_head卷积在全分辨率上算；否则fea保持原生分辨率，delta_head卷积在原生分辨率上算。
             feat_c = feat if feat.shape[2:] == conv_size else \
                 F.interpolate(feat, size=conv_size, mode="bilinear", align_corners=True)
             # Running depth brought to this scale's output resolution for the residual add.
             if depth_prev.shape[2:] != out_size:
                 depth_prev = F.interpolate(depth_prev, size=out_size,
                                            mode="bilinear", align_corners=True)
-
+            #
             if self.depth_feedback:
-                # Encode the running depth (previous scale's accumulated z) and concat onto the
-                # feature. Detached, so the loss at this scale still only trains this scale's delta
-                # head (cross-scale gradient truncation preserved), but the head now *sees* the
-                # depth it is correcting instead of predicting blind from features alone.
+                # 【E2a / E2b / E4 专用分支】这就是有关于深度反馈的部分：编码当前累积深度（上一尺度的累计 z）
+                # and concat onto the feature. Detached, so the loss at this scale still only trains
+                # this scale's delta head (cross-scale gradient truncation preserved), but the head
+                # now *sees* the depth it is correcting instead of predicting blind from features alone.
                 dfeat = depth_prev.detach()
                 if dfeat.shape[2:] != conv_size:
                     dfeat = F.interpolate(dfeat, size=conv_size, mode="bilinear", align_corners=True)
@@ -203,13 +237,16 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
                 feat_in = feat_c
 
             if self.fp32_head:
-                # Match the baseline temporal head: compute the depth regression conv in FP32.
+                # 【E2a_fp32head / E4_..._fp32 对照组专用分支】Match the baseline temporal head:
+                # compute the depth regression conv in FP32.
                 ori_dtype = feat_in.dtype
                 with torch.autocast(device_type="cuda", enabled=False):
                     delta_z = self.delta_heads[i](feat_in.float())  # at conv_size, FP32
                 delta_z = delta_z.to(ori_dtype)
             else:
                 delta_z = self.delta_heads[i](feat_in)              # at conv_size
+            
+            #此处就是E3和E1的区别，E3是卷积在全分辨率上算，但是输出还是回到原生分辨率，E1是卷积和输出都是全分辨率
             if delta_z.shape[2:] != out_size:                        # bring delta to output res
                 delta_z = F.interpolate(delta_z, size=out_size,
                                         mode="bilinear", align_corners=True)
