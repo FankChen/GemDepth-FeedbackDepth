@@ -1,5 +1,5 @@
 # Python artifacts
-__pycache__/
+__pycache__
 *.pyc
 *.pyo
 *.pyd
@@ -7,17 +7,21 @@ __pycache__/
 outputs
 
 # Virtual environment
-venv/
-.env/
+venv
+.env
 
 # Checkpoints and outputs
-checkpoint/
-jobs/
-output_eval/
+# No trailing slash: a trailing "/" matches ONLY real directories, so a symlink
+# named e.g. `checkpoint` (pointing at real data on another disk) would NOT be
+# ignored, could get tracked, and a later checkout could clobber the linked data.
+# Slashless patterns match files, dirs AND symlinks, so the symlink stays ignored.
+checkpoint
+jobs
+output_eval
 
 # Logs
 *.log
-logs/
+logs
 
 # OS files
 .DS_Store
