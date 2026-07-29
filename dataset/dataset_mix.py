@@ -1,4 +1,6 @@
 import os
+# Enable OpenEXR in OpenCV BEFORE importing cv2 (MVS-Synth depth is .exr).
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 import cv2
 import numpy as np
 from tqdm import tqdm
@@ -10,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 from scipy.spatial.transform import Rotation as R
 from torchvision.transforms import Compose
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
+from dataset.loaders import get_loader
 
 def safe_collate(batch):
         batch = [b for b in batch if b is not None]
@@ -77,8 +80,17 @@ class DepthVideoDataset(Dataset):
         self.data_paths = []
         self.vkitti_data_paths=[]
         self.tartanair_data_paths=[]
+        self.loaders = {}            # label -> BaseLoader (modular datasets)
+        self.extra_data_paths = {}   # label -> list[(label, clip)]
         print(data_dirs)
         for data_dir in data_dirs:
+            loader = get_loader(data_dir)
+            if loader is not None:
+                clips = loader.build_sequences(data_dir, mode, seq_len)
+                self.loaders[loader.LABEL] = loader
+                self.extra_data_paths.setdefault(loader.LABEL, []).extend(clips)
+                print(f"{loader.LABEL}: {len(clips)} clips from {data_dir}")
+                continue
             if 'vkitti' in data_dir:
                 print("vkitti (2.0.3)")
                 # VKITTI 2.0.3 layout (wrapper-agnostic: works whether tars were
@@ -145,6 +157,9 @@ class DepthVideoDataset(Dataset):
                 print("tartanair_true")
                 scene_paths = sorted(glob.glob(data_dir + '/*/*/*'))
                 for scene_path in scene_paths:
+                    # skip stray non-sequence entries (e.g. leftover *.zip archives)
+                    if not os.path.isdir(os.path.join(scene_path, 'image_left')):
+                        continue
                     image_names = sorted([f for f in os.listdir(os.path.join(scene_path, 'image_left')) if f.endswith('.png')])
                     depth_names = sorted([f for f in os.listdir(os.path.join(scene_path, 'depth_left')) if f.endswith('.npy')])
                     pose_path = os.path.join(scene_path, 'pose_left.txt')
@@ -170,6 +185,9 @@ class DepthVideoDataset(Dataset):
 
         self.data_paths = self.vkitti_data_paths * self.vkitti_ratio + self.tartanair_data_paths*self.tartanair_ratio  
 
+        for label, clips in self.extra_data_paths.items():
+            self.data_paths += clips * self.loaders[label].RATIO
+
         self.scale = {
             'vkitti': RandomScale(scale_limit=(0.8, 0.85), last_ch=4*(seq_len-1)),
             'TartanAir': RandomScale(scale_limit=(0.8, 0.85), last_ch=4*(seq_len-1)),
@@ -190,6 +208,15 @@ class DepthVideoDataset(Dataset):
         A.ToFloat()
         ])
                         }
+
+        # Register the same augmentation stack for every modular dataset label.
+        for label in self.loaders:
+            self.scale[label] = RandomScale(scale_limit=(0.8, 0.85), last_ch=4*(seq_len-1))
+            self.flip[label] = RandomHorizontalFlip(last_ch=4*(seq_len-1))
+            self.transform[label] = A.Compose([
+                StatefulRandomCrop(height=crop_size, width=crop_size, p=1.0),
+                A.ToFloat()
+            ])
         
         
         self.transform_infer = Compose([
@@ -215,6 +242,7 @@ class DepthVideoDataset(Dataset):
             masks =[]
             poses = []
             path=[]
+            K_clip = None  # per-clip original-resolution intrinsics (modular loaders)
             if label in ['vkitti','TartanAir']:
                 for image_path, depth_path,pose in set_paths:
                     image = cv2.imread(image_path).astype(np.float32) / 255
@@ -251,6 +279,24 @@ class DepthVideoDataset(Dataset):
                     sample["image_ori"]=np.transpose(sample["image_ori"], (1, 2, 0))
                     images_ori.append(image)
 
+            elif label in self.loaders:
+                loader = self.loaders[label]
+                for frame_ref in set_paths:
+                    image, depth, mask, pose, K = loader.load_frame(frame_ref)
+                    if K_clip is None:
+                        K_clip = np.asarray(K, dtype=np.float32)
+                    image_ori = (image - 0.5) * 2
+                    pose = np.asarray(pose, dtype=np.float32)  # 4x4 world->camera
+                    path.append(frame_ref['image'])
+                    poses.append(pose)
+                    sample = self.transform_infer({'image': image, 'depth': depth, 'mask': mask, 'image_ori': image_ori})
+                    sample["image"] = np.transpose(sample["image"], (1, 2, 0))
+                    images.append(sample["image"])
+                    depths.append(np.expand_dims(sample['depth'], axis=-1))
+                    masks.append(np.expand_dims(sample['mask'], axis=-1))
+                    sample["image_ori"] = np.transpose(sample["image_ori"], (1, 2, 0))
+                    images_ori.append(image)
+
             images = np.concatenate(images, axis=-1)  # H, W, 3T 
             images_ori = np.concatenate(images_ori, axis=-1)
             depths = np.concatenate(depths, axis=-1)  # H, W, T 
@@ -271,7 +317,7 @@ class DepthVideoDataset(Dataset):
             images = torch.from_numpy(images).permute(0, 3, 1, 2)#T 3 H W
             depths = torch.from_numpy(depths).permute(0, 3, 1, 2)
             masks = torch.from_numpy(masks).permute(0, 3, 1, 2)
-            if  label in ['vkitti','TartanAir']:
+            if  label in ['vkitti','TartanAir'] or label in self.loaders:
                 inputs={}
                 if label == 'TartanAir':
                     fx=320
@@ -282,7 +328,12 @@ class DepthVideoDataset(Dataset):
                     fx=725
                     fy=725
                     cx=620.5
-                    cy=187        
+                    cy=187
+                if label in self.loaders:
+                    fx = float(K_clip[0, 0])
+                    fy = float(K_clip[1, 1])
+                    cx = float(K_clip[0, 2])
+                    cy = float(K_clip[1, 2])
                 IntM = np.zeros((3, 3))
                 IntM[2, 2] = 1.
                 IntM[0, 0] = fx*factor

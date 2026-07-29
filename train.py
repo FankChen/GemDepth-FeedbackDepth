@@ -21,6 +21,22 @@ import glob
 import re
 
 
+# Far-depth cap (metres) for the training supervision mask, keyed by dataset label
+# (data['label']). Near-range driving / indoor sets keep the original 80m so their
+# baseline behaviour is unchanged; MVS-Synth is an outdoor GTA-V set whose depths
+# reach ~200m, where an 80m cap would discard ~all of its valid pixels. Unknown
+# labels fall back to 80m.
+DATASET_MAX_DEPTH = {
+    'vkitti': 80.0,          # VKITTI2 (driving)
+    'TartanAir': 80.0,
+    'vkitti1': 80.0,         # VKITTI1.3.1 (driving, same range as VKITTI2)
+    'mvs_synth': 500.0,      # outdoor GTA-V, real geometry to ~1000m; 500m keeps ~69% valid
+    'pointodyssey': 80.0,
+    'dynamic_replica': 80.0, # indoor, few metres
+}
+DATASET_MAX_DEPTH_DEFAULT = 80.0
+
+
 def tensor_health(tensor):
     """Compact finite/range diagnostics, evaluated only on a failure path."""
     if tensor is None:
@@ -439,7 +455,14 @@ def main(cfg):
                 continue 
             image = data['image']
             depth_gt = data['depth']
-            mask = ((depth_gt>1e-3) & (depth_gt<=80)).float() # TODO: the range may change on different datasets. 
+            # Per-dataset far-depth cap: a global 80m cap throws away almost all of
+            # MVS-Synth's (outdoor) valid pixels, so use each sample's dataset label
+            # to pick its cap (see DATASET_MAX_DEPTH). depth_gt is [B,T,1,H,W].
+            labels = data['label']
+            far_cap = depth_gt.new_tensor(
+                [DATASET_MAX_DEPTH.get(l, DATASET_MAX_DEPTH_DEFAULT) for l in labels])
+            far_cap = far_cap.view(-1, *([1] * (depth_gt.dim() - 1)))
+            mask = ((depth_gt > 1e-3) & (depth_gt <= far_cap)).float()
             intrinsic_gt=data['IntM']
             extrinsic_gt=data['poses'] 
             with accelerator.accumulate(model):
