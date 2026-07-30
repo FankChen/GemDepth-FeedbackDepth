@@ -1,0 +1,87 @@
+# Mixed multi-dataset 8-GPU training (based on E2a: ConvNeXt multiscale + depth
+# feedback at native resolution + video loss). Data grew (added VKITTI1.3.1 /
+# MVS-Synth / PointOdyssey / Dynamic Replica alongside VKITTI2), so this runs on
+# 8 GPUs. Frequent checkpoints (save_freq=500) so you can visualise depth mid-run.
+#
+# ⚠ Requires train.py to have the per-dataset DATASET_MAX_DEPTH mask (mvs_synth
+#   capped at 500m, others 80m). If your train.py still hardcodes `depth_gt<=80`,
+#   MVS-Synth loses ~all pixels -- apply the DATASET_MAX_DEPTH snippet first.
+#
+# Launch (8 GPU):
+#   NUM_PROC=8 python -m accelerate.commands.launch --num_processes 8 \
+#       --mixed_precision bf16 train.py \
+#       --config-name=scratch_ed_dinov3convnext_ms_mixdata_8gpu
+#
+# Mid-training depth viz (any saved checkpoint):
+#   python evaluation/inference/eval_vkitti_dense.py \
+#     --config config/scratch_ed_dinov3convnext_ms_mixdata_8gpu.yaml \
+#     --ckpt checkpoint/scratch_ed_dinov3convnext_ms_mixdata_8gpu/checkpoint_500.pth \
+#     --out_viz runlogs/viz/mixdata_step500.png
+
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/scratch_ed_dinov3convnext_ms_mixdata_8gpu
+  save_freq: 500                     # frequent -> can visualise mid-run (noon check)
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_dinov3convnext_ms_mixdata_8gpu
+  freeze_mode: default
+  grad_accum: 1
+  aux_depth_weight: 1.0
+  aux_depth_space: disparity
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    # Aliyun paths (verified via the dataloader smoke). TartanAir left out until
+    # confirmed present on Aliyun -- add its path here if available.
+    data_dirs:
+      - /mnt/workspace/vkitti/vkitti                     # VKITTI2
+      - /mnt/data/liren/datasets/vkitti_1.3.1            # VKITTI1.3.1
+      - /mnt/data/liren/datasets/mvs_synth               # MVS-Synth
+      - /mnt/data/liren/datasets/point_odyssey           # PointOdyssey
+      - /mnt/data/liren/datasets/dynamic_replica         # Dynamic Replica (loader recurses for .jgz)
+    crop_size: 448
+    seq_len: 4
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 448
+    seq_len: 4
+
+dataloader:
+  batch_size: 32                     # GLOBAL batch (÷ 8 gpu = 4 clips/gpu). Raise to 64 for 8/gpu if VRAM allows.
+  num_workers: 8
+
+model:
+  video_path: null
+  backbone: dinov3_convnext_s
+  backbone_weights: null
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  head_type: multiscale
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+  multiscale_native_res: true
+  multiscale_fullres_mode: none
+  multiscale_depth_feedback: true
+
+encoder: 'vitl'
+pose_flag: false
+multiscale_loss: video               # MultiScaleVideoDepthLoss (disparity + SSI + gradient + temporal)
+num_gpus: 8                          # MUST match NUM_PROC at launch
+total_step: 20000
+project_name: scratch_ed_dinov3convnext_ms_mixdata_8gpu
+resume: false
