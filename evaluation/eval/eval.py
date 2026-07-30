@@ -100,7 +100,15 @@ def eval_depthcrafter(infer_paths, depth_gt_paths, factors, args):
     if not valid_mask.any():
         raise ValueError(
             f'No valid GT pixels for sequence beginning at {loaded_paths[0]}')
+    #这一块是对预测的深度图和真实的深度图进行尺度和偏移的对齐，确保它们在同一尺度上进行比较。具体来说：
+    # 1. 将真实深度图转换为视差（inverse depth）
+    # 2. 对预测的深度图进行裁剪和重塑，以便与真实深度图的有效像素进行比较。
+    # 3. 使用 stable_scale_and_shift 函数计算一个缩放因子和偏移量，使得预测的视差图与真实的视差图在有效像素上尽可能接近。
+    # 4. 将预测的深度图应用这个缩放和偏移，使其与真实深度图对齐
+    # 5. 最后，将对齐后的预测深度图裁剪到合理的范围内，以避免极端值对评估指标的影响。
+    # 这一步是为了确保在计算评估指标时，预测的深度图和真实的深度图在同一尺度上进行比较，从而得到更准确的评估结果。
     gt_disp_masked = 1. / (gts[valid_mask].reshape((-1,1)).astype(np.float64) + 1e-8)
+    #对预测的深度图进行裁剪和重塑，以便与真实深度图的有效像素进行比较。
     infs = np.clip(infs, a_min=1e-3, a_max=None)
     pred_disp_masked = infs[valid_mask].reshape((-1,1)).astype(np.float64)
     scale, shift = stable_scale_and_shift(
@@ -197,8 +205,8 @@ def main():
             args.c = 0
             args.d = 640
         elif dataset == 'scannet':
-            args.json_file = os.path.join(args.benchmark_path,'scannet_small/scannet_video.json')
-            args.root_path = os.path.join(args.benchmark_path,'scannet_small')
+            args.json_file = os.path.join(args.benchmark_path,'scannet/scannet_video.json')
+            args.root_path = os.path.join(args.benchmark_path,'scannet')
             args.max_depth_eval = 10.0
             args.min_depth_eval = 0.1
             args.max_eval_len = 90
@@ -234,6 +242,9 @@ def main():
         print(f'<{line} {dataset} start {line}>')
         file.write(f'<{line} {dataset} start {line}>\n')
         results_all = []
+        #这个循环是对每个序列进行评估，json_data是一个列表，每个元素是一个字典，
+        # 字典的key是序列名，value是一个列表，列表中每个元素是一个字典，
+        # 包含'image'、'gt_depth'、'factor'等信息。
         for data in tqdm(json_data):
             for key in data.keys():
                 value = data[key]

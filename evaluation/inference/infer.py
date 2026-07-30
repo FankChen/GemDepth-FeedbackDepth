@@ -55,8 +55,15 @@ if __name__ == '__main__':
                 'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
             }
             gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type)
-        checkpoint = torch.load(args.ckpt, map_location='cpu',weights_only=False)
-        gemdepth.load_state_dict(checkpoint, strict=True)
+        obj = torch.load(args.ckpt, map_location='cpu', weights_only=False)
+        # Training checkpoints are dicts {model_state_dict, optimizer_state_dict, ...};
+        # raw exports are a bare state_dict. Handle both, and strip any DDP 'module.' prefix.
+        if isinstance(obj, dict) and 'model_state_dict' in obj:
+            state = obj['model_state_dict']
+        else:
+            state = obj
+        state = {(k[7:] if k.startswith('module.') else k): v for k, v in state.items()}
+        gemdepth.load_state_dict(state, strict=True)
         gemdepth = gemdepth.to(DEVICE).eval()
         json_data = path_json[dataset]
         root_path = os.path.dirname(args.json_file)
