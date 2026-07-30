@@ -40,10 +40,10 @@ optimizer:
 dataset:
   train:
     mode: train
-    # Aliyun paths (verified via the dataloader smoke). TartanAir left out until
-    # confirmed present on Aliyun -- add its path here if available.
+    # Aliyun paths (verified via the dataloader smoke). 6-dataset mix.
     data_dirs:
       - /mnt/workspace/vkitti/vkitti                     # VKITTI2
+      - /mnt/data/liren/datasets/tartanair               # TartanAir
       - /mnt/data/liren/datasets/vkitti_1.3.1            # VKITTI1.3.1
       - /mnt/data/liren/datasets/mvs_synth               # MVS-Synth
       - /mnt/data/liren/datasets/point_odyssey           # PointOdyssey
