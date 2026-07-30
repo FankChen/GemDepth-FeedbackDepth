@@ -235,6 +235,15 @@ class DepthVideoDataset(Dataset):
 
     def __getitem__(self, item):
         while True:
+            try:
+                return self._getitem_inner(item)
+            except Exception as e:
+                label = self.data_paths[item][0]
+                print(f"[dataset_mix] WARNING: skipping corrupt sample "
+                      f"(label={label}, item={item}): {e}", flush=True)
+                item = np.random.randint(0, len(self.data_paths))
+
+    def _getitem_inner(self, item):
             label, set_paths = self.data_paths[item]
             images = []
             images_ori=[]
