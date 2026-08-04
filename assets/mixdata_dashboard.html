@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mixdata 多数据集混训 · 结果看板</title>
+<style>
+  :root {
+    --bg: #0f1419; --card: #1a2029; --border: #2a3441; --text: #e6edf3;
+    --muted: #8b949e; --accent: #58a6ff; --good: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.6; max-width: 1100px; margin: 0 auto;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 15px; margin: 20px 0 8px; color: var(--accent); }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+  .meta code { background: var(--card); padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+  .tldr { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+          border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
+  .warn-box { background: rgba(210,153,34,0.08); border: 1px solid rgba(210,153,34,0.35);
+              border-left: 3px solid var(--warn); border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px;
+          background: var(--card); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: #212936; font-weight: 600; color: var(--muted); font-size: 12px;
+       text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; font-family: "SF Mono", Menlo, monospace; }
+  .best { color: var(--good); font-weight: 700; }
+  .hard { color: var(--bad); }
+  .note { color: var(--muted); font-size: 13px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge-good { background: rgba(63,185,80,0.15); color: var(--good); }
+  .badge-bad  { background: rgba(248,81,73,0.15); color: var(--bad); }
+  pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+        padding: 14px 16px; overflow-x: auto; font-size: 13px; }
+  code { font-family: "SF Mono", Menlo, monospace; }
+  ul.todo { list-style: none; padding-left: 0; }
+  ul.todo li { padding: 6px 0 6px 26px; position: relative; font-size: 14px; }
+  ul.todo li::before { content: "☐"; position: absolute; left: 0; color: var(--warn); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+
+<h1>Mixdata 多数据集混训 · 结果看板</h1>
+<p class="meta">更新日期：<b>2026-07-31</b></p>
+<p class="meta">配置：<code>config/scratch_ed_dinov3convnext_ms_mixdata_8gpu.yaml</code></p>
+<p class="meta">checkpoint：<code>checkpoint/scratch_ed_dinov3convnext_ms_mixdata_8gpu/final.pth</code>（step 20000，训完于 2026-07-30 18:01）</p>
+<p class="meta">训练环境：阿里云 DSW，8×H20，accelerate bf16，global batch=32（4/GPU），seq_len=4，crop=448，total_step=20000</p>
+<p class="meta">评测对齐：视差（inverse depth）空间 lstsq scale+shift（与 KITTI/temporal 一致），<b>不取倒数</b></p>
+
+<h2>一、TL;DR</h2>
+<div class="tldr">
+ConvNeXt-Small + LoRA 多尺度头（native-res + depth-feedback + video loss），在 <b>6 数据集混训</b>（VKITTI2 + TartanAir + VKITTI1.3.1 + MVS-Synth + PointOdyssey + Dynamic Replica）下训到 20k 步，训练全程稳定（自动跳过 9 个损坏样本、无崩溃）。四个视频深度 benchmark 全部评测完成：<b>bonn 最好</b>（AbsRel 0.0809 / δ1 0.9516），<b>sintel 最难</b>（0.3693）。
+</div>
+
+<div class="warn-box">
+⚠ <b>对照说明</b>：本看板是 6 数据集混训配方，与历史单训 VKITTI 系的 temporal / multiscale 基线<b>不是同一训练配方</b>（不同训练数据 / split / 预算）。第三节历史基线仅作参考，<b>不能据此宣称"混训更好/更差"</b>。公平结论需跑同 mix 配方的 temporal baseline（见待办）。
+</div>
+
+<h2>二、混训结果</h2>
+
+<h3>2.1 四集 benchmark（final.pth · output_eval/mixdata_final）</h3>
+<table>
+  <thead><tr><th>dataset</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td>kitti</td><td class="num">0.1119</td><td class="num">3.7667</td><td class="num">0.8940</td><td class="note">室外真实 LiDAR 稀疏 GT</td></tr>
+    <tr><td>sintel</td><td class="num hard">0.3693</td><td class="num">6.6069</td><td class="num hard">0.5497</td><td class="note">合成电影、非刚体运动，公认最难 <span class="badge badge-bad">最难</span></td></tr>
+    <tr><td>bonn</td><td class="num best">0.0809</td><td class="num">0.2320</td><td class="num best">0.9516</td><td class="note">室内 RGBD，最好；po/dr 室内数据助力 <span class="badge badge-good">最好</span></td></tr>
+    <tr><td>scannet</td><td class="num">0.1211</td><td class="num">0.3227</td><td class="num">0.8613</td><td class="note">室内 RGBD</td></tr>
+  </tbody>
+</table>
+
+<h3>2.2 VKITTI2 域内 dense（eval_vkitti_dense.py · final.pth · 不 invert）</h3>
+<table>
+  <thead><tr><th>checkpoint</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>step1500（早期）</td><td class="num">0.1270</td><td class="num">8.3378</td><td class="num">0.8189</td><td class="note">训练早期</td></tr>
+    <tr><td>final（step20000）</td><td class="num best">0.0915</td><td class="num best">6.2360</td><td class="num best">0.9045</td><td class="note">AbsRel 降 28%，δ1 0.819→0.905</td></tr>
+  </tbody>
+</table>
+
+<h2>三、历史基线（仅参考，非同配方）</h2>
+<p class="note">均为单训 VKITTI 系、20k 步、KITTI <code>kitti_video.json</code> 同评测口径。训练数据/split 与本次混训不同，<b>不能直接对比</b>。</p>
+<table>
+  <thead><tr><th>方案</th><th>KITTI AbsRel ↓</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>ConvNeXt-s temporal</td><td class="num">0.0891</td><td class="note">历史最佳 temporal</td></tr>
+    <tr><td>ConvNeXt-s multiscale-C（video loss）</td><td class="num">0.0946</td><td class="note">单训 multiscale</td></tr>
+    <tr><td>ConvNeXt-s E2a（native+feedback）</td><td class="num">0.0915</td><td class="note">fullres/feedback 系最佳</td></tr>
+    <tr><td>本次 mixdata multiscale（final）</td><td class="num">0.1119</td><td class="note">6 数据集混训（非同配方）</td></tr>
+  </tbody>
+</table>
+
+<h2>四、待办 / 下一步</h2>
+<ul class="todo">
+  <li><b>同口径 temporal baseline</b>：用同 6 数据集 mix 配方训一版 temporal，四集 benchmark 同脚本评测，才能公平回答"混训 multiscale vs temporal"。</li>
+  <li>tar.gz（bonn 7.3G / scannet 22G / sintel 2.1G）解压后可删腾空间（共享存储，删前确认）。</li>
+</ul>
+
+<h2>五、复现命令</h2>
+<h3>四集 benchmark</h3>
+<pre><code>cd /mnt/workspace/liren/PP-DPT
+CONFIG=config/scratch_ed_dinov3convnext_ms_mixdata_8gpu.yaml \
+CKPT=checkpoint/scratch_ed_dinov3convnext_ms_mixdata_8gpu/final.pth \
+BENCH=/mnt/workspace/gemdepth_eval \
+OUT=output_eval/mixdata_final \
+DATASETS="kitti sintel bonn scannet" \
+GPU=0 \
+bash scripts/eval_gemdepth_4bench.sh</code></pre>
+
+<h3>VKITTI2 域内 dense</h3>
+<pre><code>python evaluation/inference/eval_vkitti_dense.py \
+  --config config/scratch_ed_dinov3convnext_ms_mixdata_8gpu.yaml \
+  --ckpt   checkpoint/scratch_ed_dinov3convnext_ms_mixdata_8gpu/final.pth \
+  --vkitti_root /mnt/workspace/vkitti/vkitti/ \
+  --out_viz runlogs/viz/vkitti_mixdata_final.png</code></pre>
+
+<footer>PP-DPT · Mixdata 多数据集混训看板 · 生成于 2026-07-31 · 配套 Markdown：MIXDATA_DASHBOARD.md</footer>
+
+</body>
+</html>

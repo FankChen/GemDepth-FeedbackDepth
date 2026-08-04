@@ -1,0 +1,82 @@
+# Mixed multi-dataset 8-GPU TEMPORAL baseline — fair single-scale counterpart to
+# scratch_ed_dinov3convnext_ms_mixdata_8gpu.yaml. IDENTICAL data / budget / backbone /
+# LoRA / batch / steps / crop / seq_len; ONLY the head differs:
+#   multiscale head (native-res + depth-feedback + video loss)  -->  single-scale temporal head.
+# This is the same-recipe baseline required by the experiment-control rule so the
+# multiscale-vs-temporal comparison on the 4 benchmarks is apples-to-apples.
+#
+# Launch (8 GPU):
+#   NUM_PROC=8 python -m accelerate.commands.launch --num_processes 8 \
+#       --mixed_precision bf16 train.py \
+#       --config-name=scratch_ed_dinov3convnext_temporal_mixdata_8gpu
+#
+# 4-benchmark eval (after training):
+#   CONFIG=config/scratch_ed_dinov3convnext_temporal_mixdata_8gpu.yaml \
+#   CKPT=checkpoint/scratch_ed_dinov3convnext_temporal_mixdata_8gpu/final.pth \
+#   BENCH=/mnt/workspace/gemdepth_eval OUT=output_eval/temporal_mixdata_final \
+#   DATASETS="kitti sintel bonn scannet" GPU=0 bash scripts/eval_gemdepth_4bench.sh
+
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/scratch_ed_dinov3convnext_temporal_mixdata_8gpu
+  save_freq: 500                     # match multiscale run (mid-run viz)
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_dinov3convnext_temporal_mixdata_8gpu
+  freeze_mode: default
+  grad_accum: 1
+  aux_depth_weight: 0.0              # temporal head has no auxiliary depths
+  aux_depth_space: disparity
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    # SAME 6-dataset mix as the multiscale run (verified via the dataloader smoke).
+    # Paths point to the consolidated PROJECT_CHEN layout on Aliyun.
+    data_dirs:
+      - /mnt/data/PROJECT_CHEN/data/train/vkitti2/vkitti   # VKITTI2
+      - /mnt/data/PROJECT_CHEN/data/train/tartanair        # TartanAir
+      - /mnt/data/PROJECT_CHEN/data/train/vkitti_1.3.1     # VKITTI1.3.1
+      - /mnt/data/PROJECT_CHEN/data/train/mvs_synth        # MVS-Synth
+      - /mnt/data/PROJECT_CHEN/data/train/point_odyssey    # PointOdyssey
+      - /mnt/data/PROJECT_CHEN/data/train/dynamic_replica  # Dynamic Replica (loader recurses for .jgz)
+    crop_size: 448
+    seq_len: 4
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 448
+    seq_len: 4
+
+dataloader:
+  batch_size: 32                     # GLOBAL batch (÷ 8 gpu = 4 clips/gpu) — same as multiscale run
+  num_workers: 8
+
+model:
+  video_path: null
+  backbone: dinov3_convnext_s
+  backbone_weights: null
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  head_type: temporal                # single-scale temporal DPT head (the baseline)
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+
+encoder: 'vitl'
+pose_flag: false
+num_gpus: 8                          # MUST match NUM_PROC at launch
+total_step: 20000
+project_name: scratch_ed_dinov3convnext_temporal_mixdata_8gpu
+resume: false
