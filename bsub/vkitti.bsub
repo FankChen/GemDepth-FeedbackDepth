@@ -1,0 +1,27 @@
+#!/bin/bash -l
+#BSUB -J multilevel-dpt-vkitti
+#BSUB -o jobs/vkitti.%J.stdout
+#BSUB -e jobs/vkitti.%J.stderr
+#BSUB -q batch_h200
+#BSUB -W 72:00
+#BSUB -n 8
+#BSUB -M 80000
+#BSUB -gpu "num=1:aff=no"
+
+set -euo pipefail
+
+module purge
+module load conda/4.8.5
+module load cuda/12.4.0
+
+ROOT="${ROOT:-$PWD}"
+MODE="${MODE:-train}"
+PYTHON="${PYTHON:-python}"
+
+cd "$ROOT"
+mkdir -p jobs
+
+export PYTHON
+export NUM_PROCESSES="${NUM_PROCESSES:-1}"
+
+bash scripts/vkitti.sh "$MODE"

@@ -6,7 +6,7 @@ on top of the previous (upsampled) level, plus per-level delta statistics -- a d
 check: if the deep levels' delta std ~ 0, those levels aren't actually refining anything.
 
     python evaluation/inference/eval_vkitti_multilevel.py \
-        --config config/scratch_ed_dinov3convnext_ms_C_native_video.yaml \
+        --config config/scratch/dinov3_convnext/scratch_ed_dinov3convnext_ms_C_native_video.yaml \
         --ckpt   checkpoint/scratch_ed_dinov3convnext_ms_C_native_video/final_model.pth \
         --out_viz runlogs/viz/vkitti_multilevel_convnext_C.png
 """

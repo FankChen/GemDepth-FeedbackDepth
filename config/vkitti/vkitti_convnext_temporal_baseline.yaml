@@ -1,0 +1,59 @@
+# @package _global_
+# VKITTI baseline for the multiscale depth-concat experiment. It keeps the
+# backbone, temporal modeling, LoRA, data split, optimizer, crop, sequence
+# length, batch size, and training schedule identical, changing only the
+# decoder to the standard single-output ConvNeXt DPT temporal head.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/vkitti_convnext_temporal_baseline
+  save_freq: 2000
+  val_freq: 2000
+  log_dir: ./logs/vkitti_convnext_temporal_baseline
+  freeze_mode: default
+  grad_accum: 1
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti}']
+    crop_size: 448
+    seq_len: 4
+  val:
+    mode: val
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti}']
+    crop_size: 448
+    seq_len: 4
+
+dataloader:
+  batch_size: 32
+  num_workers: 8
+
+model:
+  video_path: null
+  backbone: DINOv3ConvNeXtSmallBackbone
+  backbone_weights: null
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  decoder: DPTHeadTemporalConvNeXt
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+
+encoder: vitl
+pose_flag: false
+num_gpus: 2
+total_step: 10000
+project_name: vkitti_convnext_temporal_baseline
+resume: false

@@ -21,9 +21,18 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
     encoder = str(cfg.encoder)
     if encoder not in MODEL_CONFIGS:
         raise ValueError(f"Unknown encoder={encoder}; options={list(MODEL_CONFIGS)}")
+    decoder = OmegaConf.select(
+        cfg, 'model.decoder', default='DPTHeadTemporal')
+    decoder_kwargs = OmegaConf.select(cfg, 'model.decoder_kwargs', default={})
+    backbone = OmegaConf.select(
+        cfg, 'model.backbone', default='DINOv2Backbone')
+    backbone_kwargs = OmegaConf.select(
+        cfg, 'model.backbone_kwargs', default={})
     return {
         **MODEL_CONFIGS[encoder],
-        'head_type': str(OmegaConf.select(cfg, 'model.head_type', default='temporal')),
+        'decoder': str(decoder),
+        'decoder_kwargs': OmegaConf.to_container(
+            decoder_kwargs, resolve=True) if decoder_kwargs else {},
         'use_gem': bool(OmegaConf.select(cfg, 'model.use_gem', default=True)),
         'use_astt': bool(OmegaConf.select(cfg, 'model.use_astt', default=True)),
         'use_temporal': bool(OmegaConf.select(cfg, 'model.use_temporal', default=True)),
@@ -31,9 +40,11 @@ def gemdepth_kwargs_from_config(cfg, load_backbone_pretrained=True):
         'lora_r': int(OmegaConf.select(cfg, 'model.lora_r', default=8)),
         'lora_alpha': int(OmegaConf.select(cfg, 'model.lora_alpha', default=16)),
         'lora_dropout': float(OmegaConf.select(cfg, 'model.lora_dropout', default=0.0)),
-        'dinov2_weights': OmegaConf.select(cfg, 'model.dinov2_weights', default=None),
-        'backbone': str(OmegaConf.select(cfg, 'model.backbone', default='dinov2')),
-        'backbone_weights': OmegaConf.select(cfg, 'model.backbone_weights', default=None),
+        'backbone': str(backbone),
+        'backbone_kwargs': OmegaConf.to_container(
+            backbone_kwargs, resolve=True) if backbone_kwargs else {},
+        'backbone_weights': OmegaConf.select(
+            cfg, 'model.backbone_weights', default=None),
         'load_backbone_pretrained': bool(load_backbone_pretrained),
         # 【多尺度头三个消融开关】读取自 config 的 model.* 字段，透传给
         # DPTHeadMultiScaleRefineConvNeXt（见 model/dpt_multiscale_convnext.py 文件头的实验对照表）：

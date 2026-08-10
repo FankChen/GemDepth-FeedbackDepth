@@ -28,7 +28,8 @@ class MultiScaleVideoDepthLoss(nn.Module):
     """
 
     def __init__(self, alpha=0.5, beta=0.2, scales=4, trim=0, stable_scale=10,
-                 reduction="batch-based", pose_flag=True, scale_weights=None):
+                 reduction="batch-based", pose_flag=True, scale_weights=None,
+                 normalize_scale_weights=True):
         super().__init__()
         self.beta = beta
         self.spatial_loss = TrimmedProcrustesLoss(alpha=alpha, scales=scales, trim=trim, reduction=reduction)
@@ -39,6 +40,7 @@ class MultiScaleVideoDepthLoss(nn.Module):
         self.pose_flag = pose_flag
         # Optional per-scale weights (coarse -> fine). None => uniform average.
         self.scale_weights = scale_weights
+        self.normalize_scale_weights = normalize_scale_weights
 
     def _resize_gt(self, target_inverse, mask, size):
         """Nearest-resize GT inverse depth and mask to ``size`` = (h, w)."""
@@ -65,8 +67,12 @@ class MultiScaleVideoDepthLoss(nn.Module):
             if len(self.scale_weights) != n_scales:
                 raise ValueError(
                     f"scale_weights length {len(self.scale_weights)} != number of scales {n_scales}")
-            weight_sum = float(sum(self.scale_weights))
-            weights = [float(w) / weight_sum for w in self.scale_weights]
+            weights = [float(w) for w in self.scale_weights]
+            if self.normalize_scale_weights:
+                weight_sum = float(sum(weights))
+                if weight_sum <= 0:
+                    raise ValueError("scale_weights must have a positive sum")
+                weights = [w / weight_sum for w in weights]
 
         target = target.clone()
         target_inverse = torch.zeros_like(target)
@@ -95,8 +101,17 @@ class MultiScaleVideoDepthLoss(nn.Module):
             scale, shift = compute_scale_and_shift(pred.flatten(1, 2), tinv.flatten(1, 2), m.flatten(1, 2))
             pred_aligned = scale.view(-1, 1, 1, 1) * pred + shift.view(-1, 1, 1, 1)
             stable = self.stable_loss(prediction=pred_aligned, target=tinv, mask=m) * self.stable_scale
+            scale_total = spatial + stable
 
-            total = total + w * (spatial + stable)
+            # Keep the unweighted loss of every prediction level visible for
+            # diagnostics. Weighting is applied only to the aggregate below.
+            loss_dict[f'scale_{i}_spatial_loss'] = spatial
+            loss_dict[f'scale_{i}_ssi'] = ssi
+            loss_dict[f'scale_{i}_gm'] = gm
+            loss_dict[f'scale_{i}_stable_loss'] = stable
+            loss_dict[f'scale_{i}_total_loss'] = scale_total
+
+            total = total + w * scale_total
             agg_spatial = agg_spatial + w * spatial
             agg_ssi = agg_ssi + w * ssi
             agg_gm = agg_gm + w * gm

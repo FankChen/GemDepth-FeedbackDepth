@@ -1,213 +1,203 @@
-<div align="center">
-<h2 align="center"> GemDepth: Geometry-Embedded Features for 3D-Consistent Video Depth </h2>
+# Multilevel DPT on Virtual KITTI 2
 
-[**Yuecheng liu**](https://github.com/Yuecheng919/)<sup>1</sup>, [**Junda Cheng**](https://github.com/Junda24)<sup>1†</sup>, [**Longliang Liu**](https://github.com/longliangLiu)<sup>1,2</sup>, [**Wenjing Liao**](https://github.com/waldeinsamkeits)<sup>1,2</sup>, [**Hanrui Cheng**](https://github.com/MarcelRay0312)<sup>1,2</sup>, [**Yuzhou Wang**](https://github.com/YuzhouWang999)<sup>1</sup>, [**Xin Yang**](https://sites.google.com/view/xinyang/home)<sup>1,3</sup>
-<br><br>
-<sup>†</sup>Corresponding Author
-<br>
-<sup>1</sup>Hust, <sup>2</sup>Carizon, <sup>3</sup>Optics Valley Laboratory
-  <h5>If you like our project, please give us a star ⭐ on GitHub for the latest updates!</h5>
-  
- [![Project Page](https://img.shields.io/badge/GemDepth-Website-green?logo=googlechrome&logoColor=green)](https://r11031.github.io/website/) [![Model](https://img.shields.io/badge/🤗%20HuggingFace-Model%20-yellow)](https://huggingface.co/YuechengLiu/GemDepth) [![Paper](https://img.shields.io/badge/arXiv-Paper-b31b1b?logo=arxiv&logoColor=white)](https://arxiv.org/abs/2605.10525)
-</div>
+This repository trains a video depth model with a frozen pretrained DINOv3
+ConvNeXt-S backbone, LoRA adapters, and a temporal coarse-to-fine multiscale DPT
+decoder. The canonical workflow targets **Virtual KITTI 2.0.3 (VKITTI2)**.
 
-## 🤗 Demo Video
+## Environment
 
-<div align="center">
-  <a href="https://www.youtube.com/watch?v=o6Z2p-P9hSE">
-    <img src="https://img.youtube.com/vi/o6Z2p-P9hSE/maxresdefault.jpg" width="75%" alt="GemDepth Overview Video">
-  </a>
-</div>
+Use Python 3.10 and install the existing dependencies:
 
-## 📢 News
-- **[2026.05.18]** 🤗🤗🤗 Evaluation datasets released on Hugging Face.
-- **[2026.05.16]** 🤗🤗🤗 Hugging Face Gradio demos released.
-- **[2026.05.16]** Add GPU memory adjustment schemes for inference and training.
-- **[2026.05.15]** 🤗🤗🤗Pre-trained weights released on Hugging Face.
-- **[2026.05.14]** Add [`run_video_pointcloud`](https://github.com/Yuecheng919/GemDepth/evaluation/inference/run_video_pointcloud) for pointcloud reconstruction.
-- **[2026.05.09]** 🔥🔥🔥GemDepth is out! It effectively recovering fine-grained
-details and has better 3D temporal consistency.
-
-
-## 👋 Introduction
-
-Welcome to the official repository for **GemDepth**! 
-
-GemDepth is a framework built on the insight that an explicit awareness of camera motion and global 3D structure is a prerequisite for 3D consistency. Distinctively, GemDepth introduces a Geometry-Embedding Module (GEM) that predicts inter-frame camera poses to generate implicit geometric embeddings. This injection of motion priors equips the network with intrinsic 3D perception and alignment capabilities. Guided by these geometric cues, our Alternating Spatio-Temporal Transformer (ASTT) captures latent point-level correspondences to simultaneously enhance spatial precision for sharp details and enforce rigorous temporal consistency.
-
-GemDepth achieves state of-the-art performance across multiple datasets,
-particularly in complex dynamic scenarios.
-
-![network](assets/media/network.png)
-
-##  📝 Benchmarks performance
-![benchmark](assets/media/zero-shot.png)
-
-Comparisons with state-of-the-art methods across four of the most widely used benchmarks.
-## ⏳ Usage
-
-### Preparation
-```Shell
-git clone https://github.com/Yuechengliu919/GemDepth
-cd GemDepth
-conda create -n gemdepth python=3.10
-conda activate gemdepth
+```bash
+conda create -n multilevel-dpt python=3.10
+conda activate multilevel-dpt
 pip install -r requirements.txt
 ```
 
-### Model weights
+Training uses PyTorch, Hydra, Accelerate, and bf16 mixed precision. The default
+backbone is loaded through `timm`. If compute nodes cannot access the model
+host, download the DINOv3 ConvNeXt-S weights beforehand and pass
+`model.backbone_weights=/absolute/path/to/weights.pth` to the training command.
 
-| Model      |                                               Link                                                |
-|:----:|:-------------------------------------------------------------------------------------------------:|
-| GemDepth| [Download 🤗](https://huggingface.co/YuechengLiu/GemDepth/resolve/main/gemdepth.pth?download=true) |
+## VKITTI2 data
 
-The final structure shoule be like
-```
-GemDepth
-├── checkpoint/
-├──── gemdepth.pth
-├── configs/
-├── model/
-├── ...
-```
+The default dataset root is `/mnt/workspace/vkitti/vkitti`. Set `VKITTI_ROOT`
+only when using another location. The loader searches recursively, so extra
+wrapper directories are allowed, but each scene/variation must have this
+effective layout:
 
-### Use our model
-```bash
-import torch
-from model.gemdepth import GemDepth
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-model_configs = {
-    'vits': {'encoder': 'vits''features': 64, 'out_channels': [4896, 192, 384]},
-    'vitl': {'encoder': 'vitl''features': 256, 'out_channels'[256, 512, 1024, 1024]},
-}
-gemdepth = GemDepth(**model_configs[argencoder])
-checkpoint = torch.load("./checkpoint/gemdepth.pth",map_location='cpu',weights_only=False)
-gemdepth.load_state_dict(checkpoint,strict=True)
-gemdepth = gemdepth.to(DEVICE).eval()
-frames, target_fps = read_video_frames(video_path, args.max_len, args.target_fps, 1280)
-depths, fps = gemdepth.infer_video_depth(frames, target_fps, input_size=args.input_size,device=DEVICE, fp32=args.fp32)
-
+```text
+$VKITTI_ROOT/
+└── .../
+    └── Scene01/
+        └── 15-deg-left/
+            ├── extrinsic.txt
+            └── frames/
+                ├── rgb/Camera_0/rgb_00000.jpg
+                └── depth/Camera_0/depth_00000.png
 ```
 
-### Running script on video
-```bash
-# Only video depth output
-python evaluation/inference/run_video.py --input_dir ./assets/example_videos --output_dir ./assets/example_result
-# video depth & pointcloud output
-python evaluation/inference/run_video_pointcloud.py --input_dir ./assets/example_videos --output_dir ./assets/example_result  
-```
-Tips: If GPU memory is insufficient, you can adjust the infer settings in `model/gemdepth.py`. The default settings are:
-```bash
-INFER_LEN = 32
-OVERLAP = 10
-KEYFRAMES = [0, 12, 24, 25, 26, 27, 28, 29, 30, 31]
-INTERP_LEN = 8
-```
-which require about 44GB GPU memory. You can reduce them as follows:
-```bash
-INFER_LEN = 16
-OVERLAP = 6
-KEYFRAMES = [0, 6, 12, 13, 14, 15]
-INTERP_LEN = 4
-```
-which require about 25GB GPU memory, or:
-```bash
-INFER_LEN = 8
-OVERLAP = 4
-KEYFRAMES = [0, 3, 6, 7]
-INTERP_LEN = 2
-```
-which require about 15GB GPU memory. You can adjust these parameters according to your GPU memory.
+Required VKITTI2 components are RGB, depth, and text ground truth (extrinsics).
+Depth PNG values are interpreted as centimetres and converted to metres.
+Camera 0 is used. Clips contain four consecutive frames.
 
-### Interactive Demo
+The split is scene-based with no frame overlap:
 
-We provide an interactive Gradio interface for you to easily test GemDepth on your own videos without writing any code.
+| Split | Scenes | Variation | Camera |
+| --- | --- | --- | --- |
+| Train | `Scene01`, `Scene02`, `Scene18` | `15-deg-left` | `Camera_0` |
+| Test | `Scene06`, `Scene20` | `15-deg-left` | `Camera_0` |
+
+All frames from the selected training scenes are used as sliding four-frame
+clips. All frames from the selected test scenes are evaluated in non-overlapping
+four-frame windows; an incomplete final window is discarded. Evaluation reports
+dense `AbsRel`, `RMSE`, and `delta1` after scale-and-shift alignment in
+inverse-depth space.
+
+## Train
+
+All local training and testing goes through one script:
 
 ```bash
-pip install -r demo/requirements.txt
-python demo/app.py
+bash scripts/vkitti.sh train
 ```
-Our Gradio-based interface allows you to upload videos, run video depth prediction and pointcloud reconstruction, and interactively explore the 3D scene in your browser.
 
-## ✏️ Training Data
-* [TartanAir](https://github.com/castacks/tartanair_tools)
-* [VKITTI](https://europe.naverlabs.com/research/computer-vision/proxy-virtual-worlds-vkitti-1)
-* [VKITTI2](https://europe.naverlabs.com/proxy-virtual-worlds/vkitti-2)
-* [PointOdyssey](https://github.com/y-zheng18/point_odyssey)
-* [MVS-Synth](https://phuang17.github.io/DeepMVS/mvs-synth.html)
-* [Dynamic Replica](https://github.com/facebookresearch/dynamic_stereo)
-* [IRS](https://github.com/HKBU-HPML/IRS)
+The canonical config is `config/vkitti/vkitti.yaml`. Defaults are one GPU,
+global batch size 8, crop size 448, clip length 4, 20,000 optimizer steps,
+AdamW, and bf16. Checkpoints are written to `checkpoint/vkitti/`; TensorBoard
+logs are written to `logs/vkitti/`.
 
-## 📌 GemDepth Reproduction Progress
-- See [GEMDepth_REPRO.md](./GEMDepth_REPRO.md) for the current reproduction plan, progress, and next steps.
-
-## ✈️ Evaluation
-
-### Prepare Evaluation Datasets
-| Datasets      |                                               Link                                                |
-|:----:|:-------------------------------------------------------------------------------------------------:|
-| Sintel| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/sintel.tar.gz?download=true) |
-| KITTI| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/kitti.tar.gz?download=true) |
-| Bonn| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/bonn.tar.gz?download=true) |
-| Scannet| [Download 🤗](https://huggingface.co/datasets/YuechengLiu/test_datasets/resolve/main/scannet.tar.gz?download=true) |
-
-You can directly download the evaluation datasets via the link above, or follow the preprocessing steps below.
-
-Follow [VideoDepthAnything](https://github.com/DepthAnything/Video-Depth-Anything/), download raw datasets from the following links:
-[Sintel](http://sintel.is.tue.mpg.de/), [KITTI](https://www.cvlibs.net/datasets/kitti/), [Bonn](https://www.ipb.uni-bonn.de/data/rgbd-dynamic-dataset/index.html), [ScanNet](http://www.scan-net.org/)
+Common overrides follow normal Hydra syntax:
 
 ```bash
-pip install natsort
-cd dataset/dataset_extract
-python dataset_extrtact${dataset}.py
-```
-This script will extract the dataset to the `dataset/dataset_extract/dataset` folder. It will also generate the json file for the dataset.
+# Two GPUs; dataloader.batch_size remains the global batch size.
+NUM_PROCESSES=2 bash scripts/vkitti.sh train dataloader.batch_size=8
 
-### Run inference
+# Resume from the latest checkpoint in checkpoint/vkitti/.
+RESUME=true bash scripts/vkitti.sh train
+
+# Use a local pretrained backbone and change the training length.
+bash scripts/vkitti.sh train \
+  model.backbone_weights=/path/to/dinov3_convnext_small.pth \
+  total_step=50000
+```
+
+`final.pth` contains the complete training state. `final_model.pth` contains the
+model weights used for evaluation.
+
+## Test
+
 ```bash
-python evaluation/inference/infer/infer.py \
-    --infer_path ${out_path} \
-    --json_file ${json_path} \
-    --datasets ${dataset}
+bash scripts/vkitti.sh test
 ```
-Options:
-- `--infer_path`: path to save the output results
-- `--json_file`: path to the json file for the dataset, like `sintel_video.json`, `kitti_video_500.json`, `scannet_video_tae.json`
-- `--datasets`: dataset name, choose from `sintel`, `kitti`, `bonn`, `scannet`
 
-### Run evaluation
+By default this evaluates `checkpoint/vkitti/final_model.pth`, writes a dense
+visualization to `outputs/vkitti/vkitti_dense.png`, and prints aggregate
+metrics. Override paths with environment variables:
+
 ```bash
-## ~500frame 
-python evaluation/eval/eval.py \
-    --infer_path ${pred_root} \
-    --benchmark_path ${benchmark_root} \
-    --datasets ${dataset}
+CKPT=/path/to/final_model.pth \
+OUTPUT=outputs/vkitti/custom.png \
+bash scripts/vkitti.sh test --limit_seqs 8
 ```
 
-## ✈️ Training
-To train GemDepth on mix-datasets, run
-```Shell
-## stage1
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py --config-name stage1
-## stage2
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch train.py --config-name stage2
+The canonical model predicts inverse depth, so `--invert` must not be used.
+
+## LSF cluster
+
+Cluster submission is isolated from portable experiment logic:
+
+```bash
+export VKITTI_ROOT=/path/to/vkitti2
+export PYTHON=/path/to/env/bin/python
+
+# Training
+MODE=train bsub < bsub/vkitti.bsub
+
+# Resume training
+MODE=train RESUME=true bsub < bsub/vkitti.bsub
+
+# Evaluation
+MODE=test CKPT=/path/to/final_model.pth bsub < bsub/vkitti.bsub
 ```
-Tips: If GPU memory is insufficient, you can adjust `seq_len` in the config file.
 
-## ✈️ Citation
+Adjust the `#BSUB` queue, project, reservation, GPU, memory, and wall-time lines
+in `bsub/vkitti.bsub` for the target cluster. The `.bsub` file only requests
+resources and loads modules; all experiment behavior remains in
+`scripts/vkitti.sh`.
 
-If you find our works useful in your research, please consider citing our papers:
+## Canonical files
 
-```bibtex
-
-@inproceedings{Liu2026GemDepthGF,
-  title={GemDepth: Geometry-Embedded Features for 3D-Consistent Video Depth},
-  author={Yuecheng Liu and Junda Cheng and Longliang Liu and Wenjing Liao and Hanrui Cheng and Yuzhou Wang and Xin Yang},
-  year={2026},
-  url={https://api.semanticscholar.org/CorpusID:288258595}
-}
-
+```text
+config/vkitti/vkitti.yaml          VKITTI2 experiment configuration
+config/stages/                     original two-stage GemDepth configs
+config/single_a100/                controlled single-GPU configs
+config/scratch/dinov2/             scratch DINOv2 experiments
+config/scratch/dinov3_vits/        scratch DINOv3 ViT-S+ experiments
+config/scratch/dinov3_convnext/    scratch DINOv3 ConvNeXt experiments
+config/multilevel_decoder/          iterative decoder experiments
+scripts/vkitti.sh                   only training/testing shell entrypoint
+bsub/vkitti.bsub                    LSF submission wrapper
+train.py                            Hydra/Accelerate training implementation
+evaluation/inference/eval_vkitti_dense.py
+                                    dense VKITTI2 evaluation
 ```
-# Acknowledgements
 
-This project is based on [VideoDepthAnything](https://github.com/DepthAnything/Video-Depth-Anything/)、[VGGT](https://github.com/facebookresearch/vggt) and [DepthAnythingV2](https://github.com/DepthAnything/Depth-Anything-V2). We thank the original authors for their excellent works.
+## Backbone and decoder selection
+
+Experiments select both implementations by their exact Python class names:
+
+```yaml
+model:
+  backbone: DINOv3ConvNeXtSmallBackbone
+  decoder: DPTHeadTemporalConvNeXt
+```
+
+Backbone and decoder classes register themselves with the plain `@register`
+decorator. `model/backbones.py`, `model/backbone_*.py`, and `model/dpt_*.py`
+modules are discovered automatically. Component-specific constructor options
+can be supplied under `model.backbone_kwargs` and `model.decoder_kwargs`.
+
+New backbones use the same pattern in `model/backbone_*.py`:
+
+```python
+from model.backbone_registry import register
+
+
+@register
+class MyBackbone(nn.Module):
+    feature_format = "pyramid"
+    ...
+```
+
+New decoder implementations only need to live in a `model/dpt_*.py` file and
+decorate the class:
+
+```python
+import torch.nn as nn
+
+from model.decoder_registry import register
+
+
+@register
+class MyIterativeDecoder(nn.Module):
+    def __init__(self, in_channels_list, features=256, iterations=4):
+        ...
+```
+
+The constructor receives matching standard arguments automatically. Additional
+arguments are configured without changing the registry:
+
+```yaml
+model:
+  decoder: MyIterativeDecoder
+  decoder_kwargs:
+    iterations: 6
+```
+
+The iterative decoder baseline is:
+
+```bash
+CONFIG_NAME=multilevel_decoder/baseline \
+bash scripts/vkitti.sh train
+```

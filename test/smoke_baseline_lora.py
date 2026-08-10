@@ -26,9 +26,10 @@ CKPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 def main():
     torch.manual_seed(0)
     model = GemDepth(encoder='vitl', features=256, out_channels=[256, 512, 1024, 1024],
-                     head_type='temporal', use_gem=False, use_astt=False,
+                     backbone='DINOv2Backbone', decoder='DPTHeadTemporal',
+                     use_gem=False, use_astt=False,
                      lora=True, lora_r=8, lora_alpha=16, lora_dropout=0.0,
-                     dinov2_weights=CKPT if os.path.exists(CKPT) else None).to(DEV)
+                     backbone_weights=CKPT if os.path.exists(CKPT) else None).to(DEV)
 
     # Mimic train.py freeze policy: DINOv2 base frozen, LoRA + head trainable.
     model.pretrained.requires_grad_(False)

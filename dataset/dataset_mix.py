@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from scipy.spatial.transform import Rotation as R
 from torchvision.transforms import Compose
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
+from dataset.vkitti_split import scene_is_selected
 
 def safe_collate(batch):
         batch = [b for b in batch if b is not None]
@@ -71,7 +72,7 @@ class DepthVideoDataset(Dataset):
         self.crop_size = crop_size
         self.seq_len = seq_len
         self.tartanair_ratio=1 #30.5W
-        self.vkitti_ratio=15 #2.1W
+        self.vkitti_ratio=1
         self.max_depth_outer=200
         self.max_depth_inner = 80
         self.data_paths = []
@@ -96,6 +97,8 @@ class DepthVideoDataset(Dataset):
                     trimmed = base.rstrip(os.sep)
                     variation = os.path.basename(trimmed)
                     scene = os.path.basename(os.path.dirname(trimmed))
+                    if not scene_is_selected(scene, variation, mode):
+                        continue
 
                     depth_dir = os.path.join(base, 'frames', 'depth', 'Camera_0')
                     if not os.path.isdir(depth_dir):
@@ -127,13 +130,7 @@ class DepthVideoDataset(Dataset):
                     if len(frames) < seq_len:
                         continue
                     seq_num = len(frames) - seq_len + 1
-                    if mode == 'train':
-                        start_idx = 0
-                        end_idx = round(seq_num)
-                    else:
-                        start_idx = round(seq_num * 0.9) + 1
-                        end_idx = seq_num
-                    for i in range(start_idx, end_idx):
+                    for i in range(seq_num):
                         set_paths = []
                         for j in range(seq_len):
                             fr = frames[i + j]

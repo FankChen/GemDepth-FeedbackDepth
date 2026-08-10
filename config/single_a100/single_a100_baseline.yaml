@@ -1,0 +1,48 @@
+# @package _global_
+# Single-A100 BASELINE arm: original temporal DPT head, freeze everything except the head,
+# fine-tune on VKITTI from the pretrained GemDepth weights, evaluate on KITTI.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_baseline
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_baseline
+  freeze_mode: head_only      # only the DPT head is trainable
+  grad_accum: 4               # effective batch = batch_size * grad_accum
+  aux_depth_weight: 0.0       # baseline head has no auxiliary depths
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5            # head params land in the "other" group
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  backbone: DINOv2Backbone
+  video_path: "./checkpoint/gemdepth.pth"
+  decoder: DPTHeadTemporal
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 10000
+project_name: video_single_a100_baseline
+resume: false

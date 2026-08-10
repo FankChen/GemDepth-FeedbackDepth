@@ -7,20 +7,26 @@ import os, sys
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from model.backbones import build_backbone
+from model.backbone_registry import build_backbone
 
 assert torch.cuda.is_available(), "CUDA required"
 DEV = torch.device('cuda')
 CK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'checkpoint')
 
 CASES = [
-    ('dinov3_vitsplus',   f'{CK}/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth'),
-    ('dinov3_convnext_s', f'{CK}/dinov3_convnext_small_pretrain_lvd1689m-296db49d.pth'),
+    ('DINOv3ViTSPlusBackbone', f'{CK}/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth'),
+    ('DINOv3ConvNeXtSmallBackbone', f'{CK}/dinov3_convnext_small_pretrain_lvd1689m-296db49d.pth'),
 ]
 
 
 def run(name, weights):
-    bb = build_backbone(name, weights=weights, lora=True, lora_r=8, lora_alpha=16).to(DEV)
+    bb = build_backbone(
+        name,
+        weights=weights,
+        lora=True,
+        lora_r=8,
+        lora_alpha=16,
+    ).to(DEV)
     # Freeze base, enable LoRA only (mimic train.py policy).
     bb.requires_grad_(False)
     for n, p in bb.named_parameters():
