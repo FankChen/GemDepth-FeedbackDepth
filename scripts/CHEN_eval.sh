@@ -27,18 +27,23 @@ DS="${3:-kitti sintel bonn scannet}"
 case "$ARM" in
   multiscale) CFG=scratch/dinov3_convnext/scratch_ed_dinov3convnext_ms_mixdata_8gpu ;    NAME=scratch_ed_dinov3convnext_ms_mixdata_8gpu ;;
   temporal)   CFG=scratch/dinov3_convnext/scratch_ed_dinov3convnext_temporal_mixdata_8gpu ; NAME=scratch_ed_dinov3convnext_temporal_mixdata_8gpu ;;
-  *) echo "用法: bash scripts/CHEN_eval.sh [multiscale|temporal] [ckpt] [datasets]"; exit 1 ;;
+  *) echo "用法: [TAG=xxx] bash scripts/CHEN_eval.sh [multiscale|temporal] [ckpt] [datasets]"; exit 1 ;;
 esac
 
-CKPT="checkpoint/${NAME}/${CKPT_NAME}"
+# TAG 必须和训练时用的一致（见 CHEN_train.sh）
+TAG="${TAG:-}"
+RUN="${NAME}${TAG:+_$TAG}"
+
+CKPT="checkpoint/${RUN}/${CKPT_NAME}"
 if [ ! -f "$CKPT" ]; then
   echo "❌ 找不到 checkpoint: $CKPT"
   echo "   该 arm 现有的 checkpoint:"
-  ls -t "checkpoint/${NAME}/"*.pth 2>/dev/null | head || echo "   (无)"
+  ls -t "checkpoint/${RUN}/"*.pth 2>/dev/null | head || echo "   (无)"
+  echo "   提示: 训练时若用了 TAG=xxx，评测也要带同样的 TAG=xxx"
   exit 1
 fi
 
-OUT="output_eval/${NAME}_${CKPT_NAME%.pth}"
+OUT="output_eval/${RUN}_${CKPT_NAME%.pth}"
 
 echo "==============================================="
 echo " 评测 arm : $ARM"
