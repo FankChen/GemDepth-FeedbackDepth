@@ -1,3 +1,4 @@
+# @package _global_
 # Mixed multi-dataset 8-GPU TEMPORAL baseline — fair single-scale counterpart to
 # scratch_ed_dinov3convnext_ms_mixdata_8gpu.yaml. IDENTICAL data / budget / backbone /
 # LoRA / batch / steps / crop / seq_len; ONLY the head differs:

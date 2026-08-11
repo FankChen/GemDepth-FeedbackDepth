@@ -1,3 +1,4 @@
+# @package _global_
 # Mixed multi-dataset 8-GPU training (based on E2a: ConvNeXt multiscale + depth
 # feedback at native resolution + video loss). Data grew (added VKITTI1.3.1 /
 # MVS-Synth / PointOdyssey / Dynamic Replica alongside VKITTI2), so this runs on
