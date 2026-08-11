@@ -16,8 +16,8 @@ cd /mnt/data/PROJECT_CHEN/code/PP-DPT
 
 ARM="${1:-temporal}"
 case "$ARM" in
-  multiscale) CFG=scratch_ed_dinov3convnext_ms_mixdata_8gpu ;;
-  temporal)   CFG=scratch_ed_dinov3convnext_temporal_mixdata_8gpu ;;
+  multiscale) CFG=scratch/dinov3_convnext/scratch_ed_dinov3convnext_ms_mixdata_8gpu ;    NAME=scratch_ed_dinov3convnext_ms_mixdata_8gpu ;;
+  temporal)   CFG=scratch/dinov3_convnext/scratch_ed_dinov3convnext_temporal_mixdata_8gpu ; NAME=scratch_ed_dinov3convnext_temporal_mixdata_8gpu ;;
   *) echo "用法: bash scripts/CHEN_train.sh [multiscale|temporal]"; exit 1 ;;
 esac
 
@@ -25,13 +25,13 @@ esac
 [ -f "config/${CFG}.yaml" ] || { echo "❌ 找不到 config/${CFG}.yaml"; exit 1; }
 
 mkdir -p runlogs
-LOG="runlogs/${CFG}.log"
+LOG="runlogs/${NAME}.log"
 
 echo "==============================================="
 echo " 训练 arm : $ARM"
 echo " config   : config/${CFG}.yaml"
 echo " 日志     : $LOG"
-echo " checkpoint 存到: checkpoint/${CFG}/"
+echo " checkpoint 存到: checkpoint/${NAME}/"
 echo "==============================================="
 
 NCCL_P2P_DISABLE=1 NCCL_NVLS_ENABLE=0 NCCL_DEBUG=WARN OPENCV_IO_ENABLE_OPENEXR=1 \

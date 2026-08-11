@@ -25,20 +25,20 @@ CKPT_NAME="${2:-final.pth}"
 DS="${3:-kitti sintel bonn scannet}"
 
 case "$ARM" in
-  multiscale) CFG=scratch_ed_dinov3convnext_ms_mixdata_8gpu ;;
-  temporal)   CFG=scratch_ed_dinov3convnext_temporal_mixdata_8gpu ;;
+  multiscale) CFG=scratch/dinov3_convnext/scratch_ed_dinov3convnext_ms_mixdata_8gpu ;    NAME=scratch_ed_dinov3convnext_ms_mixdata_8gpu ;;
+  temporal)   CFG=scratch/dinov3_convnext/scratch_ed_dinov3convnext_temporal_mixdata_8gpu ; NAME=scratch_ed_dinov3convnext_temporal_mixdata_8gpu ;;
   *) echo "用法: bash scripts/CHEN_eval.sh [multiscale|temporal] [ckpt] [datasets]"; exit 1 ;;
 esac
 
-CKPT="checkpoint/${CFG}/${CKPT_NAME}"
+CKPT="checkpoint/${NAME}/${CKPT_NAME}"
 if [ ! -f "$CKPT" ]; then
   echo "❌ 找不到 checkpoint: $CKPT"
   echo "   该 arm 现有的 checkpoint:"
-  ls -t "checkpoint/${CFG}/"*.pth 2>/dev/null | head || echo "   (无)"
+  ls -t "checkpoint/${NAME}/"*.pth 2>/dev/null | head || echo "   (无)"
   exit 1
 fi
 
-OUT="output_eval/${CFG}_${CKPT_NAME%.pth}"
+OUT="output_eval/${NAME}_${CKPT_NAME%.pth}"
 
 echo "==============================================="
 echo " 评测 arm : $ARM"

@@ -62,11 +62,11 @@ dataloader:
 
 model:
   video_path: null
-  backbone: dinov3_convnext_s
+  backbone: DINOv3ConvNeXtSmallBackbone
   backbone_weights: null
   require_pretrained_backbone: true
   encoder_decoder_only: true
-  head_type: multiscale
+  decoder: DPTHeadMultiScaleRefineConvNeXt
   use_gem: false
   use_astt: false
   use_temporal: true
