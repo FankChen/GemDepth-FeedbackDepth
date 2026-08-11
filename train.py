@@ -402,7 +402,22 @@ def main(cfg):
         print(f"[resume] Resuming training from step {start_step}")
     else:
         print(f"[resume] No checkpoint found, starting from step 0")
-    
+        # Guard: starting from step 0 in a directory that already holds a completed run would
+        # overwrite final.pth / final_model.pth at the end of training. A short smoke/debug run
+        # silently destroying a finished baseline is unrecoverable, so fail fast here instead of
+        # after burning GPU hours. Point training.checkpoint_dir somewhere else for debug runs,
+        # or set training.allow_overwrite_final=true to overwrite on purpose.
+        final_ckpt = Path(cfg.training.checkpoint_dir) / 'final.pth'
+        allow_overwrite_final = bool(OmegaConf.select(
+            cfg, 'training.allow_overwrite_final', default=False))
+        if final_ckpt.exists() and not allow_overwrite_final:
+            raise FileExistsError(
+                f"Refusing to train from step 0 into {cfg.training.checkpoint_dir}: "
+                f"{final_ckpt} already exists (a completed run). It would be overwritten at the "
+                f"end of training. Use training.checkpoint_dir=<other dir> for debug/smoke runs, "
+                f"resume=true to continue that run, or training.allow_overwrite_final=true to "
+                f"overwrite intentionally.")
+
     # Camera (pose) loss only makes sense when GEM predicts poses; disable it otherwise.
     pose_flag = bool(cfg.pose_flag) and use_gem
     invariant_loss_func = VideoDepthLoss(pose_flag = pose_flag)
