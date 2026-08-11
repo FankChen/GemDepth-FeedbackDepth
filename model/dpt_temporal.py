@@ -16,9 +16,11 @@ import torch.nn.functional as F
 import torch.nn as nn
 from .dpt import DPTHead
 from .motion_module.motion_module import TemporalModule
+from .decoder_registry import register
 from easydict import EasyDict
 
 
+@register
 class DPTHeadTemporal(DPTHead):
     def __init__(self, 
         in_channels, 

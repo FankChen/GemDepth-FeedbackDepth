@@ -14,9 +14,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .dpt_temporal import DPTHeadTemporal
+from .decoder_registry import register
 from .util.warp import photometric_error_map, scale_intrinsics
 
 
+@register
 class DPTHeadErrorMap(DPTHeadTemporal):
     def __init__(
         self,

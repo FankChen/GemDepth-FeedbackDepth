@@ -12,6 +12,8 @@ root_dir = os.path.dirname(parent_dir)
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 from model.gemdepth import GemDepth
+from model.backbone_registry import available_backbone_names
+from model.decoder_registry import available_decoder_names
 from model.factory import build_gemdepth_from_config
 from omegaconf import OmegaConf
 from protocol import infer_video_with_protocol, resolve_inference_clip_len
@@ -25,12 +27,16 @@ if __name__ == '__main__':
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitl'])
     parser.add_argument('--ckpt', type=str, default='./checkpoint/gemdepth.pth',
                         help='Path to the model checkpoint (model-only state dict).')
-    parser.add_argument('--head_type', type=str, default='temporal', choices=['temporal', 'errormap'],
-                        help='DPT head variant; must match the checkpoint being loaded.')
+    parser.add_argument('--backbone', type=str, default='DINOv2Backbone',
+                        choices=available_backbone_names(),
+                        help='Exact registered backbone class name.')
+    parser.add_argument('--decoder', type=str, default='DPTHeadTemporal',
+                        choices=available_decoder_names(),
+                        help='Exact decoder implementation name; must match the checkpoint.')
     parser.add_argument('--config', type=str, default='',
                         help='Experiment config yaml. When set, the model is built via the shared '
                              'factory (model/factory.py) so inference matches training EXACTLY '
-                             '(backbone / head_type / use_temporal / use_gem / use_astt / lora). '
+                             '(backbone / decoder / use_temporal / use_gem / use_astt / lora). '
                              'Required for the scratch encoder+decoder experiments.')
 
     args = parser.parse_args()
@@ -54,7 +60,11 @@ if __name__ == '__main__':
                 'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
                 'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
             }
-            gemdepth = GemDepth(**model_configs[args.encoder], head_type=args.head_type)
+            gemdepth = GemDepth(
+                **model_configs[args.encoder],
+                backbone=args.backbone,
+                decoder=args.decoder,
+            )
         obj = torch.load(args.ckpt, map_location='cpu', weights_only=False)
         # Training checkpoints are dicts {model_state_dict, optimizer_state_dict, ...};
         # raw exports are a bare state_dict. Handle both, and strip any DDP 'module.' prefix.

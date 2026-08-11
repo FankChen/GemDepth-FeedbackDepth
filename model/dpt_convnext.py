@@ -15,8 +15,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from model.dpt_temporal import DPTHeadTemporal
+from model.decoder_registry import register
 
 
+@register
 class DPTHeadTemporalConvNeXt(DPTHeadTemporal):
     def __init__(self, in_channels_list, features=256, use_bn=False,
                  out_channels=[256, 512, 1024, 1024], use_clstoken=False,

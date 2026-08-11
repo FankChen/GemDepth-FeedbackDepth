@@ -149,7 +149,7 @@ def save_checkpoint(checkpoint_dir: str, step: int, model, optimizer, scheduler,
                 print(f"[save] Removed old checkpoint {old_path.name}")
 
 
-@hydra.main(version_base=None, config_path='config', config_name='stage1.yaml')
+@hydra.main(version_base=None, config_path='config', config_name='stages/stage1.yaml')
 def main(cfg):
     set_seed(cfg.training.seed)
     Path(cfg.training.checkpoint_dir).mkdir(exist_ok=True, parents=True)
@@ -191,7 +191,6 @@ def main(cfg):
                               timeout=3600 if num_workers > 0 else 0)
     # Load model. The shared factory is also used by inference and smoke tests,
     # preventing structural drift between checkpoint writer and reader.
-    head_type = OmegaConf.select(cfg, 'model.head_type', default='temporal')
     use_gem = bool(OmegaConf.select(cfg, 'model.use_gem', default=True))
     use_astt = bool(OmegaConf.select(cfg, 'model.use_astt', default=True))
     use_temporal = bool(OmegaConf.select(cfg, 'model.use_temporal', default=True))
@@ -199,8 +198,8 @@ def main(cfg):
     lora_r = int(OmegaConf.select(cfg, 'model.lora_r', default=8))
     lora_alpha = int(OmegaConf.select(cfg, 'model.lora_alpha', default=16))
     lora_dropout = float(OmegaConf.select(cfg, 'model.lora_dropout', default=0.0))
-    dinov2_weights = OmegaConf.select(cfg, 'model.dinov2_weights', default=None)
-    backbone = OmegaConf.select(cfg, 'model.backbone', default='dinov2')
+    backbone = OmegaConf.select(
+        cfg, 'model.backbone', default='DINOv2Backbone')
     backbone_weights = OmegaConf.select(cfg, 'model.backbone_weights', default=None)
     video_path = OmegaConf.select(cfg, 'model.video_path', default=None)
     require_pretrained_backbone = bool(OmegaConf.select(
@@ -214,17 +213,12 @@ def main(cfg):
         assert not video_path, \
             "encoder_decoder_only scratch experiments must not load a full GemDepth checkpoint"
     if require_pretrained_backbone:
-        if backbone == 'dinov2':
-            assert dinov2_weights, "A required DINOv2 pretrained source was not configured"
-            if not str(dinov2_weights).startswith('timm://'):
-                assert Path(dinov2_weights).is_file(), \
-                    f"Required official DINOv2 checkpoint not found: {dinov2_weights}"
-        elif backbone_weights:
+        if backbone_weights and not str(backbone_weights).startswith('timm://'):
             assert Path(backbone_weights).is_file(), \
                 f"Configured local backbone checkpoint not found: {backbone_weights}"
-        # DINOv3 + null weights is valid: build_backbone uses timm pretrained=True
 
     model = build_gemdepth_from_config(cfg, load_backbone_pretrained=True).to(accelerator.device)
+    decoder_name = model.decoder_name
     
     # --- Load pretrained GemDepth weights (stage0) ---
     # If resuming, this will be overwritten by the checkpoint load
@@ -245,7 +239,10 @@ def main(cfg):
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
             # When GEM/ASTT are disabled or LoRA is enabled or a research head is used, the model
             # legitimately differs from the full-GemDepth checkpoint, so extra/missing keys are OK.
-            allow_extra = backbone_only or (not use_gem) or (not use_astt) or lora or head_type in ('errormap', 'perlayer', 'multiscale')
+            allow_extra = (
+                backbone_only or (not use_gem) or (not use_astt) or lora
+                or decoder_name != 'DPTHeadTemporal'
+            )
             if backbone_only:
                 pass  # everything except the backbone is intentionally random-init -> large missing set expected
             elif not allow_extra:
@@ -256,7 +253,7 @@ def main(cfg):
                 # are the only allowed key mismatches.
                 new_key_tags = ('depth_heads', 'error_encoders',
                                 'layer_depth_heads', 'layer_delta_heads', 'sig_proj',
-                                'delta_heads')
+                                'delta_heads', 'output_conv1_heads')
                 non_new_missing = [m for m in missing
                                    if not any(t in m for t in new_key_tags)
                                    and 'lora_A' not in m and 'lora_B' not in m]
@@ -264,7 +261,7 @@ def main(cfg):
     elif video_path:
         raise FileNotFoundError(f"Configured model.video_path does not exist: {video_path}")
     else:
-        source = dinov2_weights if backbone == 'dinov2' else (backbone_weights or 'timm/HuggingFace official weights')
+        source = backbone_weights or 'backbone default pretrained weights'
         print(f"[init] No GemDepth checkpoint loaded; backbone source={source}; decoder=random-init")
     
     model.pretrained.requires_grad_(False)
@@ -436,10 +433,14 @@ def main(cfg):
     if explicit_scale_weights is not None:
         multiscale_scale_weights = [float(w) for w in explicit_scale_weights]
         print(f"[loss] multiscale_scale_weights(coarse->fine)={multiscale_scale_weights}")
+    normalize_scale_weights = bool(OmegaConf.select(
+        cfg, 'multiscale_normalize_scale_weights', default=True))
     if multiscale_loss_name in ('video', 'videoloss', 'video_loss', 'multiscale_video'):
         multiscale_loss_func = MultiScaleVideoDepthLoss(pose_flag=pose_flag,
-                                                        scale_weights=multiscale_scale_weights)
-        print(f"[loss] multiscale_loss=video -> MultiScaleVideoDepthLoss(pose_flag={pose_flag})")
+                                                        scale_weights=multiscale_scale_weights,
+                                                        normalize_scale_weights=normalize_scale_weights)
+        print(f"[loss] multiscale_loss=video -> MultiScaleVideoDepthLoss("
+              f"pose_flag={pose_flag}, normalize_scale_weights={normalize_scale_weights})")
     else:
         multiscale_loss_func = MultiScaleVideoL1Loss(scale_weights=multiscale_scale_weights)
         print("[loss] multiscale_loss=l2 -> MultiScaleVideoL1Loss()")
@@ -478,8 +479,20 @@ def main(cfg):
                 else:
                     loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred)
                 loss=loss_dict['total_loss']
-                if total_step % 200 == 0:
-                    print("[loss] step %d " % total_step + " ".join(f"{k}={v.item():.4f}" for k, v in loss_dict.items() if torch.is_tensor(v)))
+                if total_step % 200 == 0 and accelerator.is_main_process:
+                    if isinstance(depth_pred, (list, tuple)):
+                        log_items = {
+                            key: value
+                            for key, value in loss_dict.items()
+                            if key.startswith('scale_') or key == 'total_loss'
+                        }
+                    else:
+                        log_items = loss_dict
+                    print("[loss] step %d " % total_step + " ".join(
+                        f"{key}={value.item():.4f}"
+                        for key, value in log_items.items()
+                        if torch.is_tensor(value)
+                    ))
                 aux_loss = None
                 if not torch.isfinite(loss).all():
                     tracked = {

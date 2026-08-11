@@ -5,11 +5,13 @@ same disparity-space alignment as the KITTI eval (stable_scale_and_shift), so th
 directly comparable to the KITTI Eigen numbers. VKITTI2 depth GT is dense (16-bit PNG in cm; /100 ->
 meters; 65535 = sky -> invalid), so BOTH the metrics and the figure are dense.
 
-Held-out split matches the training dataloader (mode != 'train' -> last ~10% frames per sequence).
+The scene-level split matches the training dataloader: Scene01, Scene02, and
+Scene18 are used for training; Scene06 and Scene20 are used for evaluation.
+Only the 15-deg-left variation and Camera_0 are used.
 
 Run on the node that has the vkitti data + checkpoints:
     python evaluation/inference/eval_vkitti_dense.py \
-        --config config/exp8_multiscale/base_abcd/scratch_ed_dinov3vits_ms_C_native_video.yaml \
+        --config config/scratch/dinov3_vits/scratch_ed_dinov3vits_ms_C_native_video.yaml \
         --ckpt   checkpoint/scratch_ed_dinov3vits_ms_C_native_video/final_model.pth \
         --out_viz runlogs/viz/vkitti_vits_C.png
     #   add --invert for the METRIC-output runs (A / B / D); omit for video / temporal (C).
@@ -34,13 +36,13 @@ for _p in (_ROOT, _HERE, _EVAL):
     if _p not in sys.path:
         sys.path.append(_p)
 from model.factory import build_gemdepth_from_config          # noqa: E402
+from dataset.vkitti_split import TEST_SCENES, VARIATION       # noqa: E402
 from protocol import infer_video_with_protocol, resolve_inference_clip_len  # noqa: E402
 from alignment import stable_scale_and_shift                  # noqa: E402
 
 
-def list_vkitti_heldout(root, seq_len, holdout=0.1, limit_seqs=None):
-    """[(name, [rgb_paths], [depth_paths]), ...] for the last `holdout` frames of each vkitti2
-    sequence -- same glob + val split as dataset/dataset_mix.py (mode != 'train')."""
+def list_vkitti_heldout(root, seq_len, limit_seqs=None):
+    """Return complete test scenes from the canonical VKITTI2 split."""
     rgb_suffix = os.path.join("frames", "rgb", "Camera_0")
     rgb_dirs = sorted(glob.glob(os.path.join(root, "**", rgb_suffix), recursive=True))
     out = []
@@ -52,7 +54,11 @@ def list_vkitti_heldout(root, seq_len, holdout=0.1, limit_seqs=None):
         if not os.path.isdir(depth_dir):
             continue
         trimmed = base.rstrip(os.sep)
-        name = f"{os.path.basename(os.path.dirname(trimmed))}_{os.path.basename(trimmed)}"
+        variation = os.path.basename(trimmed)
+        scene = os.path.basename(os.path.dirname(trimmed))
+        if scene not in TEST_SCENES or variation != VARIATION:
+            continue
+        name = f"{scene}_{variation}"
         rgb_by = {}
         for fn in os.listdir(rgb_dir):
             if fn.endswith(".jpg") or fn.endswith(".png"):
@@ -64,14 +70,11 @@ def list_vkitti_heldout(root, seq_len, holdout=0.1, limit_seqs=None):
         frames = sorted(set(rgb_by) & set(dep_by))
         if len(frames) < seq_len:
             continue
-        seq_num = len(frames) - seq_len + 1
-        start = round(seq_num * (1.0 - holdout)) + 1          # dataloader val split
-        held = frames[start:]
-        n = (len(held) // seq_len) * seq_len                  # whole non-overlapping windows
+        n = (len(frames) // seq_len) * seq_len                # whole non-overlapping windows
         if n < seq_len:
             continue
-        held = held[:n]
-        out.append((name, [rgb_by[f] for f in held], [dep_by[f] for f in held]))
+        frames = frames[:n]
+        out.append((name, [rgb_by[f] for f in frames], [dep_by[f] for f in frames]))
     return out[:limit_seqs] if limit_seqs else out
 
 

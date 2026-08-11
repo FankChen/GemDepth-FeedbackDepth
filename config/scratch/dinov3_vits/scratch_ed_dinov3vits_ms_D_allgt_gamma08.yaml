@@ -1,0 +1,70 @@
+# @package _global_
+# Exp 8-D (ViT-S+, IGEV-style weighting on the ALL->full-GT path): multiscale head, all scales
+# upsampled to full GT (multiscale_native_res=false, same supervision as exp A) + L2, but with
+# IGEV/RAFT exponentially-increasing per-scale weights (multiscale_gamma=0.8 -> coarse..fine
+# weights [0.512, 0.64, 0.8, 1.0], finest weighted most).
+#
+# Purpose: directly test whether the exp-A "all scales -> full GT" degeneration (delta std -> 0,
+# per-scale loss all equal) was caused by the UNIFORM weights. IGEV uses exactly all->full-GT +
+# these exp weights and does not degenerate. Compare against exp A (same, uniform weights).
+# Output = METRIC depth -> eval MUST invert (1/D). Smoke check: watch that delta_1/2/3 std stays
+# alive (not -> 0) and per-scale loss differs.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/scratch_ed_dinov3vits_ms_D_allgt_gamma08
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_dinov3vits_ms_D_allgt_gamma08
+  freeze_mode: default
+  grad_accum: 1
+  aux_depth_weight: 1.0
+  aux_depth_space: disparity
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-4
+  lora_lr: 1.0e-4
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti/}']
+    crop_size: 448
+    seq_len: 4
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 448
+    seq_len: 4
+
+dataloader:
+  batch_size: 8
+  num_workers: 8
+
+model:
+  video_path: null
+  backbone: DINOv3ViTSPlusBackbone
+  backbone_weights: null
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  decoder: DPTHeadMultiScaleRefine
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+  multiscale_native_res: false   # all scales -> full GT (IGEV supervision; same as exp A)
+
+encoder: 'vits'
+pose_flag: false
+multiscale_loss: l2              # MultiScaleVideoL1Loss (per-pixel metric L2)
+multiscale_gamma: 0.8            # IGEV/RAFT exp weights; finest scale weighted most
+num_gpus: 1
+total_step: 20000
+project_name: scratch_ed_dinov3vits_ms_D_allgt_gamma08
+resume: false

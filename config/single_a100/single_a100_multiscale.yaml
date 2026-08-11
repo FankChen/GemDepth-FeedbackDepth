@@ -1,0 +1,54 @@
+# @package _global_
+# Single-A100 METHOD arm: multi-scale coarse-to-fine depth-refinement DPT head.
+# The top-down DPT pyramid produces 4 scale features (path_4..path_1). Each scale
+# regresses a depth residual delta_Z that updates a running depth map; the running
+# depth is upsampled and refined at the next (finer) scale. Cross-scale depth is
+# detached, so each scale's loss only trains its own delta_Z head.
+# Freeze everything except the head, fine-tune on VKITTI from pretrained GemDepth
+# weights. Only the DPT head differs from single_a100_baseline.yaml.
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/single_a100_multiscale
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/single_a100_multiscale
+  freeze_mode: head_only      # only the DPT head (incl. delta_heads) is trainable
+  grad_accum: 4               # effective batch = batch_size * grad_accum
+  aux_depth_weight: 1.0       # supervise every scale's refined depth (delta_Z) against GT
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-5            # head params land in the "other" group
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/home/izi2sgh/MYDATA/vkitti/}']
+    crop_size: 518
+    seq_len: 16
+
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 16
+
+dataloader:
+  batch_size: 1
+  num_workers: 8
+
+model:
+  backbone: DINOv2Backbone
+  video_path: "./checkpoint/gemdepth.pth"
+  decoder: DPTHeadMultiScaleRefine
+  use_temporal: true
+
+encoder: 'vitl'
+pose_flag: True
+num_gpus: 1
+total_step: 10000
+project_name: video_single_a100_multiscale
+resume: false
