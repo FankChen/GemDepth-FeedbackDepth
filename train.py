@@ -176,8 +176,21 @@ def main(cfg):
     # it records the (static) used/unused set once and handles both the unused params
     # and the multi-branch graph. Enumerating+freezing every inherently-unused module
     # instead is fragile (there are several by design), so we keep static_graph.
-    kwargs = DistributedDataParallelKwargs(static_graph=True)
+    #
+    # ...except that static_graph is incompatible with DDP's no_sync(), which is exactly
+    # what accelerator.accumulate() uses once gradient_accumulation_steps > 1: DDP then
+    # never prepares the autograd hooks for the non-syncing micro-steps and the first
+    # backward dies with `expect_autograd_hooks_ INTERNAL ASSERT FAILED`. So fall back to
+    # find_unused_parameters for accumulating runs (single-branch heads only) and keep the
+    # static-graph path for grad_accum == 1, which is what every earlier experiment used.
     grad_accum = int(OmegaConf.select(cfg, 'training.grad_accum', default=1))
+    if grad_accum > 1:
+        kwargs = DistributedDataParallelKwargs(
+            static_graph=False, find_unused_parameters=True)
+        print(f"[ddp] grad_accum={grad_accum} > 1 -> static_graph=False, "
+              "find_unused_parameters=True (static_graph cannot be combined with no_sync)")
+    else:
+        kwargs = DistributedDataParallelKwargs(static_graph=True)
     accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=grad_accum, dataloader_config=DataLoaderConfiguration(use_seedable_sampler=True),  kwargs_handlers=[kwargs], step_scheduler_with_optimizer=False)
     accelerator.init_trackers(project_name=cfg.project_name, config=OmegaConf.to_container(cfg, resolve=True))
 
@@ -296,9 +309,12 @@ def main(cfg):
     model.pretrained.requires_grad_(False)
 
     # `head.proj` is a legacy, unused projection list (the active path uses
-    # `head.projects`). Keep it for checkpoint compatibility but exclude it from
-    # encoder+decoder-only optimization.
-    if encoder_decoder_only and hasattr(model.head, 'proj'):
+    # `head.projects`). Keep it for checkpoint compatibility but never optimize it:
+    # a trainable parameter that never receives a gradient is exactly what breaks DDP
+    # once static_graph is off. It used to be frozen only for encoder+decoder-only runs,
+    # which is why the GEM/ASTT config (where encoder_decoder_only is not allowed) was
+    # the first to hit this.
+    if hasattr(model.head, 'proj'):
         model.head.proj.requires_grad_(False)
 
     # --- Optional freeze: restrict trainable params (e.g. only the DPT head) ---
