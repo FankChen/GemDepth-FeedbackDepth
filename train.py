@@ -253,9 +253,18 @@ def main(cfg):
                 print(f"[init] unexpected keys (first 10): {list(unexpected)[:10]}")
             # When GEM/ASTT are disabled or LoRA is enabled or a research head is used, the model
             # legitimately differs from the full-GemDepth checkpoint, so extra/missing keys are OK.
+            # Initialising from a plain depth baseline (VDA / DAv2) is legitimate too: such a
+            # checkpoint only carries `pretrained.*` + `head.*`, while GEM/ASTT are exactly the
+            # modules GemDepth adds on top and must stay random-init. Detect that instead of
+            # demanding an exact match against a full GemDepth checkpoint.
+            ckpt_has_new_modules = any(k.startswith(NEW_MODULE_PREFIXES) for k in checkpoint)
+            if not ckpt_has_new_modules:
+                print("[init] checkpoint has no GEM/ASTT tensors -> treating it as a "
+                      "depth-baseline init (VDA / DAv2); GEM+ASTT stay random-init")
             allow_extra = (
                 backbone_only or (not use_gem) or (not use_astt) or lora
                 or decoder_name != 'DPTHeadTemporal'
+                or not ckpt_has_new_modules
             )
             if backbone_only:
                 pass  # everything except the backbone is intentionally random-init -> large missing set expected
@@ -267,7 +276,13 @@ def main(cfg):
                 # are the only allowed key mismatches.
                 new_key_tags = ('depth_heads', 'error_encoders',
                                 'layer_depth_heads', 'layer_delta_heads', 'sig_proj',
-                                'delta_heads', 'output_conv1_heads')
+                                'delta_heads', 'output_conv1_heads',
+                                # GemDepth's own modules, absent from a VDA/DAv2 checkpoint
+                                *NEW_MODULE_PREFIXES, 'pos_encoder',
+                                # GemDepth-only parts of the temporal motion module, plus the
+                                # legacy unused `head.proj` projection list
+                                'temporal_transformer.layer_norm', 'fusion_gate1',
+                                'head.proj.')
                 non_new_missing = [m for m in missing
                                    if not any(t in m for t in new_key_tags)
                                    and 'lora_A' not in m and 'lora_B' not in m]
