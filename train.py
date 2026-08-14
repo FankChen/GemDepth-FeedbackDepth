@@ -36,6 +36,20 @@ DATASET_MAX_DEPTH = {
 }
 DATASET_MAX_DEPTH_DEFAULT = 80.0
 
+# Modules that GemDepth adds on top of a pretrained depth model (DAv2 / VDA).
+# They are always random-init, so they get the "new module" learning rate
+# (optimizer.dec_lr, 1e-4 in the paper) while the pretrained DPT head keeps the
+# much smaller optimizer.other_lr (1e-6). Without GEM in this list the randomly
+# initialised camera/geometry modules would train at the pretrained-head rate.
+NEW_MODULE_PREFIXES = (
+    # ASTT — alternating spatio-temporal transformer
+    'spatial_blocks', 'time_blocks', 'dec_norm',
+    # GEM — geometry embedding module (camera pose + geometric features)
+    'global_blocks', 'frame_blocks', 'camera_token', 'register_token',
+    'camera_head', 'cam_rot_encoder', 'cam_trans_encoder',
+    'cam_trans_scale_encoder',
+)
+
 
 def tensor_health(tensor):
     """Compact finite/range diagnostics, evaluated only on a failure path."""
@@ -333,7 +347,7 @@ def main(cfg):
             continue
         if 'lora_A' in name or 'lora_B' in name:
             lora_params.append(param)
-        elif name.startswith('spatial_blocks') or  name.startswith('time_blocks') :
+        elif name.startswith(NEW_MODULE_PREFIXES):
             dec_blocks_params.append(param)
         else:
             other_params.append(param)

@@ -1,0 +1,89 @@
+# @package _global_
+# GemDepth Stage-1 复现（对应论文的 GemDepth-VDA）
+# ---------------------------------------------------------------------------
+# 初始化：Video-Depth-Anything-Large（backbone `pretrained.*` + DPT head `head.*`，
+#         实测 519 个张量全部匹配、零 shape 错、零 unused）。
+# 新训：  ASTT（spatial_blocks / time_blocks）+ GEM（global_blocks / frame_blocks /
+#         camera_head / cam_*_encoder），全部随机初始化。
+#
+# ⚠ 对标目标 = 论文 Table 4 的 "Full (ASTT+GEM)" 一行（Stage-1，20k steps）：
+#       KITTI AbsRel 0.074 / Sintel AbsRel 0.295 / Scannet TAE 0.538
+#   而不是 Table 1 的 SOTA（0.051 / 0.157）——那一档是完整两阶段 + 每阶段约 3 天，
+#   Stage-2 需要 IRS + 野外立体视频，我们没有这批数据，复现不了。
+#
+# 启动（8 卡）：
+#   cd /mnt/data/PROJECT_CHEN/code/PP-DPT
+#   OPENCV_IO_ENABLE_OPENEXR=1 NCCL_P2P_DISABLE=1 NCCL_NVLS_ENABLE=0 \
+#   nohup python -m accelerate.commands.launch --num_processes 8 --mixed_precision bf16 \
+#     train.py --config-name=stages/stage1_repro > runlogs/stage1_repro.log 2>&1 &
+# ---------------------------------------------------------------------------
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/gemdepth_stage1_repro
+  save_freq: 1000
+  val_freq: 100000
+  log_dir: ./logs/gemdepth_stage1_repro
+  freeze_mode: default
+  # 8(global) x 2 = 有效 batch 16，对齐论文的 global batch 16
+  grad_accum: 2
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  # 论文的判别式学习率：新模块 1e-4 / 预训练部分 1e-6。
+  # dec_lr 覆盖 ASTT + GEM（见 train.py 的参数分组），other_lr 覆盖预训练 DPT head。
+  # backbone 由 model.pretrained.requires_grad_(False) 完全冻结。
+  dec_lr: 1.0e-4
+  other_lr: 1.0e-6
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    # 混训不做 VKITTI2 场景留出：评测集是 KITTI/Sintel/Bonn/ScanNet（zero-shot），
+    # 开着会把唯一的 KITTI 域训练数据砍到约 5%。
+    vkitti_scene_split: false
+    # 论文 Stage-1 的 5 个带位姿数据集（VKITTI2 / TartanAir / MVS-Synth /
+    # PointOdyssey / Dynamic Replica）。刻意不含 vkitti_1.3.1，保持与论文一致。
+    data_dirs:
+      - /mnt/data/PROJECT_CHEN/data/train/vkitti2/vkitti
+      - /mnt/data/PROJECT_CHEN/data/train/tartanair
+      - /mnt/data/PROJECT_CHEN/data/train/mvs_synth
+      - /mnt/data/PROJECT_CHEN/data/train/point_odyssey
+      - /mnt/data/PROJECT_CHEN/data/train/dynamic_replica
+    crop_size: 518
+    seq_len: 32
+  val:
+    mode: train
+    vkitti_scene_split: false
+    data_dirs: []
+    crop_size: 518
+    seq_len: 32
+
+dataloader:
+  # global batch，8 卡 -> 1 clip/GPU（每 clip 32 帧 518x518）
+  batch_size: 8
+  num_workers: 8
+
+model:
+  backbone: DINOv2Backbone
+  decoder: DPTHeadTemporal
+  # DINOv2Backbone 在 backbone_weights=null 时是随机初始化（不像 DINOv3 ConvNeXt 会
+  # 自动走 timm pretrained），所以必须显式给。随后会被 video_path 里 VDA 的
+  # `pretrained.*` 覆盖 —— 后者才是论文真正的起点（经 DAv2/VDA 微调过的骨干）。
+  backbone_weights: "timm://vit_large_patch14_dinov2.lvd142m"
+  video_path: /mnt/data/PROJECT_CHEN/weights/video_depth_anything_vitl.pth
+  require_pretrained_backbone: true
+  use_gem: true
+  use_astt: true
+  use_temporal: true
+  lora: false
+  # ⚠ 不能设 encoder_decoder_only：train.py 里它与 use_gem/use_astt 互斥
+
+encoder: 'vitl'
+# 启用 L_cam（GEM 的位姿监督）。train.py: pose_flag = cfg.pose_flag and use_gem
+pose_flag: true
+num_gpus: 8
+total_step: 20000
+project_name: gemdepth_stage1_repro
+resume: false

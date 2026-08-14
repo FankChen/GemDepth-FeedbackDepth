@@ -66,7 +66,8 @@ class RandomCropWithInfo(A.DualTransform):
         return img[y_min:y_min + self.height, x_min:x_min + self.width]
 
 class DepthVideoDataset(Dataset):
-    def __init__(self, mode, data_dirs=[''], crop_size=518, seq_len=4):
+    def __init__(self, mode, data_dirs=[''], crop_size=518, seq_len=4,
+                 vkitti_scene_split=True):
         if data_dirs is None:
             data_dirs = ['']
         elif isinstance(data_dirs, str):
@@ -74,6 +75,16 @@ class DepthVideoDataset(Dataset):
         self.mode = mode
         self.crop_size = crop_size
         self.seq_len = seq_len
+        # VKITTI2 scene-level train/test split (dataset/vkitti_split.py).
+        #   True  (default) -> held-out scenes + a single variation. Required by the
+        #                      VKITTI-only experiments, where VKITTI is also the eval
+        #                      set, so in-domain evaluation must not see training frames.
+        #   False           -> keep every scene/variation. For the multi-dataset mixes
+        #                      the eval sets are KITTI/Sintel/Bonn/ScanNet (zero-shot),
+        #                      so no VKITTI scene needs holding out and the split would
+        #                      instead drop ~95% of the only KITTI-domain training data
+        #                      (21k clips -> 1010).
+        self.vkitti_scene_split = bool(vkitti_scene_split)
         self.tartanair_ratio=1 #30.5W
         self.vkitti_ratio=1
         self.max_depth_outer=200
@@ -93,7 +104,8 @@ class DepthVideoDataset(Dataset):
                 print(f"{loader.LABEL}: {len(clips)} clips from {data_dir}")
                 continue
             if 'vkitti' in data_dir:
-                print("vkitti (2.0.3)")
+                print(f"vkitti (2.0.3) scene_split={self.vkitti_scene_split}")
+                n_vkitti_before = len(self.vkitti_data_paths)
                 # VKITTI 2.0.3 layout (wrapper-agnostic: works whether tars were
                 # extracted with or without a top-level vkitti_2.0.3_* folder):
                 #   <...>/<Scene>/<variation>/frames/rgb/Camera_0/rgb_XXXXX.jpg
@@ -109,7 +121,7 @@ class DepthVideoDataset(Dataset):
                     trimmed = base.rstrip(os.sep)
                     variation = os.path.basename(trimmed)
                     scene = os.path.basename(os.path.dirname(trimmed))
-                    if not scene_is_selected(scene, variation, mode):
+                    if self.vkitti_scene_split and not scene_is_selected(scene, variation, mode):
                         continue
 
                     depth_dir = os.path.join(base, 'frames', 'depth', 'Camera_0')
@@ -149,6 +161,11 @@ class DepthVideoDataset(Dataset):
                             set_paths.append([rgb_by_frame[fr], depth_by_frame[fr],
                                               pose_by_frame[fr]])
                         self.vkitti_data_paths.append(['vkitti', set_paths])
+
+                # Always report the count: the VKITTI2 branch used to print nothing, which
+                # made the 95% data reduction caused by the scene split invisible in logs.
+                print(f"vkitti: {len(self.vkitti_data_paths) - n_vkitti_before} clips "
+                      f"from {data_dir}")
 
             if 'tartanair' in data_dir:
                 print("tartanair_true")
