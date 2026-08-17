@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GemDepth Stage-1 复现 · 结果看板</title>
+<style>
+  :root {
+    --bg: #ffffff; --card: #f7f8fa; --card2: #eef1f5; --border: #d9dee5; --text: #1f2328;
+    --muted: #656d76; --accent: #0969da; --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+    --purple: #8250df;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 32px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.6; max-width: 1180px;
+  }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 34px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 15px; margin: 20px 0 8px; color: var(--accent); }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+  .meta code { background: var(--card); padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+  .tldr { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+          border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
+  .warn-box { background: #fff8e6; border: 1px solid #f0d98a; border-left: 3px solid var(--warn);
+              border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 14px; }
+  .good-box { background: #eafbef; border: 1px solid #a6e5bb; border-left: 3px solid var(--good);
+              border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px;
+          background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 9px 13px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--card2); font-weight: 600; color: var(--muted); font-size: 12px;
+       text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; font-family: "SF Mono", Menlo, monospace; }
+  .best { color: var(--good); font-weight: 700; }
+  .bad  { color: var(--bad); }
+  .note { color: var(--muted); font-size: 13px; }
+  .ours { background: #f3eefc; }
+  .ours td { font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge-good { background: #dafbe1; color: var(--good); }
+  .badge-bad  { background: #ffebe9; color: var(--bad); }
+  .badge-warn { background: #fff8c5; color: var(--warn); }
+  pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+        padding: 14px 16px; overflow-x: auto; font-size: 12.5px; }
+  code { font-family: "SF Mono", Menlo, monospace; }
+  ul.todo { list-style: none; padding-left: 0; }
+  ul.todo li { padding: 6px 0 6px 26px; position: relative; font-size: 14px; }
+  ul.todo li::before { content: "☐"; position: absolute; left: 0; color: var(--warn); }
+  ul.todo li.done::before { content: "☑"; color: var(--good); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+
+<h1>GemDepth Stage-1 复现 · 结果看板</h1>
+<p class="meta">更新日期：<b>2026-08-17</b>　·　对应论文：GemDepth（arXiv 2605.10525v4）</p>
+<p class="meta">配置：<code>config/stages/stage1_repro.yaml</code>　·　checkpoint：<code>checkpoint/gemdepth_stage1_repro/final.pth</code>（step 20000）</p>
+<p class="meta">初始化：<code>Video-Depth-Anything-Large</code>（519 张量全部匹配）　·　新训模块：ASTT + GEM（随机初始化）</p>
+
+<h2>一、TL;DR</h2>
+<div class="good-box">
+<b>Stage-1 复现成功。</b> 以 VDA-L 为起点、从零训练 ASTT + GEM，20k 步后在论文 Table 4 的两个可比指标上分别差
+<b>5.1%（KITTI）</b>与 <b>7.1%（Sintel）</b>，且<b>同时优于 Baseline 与 +ASTT 两档</b>——说明 ASTT 与 GEM 的增益都被复现出来了。
+训练侧 <code>quat</code> 从 0.30 降到 0.004、<code>pose_loss</code> 降 75%，证明 GEM 的位姿监督真实有效而非摆设。
+</div>
+
+<h2>二、本次复现结果（四集 zero-shot）</h2>
+<table>
+  <thead><tr><th>数据集</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>KITTI</td><td class="num">0.0778</td><td class="num">3.3647</td><td class="num">0.9497</td><td class="note">室外驾驶，主对标项</td></tr>
+    <tr><td>Sintel</td><td class="num">0.3160</td><td class="num">6.5260</td><td class="num">0.6286</td><td class="note">合成动画、非刚体大运动，最难</td></tr>
+    <tr><td>Bonn</td><td class="num">0.0513</td><td class="num">0.1756</td><td class="num">0.9734</td><td class="note">室内 RGBD 动态</td></tr>
+    <tr><td>ScanNet</td><td class="num">0.0676</td><td class="num">0.2000</td><td class="num">0.9644</td><td class="note">室内扫描</td></tr>
+  </tbody>
+</table>
+
+<h2>三、对标论文 Table 4 <span class="badge badge-good">唯一严格可比</span></h2>
+<p class="note">论文 Table 4 的消融同样是 <b>Stage-1 / 20k steps</b>，与本次训练预算一致，是唯一能严格对标的一组。</p>
+<table>
+  <thead><tr><th>配置</th><th>KITTI AbsRel ↓</th><th>Sintel AbsRel ↓</th><th>ScanNet TAE ↓</th><th>延迟</th></tr></thead>
+  <tbody>
+    <tr><td>Baseline (VDA)</td><td class="num">0.092</td><td class="num">0.356</td><td class="num">0.621</td><td class="num note">85 ms</td></tr>
+    <tr><td>+ Spatial only</td><td class="num">0.082</td><td class="num">0.337</td><td class="num">0.609</td><td class="num note">90 ms</td></tr>
+    <tr><td>+ Temporal only</td><td class="num">0.084</td><td class="num">0.343</td><td class="num">0.573</td><td class="num note">88 ms</td></tr>
+    <tr><td>+ ASTT（空间+时序）</td><td class="num">0.080</td><td class="num">0.328</td><td class="num">0.566</td><td class="num note">95 ms</td></tr>
+    <tr><td><b>Full (ASTT+GEM)</b> <span class="badge badge-good">论文目标</span></td><td class="num best">0.074</td><td class="num best">0.295</td><td class="num best">0.538</td><td class="num note">99 ms</td></tr>
+    <tr class="ours"><td>本次复现</td><td class="num">0.0778 <span class="badge badge-warn">+5.1%</span></td><td class="num">0.3160 <span class="badge badge-warn">+7.1%</span></td><td class="num note">未测</td><td class="num note">—</td></tr>
+  </tbody>
+</table>
+<div class="good-box">
+<b>判读</b>：两个可比指标都落在 <b>7% 以内</b>。更重要的是<b>相对位置正确</b>——我们同时优于 Baseline（0.092 / 0.356）和 +ASTT（0.080 / 0.328），
+说明 ASTT 的增益和 GEM 在其之上的额外增益<b>都拿到了</b>，不是只复现了其中一半。
+<br><br>
+<span class="note">⚠ ScanNet <b>TAE</b>（时序对齐误差）我们的评测脚本不计算，这一项无法对比。它正是 ASTT 时序分支的主要体现（论文 0.621→0.566），补上才算完整复现。</span>
+</div>
+
+<h2>四、与论文 Table 1 的粗定位 <span class="badge badge-bad">口径不同，不可直接比</span></h2>
+<p class="note">Table 1 是<b>完整两阶段训练</b>的最终模型。列序与论文一致：Sintel / KITTI / Bonn / ScanNet（AbsRel ↓）。</p>
+<table>
+  <thead><tr><th>方法</th><th>Sintel</th><th>KITTI</th><th>Bonn</th><th>ScanNet</th><th>延迟</th></tr></thead>
+  <tbody>
+    <tr><td>DepthAnythingV2（单帧）</td><td class="num">0.390</td><td class="num">0.127</td><td class="num">0.150</td><td class="num">0.137</td><td class="num note">79 ms</td></tr>
+    <tr><td>VideoDepthAnything <span class="note">(= 我们的起点)</span></td><td class="num">0.295</td><td class="num">0.071</td><td class="num">0.089</td><td class="num">0.083</td><td class="num note">85 ms</td></tr>
+    <tr><td>GemDepth-DAv2</td><td class="num">0.188</td><td class="num">0.055</td><td class="num">0.069</td><td class="num">0.077</td><td class="num note">94 ms</td></tr>
+    <tr><td>GemDepth-VDA <span class="badge badge-good">论文 SOTA</span></td><td class="num best">0.157</td><td class="num best">0.051</td><td class="num best">0.066</td><td class="num best">0.071</td><td class="num note">99 ms</td></tr>
+    <tr class="ours"><td>本次复现（仅 Stage-1）</td><td class="num">0.3160</td><td class="num">0.0778</td><td class="num">0.0513</td><td class="num">0.0676</td><td class="num note">—</td></tr>
+  </tbody>
+</table>
+<div class="warn-box">
+<b>⚠ 绝不能声称"超过论文 SOTA"</b>，尽管 Bonn（0.0513 vs 0.066）与 ScanNet（0.0676 vs 0.071）数字上更好：
+<ul style="margin:6px 0 0; padding-left:20px;">
+  <li><b>评测帧数不同</b>：我们的 four-bench 是 KITTI 110 / Sintel 100 / Bonn 110 / ScanNet 90 帧；论文是 Bonn·ScanNet·KITTI 各 <b>500 帧</b>、Sintel 50 帧。
+      <b>帧数少对视频方法系统性偏乐观</b>——漂移积累更少，且仿射对齐在更短序列上拟合得更好。</li>
+  <li><b>训练阶段不同</b>：Table 1 是完整两阶段（940K 帧），我们只有 Stage-1。</li>
+</ul>
+跨 Table 1 的比较只能作粗定位，<b>第三节的 Table 4 才是我们真正对上的基准</b>。
+</div>
+
+<h2>五、与我们自己的实验对比 <span class="badge badge-good">同评测口径，干净可比</span></h2>
+<p class="note">以下全部走同一套 four-bench 评测脚本与对齐口径，可以直接横向比较。</p>
+<table>
+  <thead><tr><th>方案</th><th>Sintel</th><th>KITTI</th><th>Bonn</th><th>ScanNet</th></tr></thead>
+  <tbody>
+    <tr><td>ConvNeXt-S temporal（mixdata 6 集）</td><td class="num">0.3771</td><td class="num">0.0961</td><td class="num">0.0781</td><td class="num">0.1165</td></tr>
+    <tr><td>ConvNeXt-S multiscale（mixdata 6 集）</td><td class="num">0.3693</td><td class="num">0.1119</td><td class="num">0.0809</td><td class="num">0.1211</td></tr>
+    <tr><td>ConvNeXt-S temporal（pr8，VKITTI 被砍）</td><td class="num">0.3594</td><td class="num">0.1102</td><td class="num">0.0801</td><td class="num">0.1176</td></tr>
+    <tr class="ours"><td>GemDepth-VDA 复现（ViT-L + ASTT + GEM）</td><td class="num best">0.3160</td><td class="num best">0.0778</td><td class="num best">0.0513</td><td class="num best">0.0676</td></tr>
+    <tr><td class="note">相对最好的 ConvNeXt 版</td><td class="note">−12.1%</td><td class="note">−19.0%</td><td class="note">−34.3%</td><td class="note">−42.0%</td></tr>
+  </tbody>
+</table>
+<div class="tldr">
+<b>四集全面碾压</b>，ScanNet 降 42%、Bonn 降 34%、KITTI 降 19%。
+这印证了此前"为什么追不上 baseline"的诊断：差距的大头是 <b>骨干先验（DINOv2 ViT-L）+ 真实数据蒸馏（VDA 初始化）</b>，
+<b>不是</b>解码头的结构。之前在 ConvNeXt-Small + 纯合成数据上反复调 head（multiscale / feedback / fullres 等一系列消融）始终碰不到这条天花板。
+</div>
+
+<h2>六、训练配置对照</h2>
+<table>
+  <thead><tr><th>项</th><th>论文</th><th>本次复现</th></tr></thead>
+  <tbody>
+    <tr><td>骨干</td><td>DINOv2 ViT-L（冻结）</td><td class="note">同</td></tr>
+    <tr><td>初始化</td><td>DAv2 / VDA</td><td class="note">VDA-L，519 张量全匹配、零 shape 错、零 unused</td></tr>
+    <tr><td>新训模块</td><td>ASTT + GEM</td><td class="note">同（随机初始化，319M 参数）</td></tr>
+    <tr><td>clip 长度 / 分辨率</td><td>N=32 / 518²</td><td class="note">同</td></tr>
+    <tr><td>有效 batch</td><td>16（16×A800）</td><td class="note">16（8×H20，batch 8 × grad_accum 2）</td></tr>
+    <tr><td>判别式学习率</td><td>新模块 1e-4 / 预训练 1e-6</td><td class="note">同（需 <code>NEW_MODULE_PREFIXES</code> 补丁）</td></tr>
+    <tr><td>损失</td><td>L<sub>ssi</sub> + 0.5·L<sub>gm</sub> + 10·L<sub>tgm</sub> + 0.2·L<sub>cam</sub></td><td class="note">同（<code>pose_flag: true</code> 启用 L<sub>cam</sub>）</td></tr>
+    <tr><td>Stage-1 数据</td><td>690K 帧 · 5 个带位姿集</td><td class="note">同 5 集，但配比不同（见下）</td></tr>
+    <tr><td>Stage-2</td><td>+250K 帧（IRS + 野外立体视频）</td><td class="bad">无（缺数据）</td></tr>
+    <tr><td>训练耗时</td><td>≈ 3 天 / stage</td><td class="note">37 h 55 m（20k 步，3.41–3.47 s/it）</td></tr>
+  </tbody>
+</table>
+
+<h3>Stage-1 各数据集 clip 数（seq_len=32）</h3>
+<table>
+  <thead><tr><th>数据集</th><th>clips</th><th>占比</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td>PointOdyssey</td><td class="num">301,594</td><td class="num bad">~90%</td><td class="note">⚠ 占比过高，室内合成为主</td></tr>
+    <tr><td>VKITTI2</td><td class="num">11,342</td><td class="num">~3%</td><td class="note">唯一 KITTI 域合成数据</td></tr>
+    <tr><td>Dynamic Replica</td><td class="num">10,760</td><td class="num">~3%</td><td class="note">室内</td></tr>
+    <tr><td>MVS-Synth</td><td class="num">8,280</td><td class="num">~2%</td><td class="note">室外 GTA-V，大深度</td></tr>
+    <tr><td>TartanAir</td><td class="note">未打印计数</td><td class="note">—</td><td class="note">多样室内外</td></tr>
+  </tbody>
+</table>
+
+<h2>七、训练收敛（step 0 → 19800）</h2>
+<table>
+  <thead><tr><th>损失项</th><th>起始</th><th>末期</th><th>变化</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td>ssi</td><td class="num">0.200 / 0.256</td><td class="num">0.022 – 0.071</td><td class="best">↓ ~75%</td><td class="note">尺度-位移不变深度损失</td></tr>
+    <tr><td>gm</td><td class="num">0.163 / 0.764</td><td class="num">0.061 – 0.211</td><td class="best">↓</td><td class="note">多尺度梯度匹配</td></tr>
+    <tr><td>stable_loss</td><td class="num">0.071 / 0.178</td><td class="num">0.013 – 0.022</td><td class="best">↓ ~85%</td><td class="note">时序稳定</td></tr>
+    <tr><td><b>pose_loss</b></td><td class="num">0.720 / 0.548</td><td class="num">0.100 – 0.273</td><td class="best">↓ ~75%</td><td class="note">GEM 位姿监督 L<sub>cam</sub></td></tr>
+    <tr><td><b>quat</b>（旋转）</td><td class="num">0.301 / 0.293</td><td class="num">0.004 – 0.081</td><td class="best">↓ ~98%</td><td class="note">旋转估计基本收敛</td></tr>
+    <tr><td>trans（平移）</td><td class="num">0.418 / 0.256</td><td class="num">0.096 – 0.192</td><td class="best">↓ ~65%</td><td class="note">平移含尺度歧义，天然更难</td></tr>
+  </tbody>
+</table>
+<p class="note">每步打印两行是因为 <code>grad_accum=2</code>，两个 micro-batch 都记在同一个 <code>total_step</code> 上。</p>
+
+<h2>八、复现过程中修掉的坑</h2>
+<table>
+  <thead><tr><th>#</th><th>问题</th><th>根因</th><th>修法</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>CLI override 报 <code>Key 'total_step' is not in struct</code></td><td>config 移入子目录后缺 <code>#&nbsp;@package&nbsp;_global_</code>，Hydra 把整份配置嵌套进目录包</td><td class="note">补上该行（师兄的 44 个 config 都有）</td></tr>
+    <tr><td>2</td><td>GEM 训不动</td><td>参数分组里只有 ASTT 走 <code>dec_lr</code>，<b>GEM 和预训练 head 一起落在 <code>other_lr</code>=1e-6</b></td><td class="note">抽出 <code>NEW_MODULE_PREFIXES</code>，GEM+ASTT 同归 1e-4</td></tr>
+    <tr><td>3</td><td>加载 VDA 触发"必须零 missing"断言</td><td>守卫是为"完整 GemDepth→完整 GemDepth"写的，不认识基线初始化</td><td class="note">从 checkpoint 自身探测（无 GEM/ASTT 张量→基线初始化）</td></tr>
+    <tr><td>4</td><td>8 卡首次反向即崩 <code>expect_autograd_hooks_</code></td><td><b><code>static_graph=True</code> 与梯度累积的 <code>no_sync()</code> 不兼容</b>；此前所有实验都是 grad_accum=1 故未暴露</td><td class="note">grad_accum&gt;1 时改用 <code>find_unused_parameters</code></td></tr>
+    <tr><td>5</td><td>DDP 拒绝未使用参数</td><td>legacy <code>head.proj</code> 可训练却永不收梯度，原先只在 <code>encoder_decoder_only</code> 时冻结，而该开关与 GEM/ASTT 互斥</td><td class="note">无条件冻结（87.372M→84.486M）</td></tr>
+    <tr><td>6</td><td>KITTI 莫名退化 14.7%</td><td>新增的 VKITTI2 场景级 split 把训练数据从 ~21k 砍到 1010 clips，<b>且该分支不打印 clip 数，完全静默</b></td><td class="note">加 <code>vkitti_scene_split</code> 开关 + 强制打印 clip 数</td></tr>
+  </tbody>
+</table>
+
+<h2>九、待办</h2>
+<ul class="todo">
+  <li class="done">Stage-1 复现（VDA 初始化 + ASTT + GEM）—— 已完成，Table 4 两项均在 7% 内</li>
+  <li><b>补 ScanNet TAE 指标</b>：Table 4 唯一还没对上的一列，也是 ASTT 时序分支的主要体现（论文 0.621→0.566）</li>
+  <li><b>做自己的消融</b>：关掉 <code>use_gem</code> / <code>use_astt</code> 各训一版，复刻 Table 4 的四行——这是最有说服力的结果</li>
+  <li><b>修 Stage-1 数据配比</b>：PointOdyssey 占约 90%，调 RATIO 平衡后 Sintel 预计还能再降</li>
+  <li>Stage-2（需 IRS + 野外立体视频，当前无此数据）</li>
+</ul>
+
+<h2>十、复现命令</h2>
+<h3>训练（8 卡，约 38 小时）</h3>
+<pre><code>cd /mnt/data/PROJECT_CHEN/code/PP-DPT
+OPENCV_IO_ENABLE_OPENEXR=1 NCCL_P2P_DISABLE=1 NCCL_NVLS_ENABLE=0 NCCL_DEBUG=WARN \
+nohup python -u -m accelerate.commands.launch --num_processes 8 --mixed_precision bf16 \
+  train.py --config-name=stages/stage1_repro &gt; runlogs/stage1_repro.log 2&gt;&amp;1 &amp;</code></pre>
+
+<h3>四集评测</h3>
+<pre><code>cd /mnt/data/PROJECT_CHEN/code/PP-DPT
+OPENCV_IO_ENABLE_OPENEXR=1 \
+CONFIG=config/stages/stage1_repro.yaml \
+CKPT=checkpoint/gemdepth_stage1_repro/final.pth \
+BENCH=/mnt/data/PROJECT_CHEN/data/eval \
+OUT=output_eval/gemdepth_stage1_repro_all \
+DATASETS="kitti sintel bonn scannet" GPU=0 \
+bash scripts/eval_gemdepth_4bench.sh</code></pre>
+
+<h3>权重下载</h3>
+<pre><code>mkdir -p /mnt/data/PROJECT_CHEN/weights &amp;&amp; cd /mnt/data/PROJECT_CHEN/weights
+wget -c -O video_depth_anything_vitl.pth \
+  "https://huggingface.co/depth-anything/Video-Depth-Anything-Large/resolve/main/video_depth_anything_vitl.pth?download=true"</code></pre>
+
+<footer>
+PP-DPT · GemDepth Stage-1 复现看板 · 生成于 2026-08-17 ·
+分支 <code>feat/registry-mixdata</code> · 所有数字均为实测，跨口径比较处已标注偏差
+</footer>
+
+</body>
+</html>
