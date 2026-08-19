@@ -53,18 +53,29 @@ echo "   gpu    : $CUDA_VISIBLE_DEVICES   input_size=$INPUT_SIZE"
 echo "=========================================================="
 
 # ---- 1) inference: one call per dataset (each uses its own json) ----
+# A `<name>_500` dataset is the paper's 500-frame protocol: eval.py knows the name
+# and picks <name>/<name>_video_500.json + max_eval_len=500, but the predictions
+# still live under <OUT>/<name>/, so inference must run with the *base* name and
+# the 500-frame json. Without this split the loop looked for a non-existent
+# `<BENCH>/kitti_500/kitti_500_video.json`, silently skipped inference, and eval
+# then failed with "Missing prediction file".
 for ds in $DATASETS; do
-    json="$BENCH/$ds/${ds}_video.json"
+    base="${ds%_500}"
+    if [ "$ds" != "$base" ]; then
+        json="$BENCH/$base/${base}_video_500.json"
+    else
+        json="$BENCH/$base/${base}_video.json"
+    fi
     if [ ! -f "$json" ]; then
         echo "[infer] SKIP $ds (missing $json)"
         continue
     fi
-    echo "[infer] $ds ..."
+    echo "[infer] $ds ... (json=$json, npy dir=$OUT/$base)"
     $PY evaluation/inference/infer.py \
         --config "$CONFIG" \
         --ckpt "$CKPT" \
         --json_file "$json" \
-        --datasets "$ds" \
+        --datasets "$base" \
         --input_size "$INPUT_SIZE" \
         --infer_path "$OUT" || { echo "[infer] $ds FAILED"; continue; }
 done
