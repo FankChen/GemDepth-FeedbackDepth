@@ -1,0 +1,82 @@
+# @package _global_
+# Stage-2-lite —— 论文 Stage-2 的「机制近似」，不是复现
+# ---------------------------------------------------------------------------
+# 论文 Stage-2 = 冻结 GEM + 微调其余，数据 = IRS 100K + 野外立体视频 150K（均无位姿 GT）。
+# 那 150K 野外数据作者从未公开，IRS 也只有 OneDrive 入口 → 严格复现不可能。
+#
+# 本配置只保留 Stage-2 的**核心机制**：
+#   冻结 GEM → 逼 ASTT 学会消费 GEM 的真实（带噪）位姿输出，
+#   而不是 Stage-1 里被 L_cam 一直拽向 GT 的那份近似干净的几何。
+#   （这正是论文 Table 5「20% 位姿噪声只掉 7.6%」那份鲁棒性的来源。）
+# 数据仍用 Stage-1 那 5 个合成集——我们手上只有这些，
+# 因此**缺了论文 Stage-2 的「合成→真实」域适应那一半**，增益预期明显小于论文。
+#
+# ⚠ 写结论时必须标注：这是 "Stage-2 机制的近似消融"，不能称作复现 Stage-2。
+#
+# 启动（8 卡，10k 步 x grad_accum 2 约 19 小时）：
+#   cd /mnt/data/PROJECT_CHEN/code/PP-DPT
+#   OPENCV_IO_ENABLE_OPENEXR=1 NCCL_P2P_DISABLE=1 NCCL_NVLS_ENABLE=0 \
+#   nohup python -u -m accelerate.commands.launch --num_processes 8 --mixed_precision bf16 \
+#     train.py --config-name=stages/stage2_lite > runlogs/stage2_lite.log 2>&1 &
+# ---------------------------------------------------------------------------
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/gemdepth_stage2_lite
+  save_freq: 1000
+  val_freq: 100000
+  log_dir: ./logs/gemdepth_stage2_lite
+  # 冻结 GEM，只微调 ASTT + 预训练 DPT head
+  freeze_mode: gem_frozen
+  grad_accum: 2
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  # 精修阶段整体降一档：新模块 1e-4 -> 1e-5，预训练部分维持 1e-6
+  dec_lr: 1.0e-5
+  other_lr: 1.0e-6
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    vkitti_scene_split: false
+    data_dirs:
+      - /mnt/data/PROJECT_CHEN/data/train/vkitti2/vkitti
+      - /mnt/data/PROJECT_CHEN/data/train/tartanair
+      - /mnt/data/PROJECT_CHEN/data/train/mvs_synth
+      - /mnt/data/PROJECT_CHEN/data/train/point_odyssey
+      - /mnt/data/PROJECT_CHEN/data/train/dynamic_replica
+    crop_size: 518
+    seq_len: 32
+  val:
+    mode: train
+    vkitti_scene_split: false
+    data_dirs: []
+    crop_size: 518
+    seq_len: 32
+
+dataloader:
+  batch_size: 8
+  num_workers: 8
+
+model:
+  backbone: DINOv2Backbone
+  decoder: DPTHeadTemporal
+  backbone_weights: "timm://vit_large_patch14_dinov2.lvd142m"
+  # ★ 从 Stage-1 复现的产物接着训。必须用纯 state_dict 的 final_model.pth，
+  #   不是带 optimizer 态的 final.pth（train.py 直接 load_state_dict）。
+  video_path: ./checkpoint/gemdepth_stage1_repro/final_model.pth
+  require_pretrained_backbone: true
+  use_gem: true
+  use_astt: true
+  use_temporal: true
+  lora: false
+
+encoder: 'vitl'
+# ★ 关掉 L_cam：Stage-2 的数据本就无位姿 GT；留着会把 GEM 又拽回理想状态，洞就补不上。
+pose_flag: false
+num_gpus: 8
+total_step: 10000
+project_name: gemdepth_stage2_lite
+resume: false

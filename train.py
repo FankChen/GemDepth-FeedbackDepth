@@ -41,14 +41,15 @@ DATASET_MAX_DEPTH_DEFAULT = 80.0
 # (optimizer.dec_lr, 1e-4 in the paper) while the pretrained DPT head keeps the
 # much smaller optimizer.other_lr (1e-6). Without GEM in this list the randomly
 # initialised camera/geometry modules would train at the pretrained-head rate.
-NEW_MODULE_PREFIXES = (
-    # ASTT — alternating spatio-temporal transformer
-    'spatial_blocks', 'time_blocks', 'dec_norm',
-    # GEM — geometry embedding module (camera pose + geometric features)
+# ASTT — alternating spatio-temporal transformer
+ASTT_PREFIXES = ('spatial_blocks', 'time_blocks', 'dec_norm')
+# GEM — geometry embedding module (camera pose + geometric features)
+GEM_PREFIXES = (
     'global_blocks', 'frame_blocks', 'camera_token', 'register_token',
     'camera_head', 'cam_rot_encoder', 'cam_trans_encoder',
     'cam_trans_scale_encoder',
 )
+NEW_MODULE_PREFIXES = ASTT_PREFIXES + GEM_PREFIXES
 
 
 def tensor_health(tensor):
@@ -327,6 +328,23 @@ def main(cfg):
         if accelerator.is_main_process:
             n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
             print(f"[freeze] head_only: only DPT head trainable ({n_train/1e6:.2f}M params)")
+    elif freeze_mode == 'gem_frozen':
+        # Stage 2 of the paper: freeze GEM and fine-tune everything else, so that ASTT
+        # learns to consume GEM's *actual* (noisy) pose estimate instead of the nearly
+        # clean geometry it saw in stage 1, where L_cam kept pulling GEM towards the
+        # ground-truth pose. GEM still runs in the forward pass, it just stops learning.
+        # Pair this with pose_flag=false so that no pose supervision leaks back in.
+        assert use_gem, "training.freeze_mode=gem_frozen requires model.use_gem=true"
+        n_frozen = 0
+        for name, param in model.named_parameters():
+            if name.startswith(GEM_PREFIXES):
+                param.requires_grad_(False)
+                n_frozen += param.numel()
+        assert n_frozen > 0, "freeze_mode=gem_frozen matched no GEM parameters"
+        if accelerator.is_main_process:
+            n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print(f"[freeze] gem_frozen: GEM frozen ({n_frozen/1e6:.2f}M params), "
+                  f"trainable={n_train/1e6:.2f}M")
     elif freeze_mode not in (None, 'default'):
         raise ValueError(f"Unknown training.freeze_mode={freeze_mode}")
 
