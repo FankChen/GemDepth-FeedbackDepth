@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GemDepth 论文精读学习看板</title>
+<style>
+  :root{
+    --bg:#0f1419;--card:#1a2029;--card2:#212936;--border:#2a3441;--text:#e6edf3;
+    --muted:#8b949e;--accent:#58a6ff;--good:#3fb950;--warn:#d29922;--bad:#f85149;--purple:#bc8cff;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.7;}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 24px 80px;}
+  h1{font-size:28px;margin:0 0 4px;}
+  h2{font-size:21px;margin:38px 0 14px;padding:8px 0 8px 12px;border-left:4px solid var(--accent);background:linear-gradient(90deg,rgba(88,166,255,.08),transparent);}
+  h3{font-size:16px;margin:22px 0 8px;color:var(--accent);}
+  .sub{color:var(--muted);font-size:13px;}
+  code{font-family:"SF Mono",Menlo,monospace;background:var(--card2);padding:2px 6px;border-radius:4px;color:var(--purple);font-size:.92em;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin:14px 0;}
+  .tldr{border-left:3px solid var(--accent);}
+  .key{border-left:3px solid var(--good);background:rgba(63,185,80,.06);}
+  .warn{border-left:3px solid var(--warn);background:rgba(210,153,34,.06);}
+  .you{border-left:3px solid var(--purple);background:rgba(188,140,255,.06);}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;background:var(--card);border-radius:8px;overflow:hidden;}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border);}
+  th{background:var(--card2);color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;}
+  tr:last-child td{border-bottom:none;}
+  td.num,th.num{font-variant-numeric:tabular-nums;font-family:"SF Mono",Menlo,monospace;text-align:right;}
+  .best{color:var(--good);font-weight:700;}
+  .bad{color:var(--bad);}
+  .formula{background:#0b0f14;border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:10px 0;font-family:"SF Mono",Menlo,monospace;font-size:14px;color:var(--text);overflow-x:auto;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:11px;font-size:11px;font-weight:600;margin-left:6px;}
+  .p-good{background:rgba(63,185,80,.15);color:var(--good);}
+  .p-warn{background:rgba(210,153,34,.15);color:var(--warn);}
+  .p-acc{background:rgba(88,166,255,.15);color:var(--accent);}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:14px 0;font-size:13px;}
+  .flow .box{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;}
+  .flow .arr{color:var(--accent);font-weight:700;}
+  .toc{columns:2;column-gap:28px;font-size:14px;}
+  .toc a{color:var(--accent);text-decoration:none;display:block;padding:3px 0;}
+  .toc a:hover{text-decoration:underline;}
+  ul{padding-left:20px;}
+  li{margin:4px 0;}
+  .tag{font-size:11px;color:var(--muted);}
+  hr{border:none;border-top:1px solid var(--border);margin:30px 0;}
+  .big{font-size:15px;}
+  em{color:var(--warn);font-style:normal;font-weight:600;}
+  .footer{color:var(--muted);font-size:12px;margin-top:40px;border-top:1px solid var(--border);padding-top:16px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>GemDepth 论文精读学习看板</h1>
+<p class="sub">Geometry-Embedded Features for 3D-Consistent Video Depth · ICML 2026 · arXiv 2605.10525v4<br>
+用途：学明白这篇文章 → 在此基础上设计自己的实验（PP-DPT ConvNeXt+多尺度/temporal 混训）</p>
+
+<div class="card">
+<h3 style="margin-top:0">目录</h3>
+<div class="toc">
+<a href="#core">0 · 一句话核心 & 动机</a>
+<a href="#arch">1 · 整体架构（数据流）</a>
+<a href="#gem">2 · GEM 几何嵌入模块</a>
+<a href="#astt">3 · ASTT 交替时空 Transformer</a>
+<a href="#loss">4 · 损失函数</a>
+<a href="#twostage">5 · 两阶段训练</a>
+<a href="#results">6 · 主结果（四集 zero-shot）</a>
+<a href="#ablation">7 · 消融：ASTT / GEM 各值多少</a>
+<a href="#place">8 · ASTT 放哪 & 位姿鲁棒性</a>
+<a href="#impl">9 · 训练超参速查</a>
+<a href="#you">10 · 你 vs 论文 & 实验路线图</a>
+</div>
+</div>
+
+<h2 id="core">0 · 一句话核心 & 动机</h2>
+<div class="card tldr big">
+<b>核心论点</b>：视频深度要做到真正的 3D 时序一致，<b>显式的相机运动 + 全局 3D 结构感知是前提</b>——不能只靠 Transformer 在 2D 帧上做"时序平滑"。
+</div>
+<div class="card">
+<b>他们批评现有两派：</b>
+<ul>
+<li><b>生成式</b>（DepthCrafter/ChronoDepth/RollingDepth，视频扩散）：空间细节好，但时序差、又慢又吃显存。</li>
+<li><b>判别式</b>（VDA/NVDS，加轻量时序模块）：高效，但只做 2D 隐式平滑，<b>缺 3D 几何感知</b> → 相机旋转/大视角变化时崩，且过度平滑糊边界。</li>
+</ul>
+<b>GemDepth 的解法 = 两个协同模块：</b>
+<ul>
+<li><span class="pill p-acc">GEM</span> 显式建模相机自运动，预测 6-DoF 位姿 + 全局尺度 → 注入"位姿感知的几何嵌入"，用<b>物理约束</b>代替盲目平滑。</li>
+<li><span class="pill p-acc">ASTT</span> 用 GEM 的运动先验，把时空建模<b>拆成 temporal（几何对齐）+ spatial（细节精修）交替</b>，同时拿到高保真 + 无闪烁。</li>
+</ul>
+它是<b>通用框架</b>，可挂到 DAv2 / VDA 两种 baseline 上（得到 GemDepth-DAv2 / GemDepth-VDA）。
+</div>
+
+<h2 id="arch">1 · 整体架构（数据流）</h2>
+<div class="flow">
+<span class="box">视频 X<br>[B,N,C,H,W]</span><span class="arr">→</span>
+<span class="box">冻结 DINOv2<br>取层 {5,12,18,24}</span><span class="arr">→</span>
+<span class="box"><b>GEM</b><br>预测位姿→几何嵌入 F_cam<br>融合进 F4</span><span class="arr">→</span>
+<span class="box"><b>ASTT</b><br>temporal↔spatial 交替<br>(early-stage!)</span><span class="arr">→</span>
+<span class="box">DPT head<br>出视差/深度</span>
+</div>
+<div class="card">
+<ul>
+<li><b>特征提取（3.1）</b>：把时间维 N 折进 batch，冻结 DINOv2 抽多尺度特征（层 5/12/18/24）。</li>
+<li><b>关键设计</b>：ASTT 放在<b>特征提取后立刻做</b>（early-stage），而不是像 VDA 塞在 DPT decoder 中间——见 §8，这点贡献很大。</li>
+<li>论文以 <b>GemDepth-DAv2</b>（ViT encoder + DAv2 的 DPT head）为例讲解。</li>
+</ul>
+</div>
+
+<h2 id="gem">2 · GEM 几何嵌入模块</h2>
+<div class="card">
+<b>目的</b>：把抽象的相机自运动 → 具体的结构嵌入，给网络一个"米制感知的坐标系"。<br><br>
+<b>怎么做</b>（基于轻量 EfficientPoseNet）：
+<ul>
+<li>一个 <b>4 层交替注意力 transformer</b>，处理一个可学习的 <b>camera token t</b>（注入到 F4 特征图）。</li>
+<li>融合帧内空间上下文 + 帧间时序运动 → 精炼 token t̂ → pose head 出 <b>6-DoF 位姿 g ∈ ℝ⁷</b>（旋转四元数 Q∈ℝ⁴ + 平移 T∈ℝ³）。</li>
+<li>投影到统一 canonical frame；<b>用全局尺度因子归一化平移</b>解决单目尺度歧义：</li>
+</ul>
+<div class="formula">T̂ᵢ = Tᵢ / Z ,  其中  Z = (1/N) Σᵢ ‖Tᵢ‖   （全局平均平移模长）</div>
+<ul>
+<li>把 <b>Q（旋转）、T̂（归一化平移）、Z（尺度）</b> 各自过 geometric MLP → 相机特征 <b>F_cam</b>，融合回主特征 F4。</li>
+<li>用<b>尺度归一化的 GT 位姿</b>监督 → 预测位姿天然在统一尺度空间，消除初始尺度不一致。</li>
+</ul>
+</div>
+<div class="card key">
+<b>为什么重要</b>：这是"用物理约束代替盲目平滑"的来源。消融里 GEM 额外带来 KITTI +7.5% / Sintel +10.1% AbsRel，只加 5ms。而且对位姿噪声很鲁棒（§8）。
+</div>
+
+<h2 id="astt">3 · ASTT 交替时空 Transformer</h2>
+<div class="card">
+输入 GEM 增强后的特征 F̂，加 <b>RoPE（空间位置编码）+ Idx Embedding（帧序编码）</b>，然后<b>交替</b>两个阶段：
+<h3>① Temporal Attention — 几何对齐</h3>
+<ul>
+<li>重排特征，隔离时序依赖；用 GEM 的 6-DoF 运动先验，<b>建立跨帧的显式点级对应</b>（point-level correspondence）。</li>
+<li>做<b>基于轨迹的特征聚合</b>——只抓纯运动线索，避开复杂空间上下文干扰 → 保证结构一致 + 无闪烁。</li>
+</ul>
+<h3>② Spatial Attention — 结构精修</h3>
+<ul>
+<li>在对齐后的时序特征上做全局信息交换，拆成：<b>帧内空间注意力</b>（局部布局）+ <b>帧间空间注意力</b>（长程依赖）。</li>
+<li>聚合 3D 空间特征，增强高频表示，锐化结构细节。</li>
+</ul>
+<b>交替逻辑</b>：先几何对齐、再细节锐化 → 同时解决"细节保留 vs 时序稳定"的冲突。
+</div>
+
+<h2 id="loss">4 · 损失函数（3.4）</h2>
+<div class="formula">L_total = L_ssi + α·L_gm + β·L_tgm + γ·L_cam    （α=0.5, β=10, γ=0.2）</div>
+<table>
+<thead><tr><th>项</th><th>含义</th><th>权重</th></tr></thead>
+<tbody>
+<tr><td>L_ssi</td><td>尺度-位移不变损失（视差空间 s=1/d，MiDaS 家族）</td><td class="num">1</td></tr>
+<tr><td>L_gm</td><td>多尺度梯度匹配（MiDaS）</td><td class="num">0.5</td></tr>
+<tr><td>L_tgm</td><td>时序梯度匹配（来自 VDA）</td><td class="num">10</td></tr>
+<tr><td>L_cam</td><td>GEM 位姿 Huber loss：L_rot + λ·L_trans（旋转+平移）</td><td class="num">0.2</td></tr>
+</tbody>
+</table>
+<div class="card you">
+<b>对照你的实验</b>：你的 <code>VideoDepthLoss</code> = 视差 SSI + 0.5·梯度匹配 + 10·时序 = 论文的 <code>L_ssi + 0.5·L_gm + 10·L_tgm</code>，<b>权重完全一致</b>，唯一少了 <code>γ·L_cam</code>（因为你没有 GEM 位姿模块）。所以你的 temporal baseline ≈ 论文"去掉几何那一支"的深度损失。
+</div>
+
+<h2 id="twostage">5 · 两阶段训练（3.5）</h2>
+<div class="card">
+动机：几何约束需要"视频+GT 位姿"，但带位姿标注的数据稀缺 → 解耦优化。
+<table>
+<thead><tr><th>阶段</th><th>做什么</th><th>数据</th></tr></thead>
+<tbody>
+<tr><td><b>Stage 1</b><br>几何优化</td><td>整网联合训，<b>位姿+深度双监督</b>，建立几何一致的运动表示</td><td>≈690K 帧<br>VKITTI2 40K + TartanAir 300K + PointOdyssey 70K + MVS-Synth 80K + Dynamic Replica 200K（都有位姿 GT）</td></tr>
+<tr><td><b>Stage 2</b><br>深度精修</td><td><b>冻结 GEM</b>，微调其余；逼 ASTT 适应位姿噪声</td><td>+250K 帧<br>IRS 100K + 野外立体视频 150K（<b>无</b>位姿 GT）。总 940K</td></tr>
+</tbody>
+</table>
+<span class="tag">数据高效关键：总共才 940K 帧，vs VDA 1.3M、DepthCrafter &gt;10M。</span>
+</div>
+
+<h2 id="results">6 · 主结果 · 四集 zero-shot（Table 1）</h2>
+<p class="sub">AbsRel↓；评测口径 = 你现在用的同一套（视差仿射对齐）。
+⚠ <b>2026-08-21 列序订正</b>：论文 Table 1 表头原文是 <code>Sintel (50 frames) | Bonn (500) | Scannet (500) | KITTI (500)</code>，
+即 <b>Sintel / Bonn / Scannet / KITTI</b>；本页此前按 Sintel/KITTI/Bonn/Scannet 转写，KITTI·Bonn·Scannet 三列错位。
+已用 Table 6（列序 KITTI/Sintel/Bonn/Scannet）、Table 2 的 TAE、Table 9 的 50% 行做四重交叉验证。下表为订正后的值。</p>
+<table>
+<thead><tr><th>方法</th><th class="num">Sintel</th><th class="num">KITTI</th><th class="num">Bonn</th><th class="num">Scannet</th><th class="num">延迟</th></tr></thead>
+<tbody>
+<tr><td>DepthAnythingV2（单帧）</td><td class="num">0.390</td><td class="num">0.137</td><td class="num">0.127</td><td class="num">0.150</td><td class="num">79</td></tr>
+<tr><td>VideoDepthAnything</td><td class="num">0.295</td><td class="num">0.083</td><td class="num">0.071</td><td class="num">0.089</td><td class="num">85</td></tr>
+<tr><td>GemDepth-DAv2</td><td class="num">0.188</td><td class="num">0.077</td><td class="num">0.055</td><td class="num">0.069</td><td class="num">94</td></tr>
+<tr><td>GemDepth-VDA <span class="pill p-good">SOTA</span></td><td class="num best">0.157</td><td class="num best">0.071</td><td class="num best">0.051</td><td class="num best">0.066</td><td class="num">99</td></tr>
+<tr style="border-top:2px solid var(--purple)"><td class="tag">（你的 mixdata multiscale, ConvNeXt-S, 20k）</td><td class="num">0.3693</td><td class="num">0.1119</td><td class="num">0.0809</td><td class="num">0.1211</td><td class="num">—</td></tr>
+<tr><td class="tag">（GemDepth-VDA 复现, Stage-1, 500 帧）</td><td class="num">0.3165</td><td class="num">0.0862</td><td class="num">0.0695</td><td class="num">0.0769</td><td class="num">—</td></tr>
+</tbody>
+</table>
+<div class="card">
+<b>关键点</b>：即便 GemDepth-DAv2 也超过同 backbone 的 VDA——因为两者用同一预训练 encoder，<b>这个 gap 干净地隔离出 GEM+ASTT 的贡献</b>。Sintel 上比 VDA 猛降 46.8%（大运动/大视角靠几何先验解决）。
+</div>
+
+<h2 id="table6">6b · Stage-1 vs Stage-2（Table 6） <span class="pill p-good">最佳对标</span></h2>
+<p class="sub">论文 Table 6 直接给出各阶段结束时的四集结果，是我们唯一能同阶段对标的一组。</p>
+<table>
+<thead><tr><th>模型 / 阶段</th><th class="num">数据</th><th class="num">Sintel</th><th class="num">KITTI</th><th class="num">Bonn</th><th class="num">Scannet</th><th class="num">TAE</th></tr></thead>
+<tbody>
+<tr><td>VDA</td><td class="num">1.3M</td><td class="num">0.295</td><td class="num">0.083</td><td class="num">0.071</td><td class="num">0.089</td><td class="num">0.57</td></tr>
+<tr><td>GemDepth-DAv2 · Stage 1</td><td class="num">690k</td><td class="num">0.295</td><td class="num">0.086</td><td class="num">0.080</td><td class="num">0.080</td><td class="num">0.57</td></tr>
+<tr><td>GemDepth-DAv2 · Stage 2</td><td class="num">940k</td><td class="num">0.188</td><td class="num">0.077</td><td class="num">0.055</td><td class="num">0.069</td><td class="num">0.50</td></tr>
+<tr><td><b>GemDepth-VDA · Stage 1</b> <span class="pill p-good">对标目标</span></td><td class="num">690k</td><td class="num best">0.278</td><td class="num best">0.077</td><td class="num best">0.065</td><td class="num best">0.078</td><td class="num">0.59</td></tr>
+<tr><td>GemDepth-VDA · Stage 2</td><td class="num">940k</td><td class="num">0.157</td><td class="num">0.071</td><td class="num">0.051</td><td class="num">0.066</td><td class="num">0.47</td></tr>
+<tr style="border-top:2px solid var(--purple)"><td class="tag">（我们的复现, Stage-1, 500 帧）</td><td class="num">—</td><td class="num">0.3165</td><td class="num">0.0862</td><td class="num">0.0695</td><td class="num">0.0769</td><td class="num">—</td></tr>
+<tr><td class="tag">对 Stage-1 目标的差距</td><td class="num">—</td><td class="num">+13.8%</td><td class="num">+11.9%</td><td class="num">+6.9%</td><td class="num best">−1.4%</td><td class="num">—</td></tr>
+</tbody>
+</table>
+<div class="card">
+<b>Stage-2 的真实贡献</b>（两行相减）：Sintel <b>−43.5%</b>、Bonn −21.5%、Scannet −15.4%、KITTI −7.8%。
+Sintel 上收益压倒性最大 → 印证 Stage-2 的价值主要来自<b>真实数据带来的域泛化</b>。
+而论文 Table 8 里那 150K「In-the-wild stereo videos」是<b>全表唯一没有引用编号</b>的一项（作者自采、未公开），
+因此 <b>Stage-2 严格复现不可行</b>。
+</div>
+
+<h2 id="ablation">7 · 消融 · ASTT / GEM 各值多少（Table 4）</h2>
+<p class="sub">全部基于 VDA，Stage-1 训 <b>20k steps</b>（← 和你的 20k 预算同量级，最值得对标）。</p>
+<table>
+<thead><tr><th>配置</th><th class="num">KITTI AbsRel</th><th class="num">Sintel AbsRel</th><th class="num">Scannet TAE</th><th class="num">延迟</th></tr></thead>
+<tbody>
+<tr><td>Baseline (VDA)</td><td class="num">0.092</td><td class="num">0.356</td><td class="num">0.621</td><td class="num">85</td></tr>
+<tr><td>+ Spatial only</td><td class="num">0.082</td><td class="num">0.337</td><td class="num">0.609</td><td class="num">90</td></tr>
+<tr><td>+ Temporal only</td><td class="num">0.084</td><td class="num">0.343</td><td class="num">0.573</td><td class="num">88</td></tr>
+<tr><td>+ ASTT (both)</td><td class="num">0.080</td><td class="num">0.328</td><td class="num">0.566</td><td class="num">95</td></tr>
+<tr><td><b>Full (ASTT+GEM)</b></td><td class="num best">0.074</td><td class="num best">0.295</td><td class="num best">0.538</td><td class="num">99</td></tr>
+</tbody>
+</table>
+<div class="card">
+<ul>
+<li><b>Spatial 支</b> → 提空间精度：KITTI 0.092→0.082、Sintel 0.356→0.337。</li>
+<li><b>Temporal 支</b> → 提时序稳定：Scannet TAE 0.621→0.573（比 spatial 更明显）。</li>
+<li><b>ASTT（合）</b> → 协同：0.080 / 0.328 / 0.566，只 +10ms。</li>
+<li><b>+GEM</b> → 再 <b>KITTI +7.5% / Sintel +10.1% / TAE +4.9%</b>，只 +5ms。</li>
+</ul>
+</div>
+
+<h2 id="place">8 · ASTT 放哪（Table 7）& 位姿鲁棒性（Table 5/9）</h2>
+<h3>ASTT 放置位置——early 最好</h3>
+<table>
+<thead><tr><th>位置</th><th class="num">KITTI</th><th class="num">Sintel</th><th class="num">Scannet TAE</th></tr></thead>
+<tbody>
+<tr><td>Late (Pos 3, FlashDepth 式)</td><td class="num bad">0.126</td><td class="num">0.377</td><td class="num">0.917</td></tr>
+<tr><td>Mid (Pos 2, VDA 式)</td><td class="num">0.102</td><td class="num">0.352</td><td class="num">0.737</td></tr>
+<tr><td><b>Early (Pos 1, GemDepth)</b></td><td class="num best">0.088</td><td class="num best">0.328</td><td class="num best">0.654</td></tr>
+</tbody>
+</table>
+<span class="tag">要在特征被 DPT decoder 抽象掉之前做时空交互。early 比 mid 在 KITTI 好 13.7%、比 late 好 30.2%。</span>
+<h3>位姿噪声鲁棒 & 注入概率</h3>
+<div class="card">
+<ul>
+<li><b>注噪声</b>（Table 5）：0%→20% 噪声，AbsRel 只 0.066→0.071（优雅退化），&gt;50% 才明显崩。</li>
+<li><b>位姿注入概率</b>（Table 9）：0%（不用位姿）KITTI 0.088 → <b>50% 就到 0.071</b>（≈100% 的 0.070）。→ 不需要完美/全程位姿，一半足够，说明它不过拟合几何先验。</li>
+</ul>
+</div>
+
+<h2 id="impl">9 · 训练超参速查（4.1 + A.2）</h2>
+<table>
+<thead><tr><th>项</th><th>值</th></tr></thead>
+<tbody>
+<tr><td>backbone</td><td>ViT-Large（DAv2/VDA），冻结 DINOv2</td></tr>
+<tr><td>clip 长度 N</td><td>32 帧</td></tr>
+<tr><td>分辨率</td><td>多分辨率 base 518×518（短边 resize 518 + 随机中心裁 → 518×{518,392,336,294,252,168}）</td></tr>
+<tr><td>优化器</td><td>AdamW</td></tr>
+<tr><td>学习率</td><td><b>判别式</b>：ASTT+GEM 新模块 1e-4；预训练部分 1e-6</td></tr>
+<tr><td>硬件 / batch</td><td>16× A800 / global batch 16</td></tr>
+<tr><td>时长</td><td>每 stage ≈ 3 天收敛（消融跑 20k steps）</td></tr>
+<tr><td>数据预处理</td><td>深度→视差 s=1/d，归一 [0,1]，affine-invariant loss；<b>室外天空深度截断到 400</b> 做监督</td></tr>
+</tbody>
+</table>
+
+<h2 id="you">10 · 你 vs 论文 & 实验路线图</h2>
+<div class="card you">
+<h3 style="margin-top:0">10.1 你现在有什么 vs 论文有什么</h3>
+<table>
+<thead><tr><th>维度</th><th>论文 GemDepth</th><th>你的实验</th></tr></thead>
+<tbody>
+<tr><td>backbone</td><td>ViT-Large（DAv2/VDA）</td><td>DINOv3 ConvNeXt-Small + LoRA</td></tr>
+<tr><td>时序机制</td><td><b>ASTT（early 时空交替）+ GEM（位姿几何）</b></td><td>普通 temporal 头 / 多尺度头，<b>无 GEM 无 ASTT</b></td></tr>
+<tr><td>clip N</td><td>32</td><td>4</td></tr>
+<tr><td>loss</td><td>SSI+0.5gm+10tgm+<b>0.2·cam</b></td><td>SSI+0.5gm+10tgm（<b>缺 cam</b>）</td></tr>
+<tr><td>训练</td><td>两阶段, 940K 帧, 16×A800×3天</td><td>单阶段, 6集混训, 20k step, 8×H20</td></tr>
+</tbody>
+</table>
+<b>差距归因</b>：你 kitti 0.1119 vs 论文 0.051——差距主要来自 ①无 GEM ②无 ASTT(early) ③小 backbone ④N=4 ⑤单阶段。论文数据告诉你各项值多少（ASTT: 0.092→0.080；GEM: →0.074）。
+</div>
+
+<div class="card key">
+<h3 style="margin-top:0">10.2 建议的实验路线（从便宜到贵，逐步逼近）</h3>
+<ol>
+<li><b>[进行中] 同配方 temporal baseline</b>：跟你的 multiscale 做受控对照，先回答"多尺度头 vs 普通 temporal 头"。</li>
+<li><b>ASTT 位置实验（低成本高回报）</b>：论文 Table 7 说 early-stage 时空交互 &gt;&gt; decoder 内。你可以先验证"把时序模块前移到特征提取后"是否对 ConvNeXt 也成立。</li>
+<li><b>加判别式 LR</b>：新模块 1e-4 / backbone 1e-6（你现在全 1e-4）——低成本，可能稳。</li>
+<li><b>引入 GEM（大件）</b>：加位姿预测 + 几何嵌入 + L_cam。你的 6 个训练集大多有位姿 GT（VKITTI2/TartanAir/PointOdyssey/MVS/DR），正好做 Stage-1 几何监督。注意：50% 位姿注入就够（Table 9），不必全程。</li>
+<li><b>两阶段训练</b>：Stage1 带位姿的 5 集 → Stage2 冻结 GEM + 无位姿数据精修。</li>
+<li><b>加长 N / 多分辨率</b>：往 N=32、多分辨率靠拢（贵，最后做）。</li>
+</ol>
+<span class="tag">对照硬规则：每加一件都要有同配方 baseline，才能 claim 该模块的增益（正如论文 Table 4 的加法式消融）。</span>
+</div>
+
+<div class="card warn">
+<b>做实验时要盯的口径坑</b>：
+<ul>
+<li>评测都在<b>视差空间仿射对齐</b>；你的 video-loss/temporal 输出视差 → <b>不取倒数</b>。</li>
+<li>论文测序列上限 500 帧；你现在四集脚本用的是各自 json（kitti 110 / sintel 100 / bonn 110 / scannet 90）——跟论文 500 帧列<b>不是同一列</b>，比的时候注意对齐是哪张表。</li>
+<li>vkitti 域内 dense 的"held-out"其实 train 见过（非真 held-out），只当 sanity；真泛化看四集 zero-shot。</li>
+</ul>
+</div>
+
+<div class="footer">
+GemDepth 论文精读学习看板 · 基于 arXiv 2605.10525v4 · 生成于 2026-08-04 · 供 PP-DPT ConvNeXt 混训实验对标
+</div>
+
+</div>
+</body>
+</html>
