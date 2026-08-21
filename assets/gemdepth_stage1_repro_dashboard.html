@@ -27,6 +27,8 @@
               border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 14px; }
   .good-box { background: #eafbef; border: 1px solid #a6e5bb; border-left: 3px solid var(--good);
               border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 14px; }
+  .bad-box  { background: #fff0ef; border: 1px solid #f5c2c0; border-left: 3px solid var(--bad);
+              border-radius: 8px; padding: 14px 18px; margin: 16px 0; font-size: 14px; }
   table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px;
           background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   th, td { padding: 9px 13px; text-align: left; border-bottom: 1px solid var(--border); }
@@ -43,6 +45,7 @@
   .badge-good { background: #dafbe1; color: var(--good); }
   .badge-bad  { background: #ffebe9; color: var(--bad); }
   .badge-warn { background: #fff8c5; color: var(--warn); }
+  .badge-info { background: #ddf4ff; color: var(--accent); }
   pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
         padding: 14px 16px; overflow-x: auto; font-size: 12.5px; }
   code { font-family: "SF Mono", Menlo, monospace; }
@@ -50,36 +53,65 @@
   ul.todo li { padding: 6px 0 6px 26px; position: relative; font-size: 14px; }
   ul.todo li::before { content: "☐"; position: absolute; left: 0; color: var(--warn); }
   ul.todo li.done::before { content: "☑"; color: var(--good); }
+  ul.todo li.run::before  { content: "▶"; color: var(--accent); }
   footer { margin-top: 40px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); padding-top: 16px; }
 </style>
 </head>
 <body>
 
-<h1>GemDepth Stage-1 复现 · 结果看板</h1>
-<p class="meta">更新日期：<b>2026-08-17</b>　·　对应论文：GemDepth（arXiv 2605.10525v4）</p>
-<p class="meta">配置：<code>config/stages/stage1_repro.yaml</code>　·　checkpoint：<code>checkpoint/gemdepth_stage1_repro/final.pth</code>（step 20000）</p>
-<p class="meta">初始化：<code>Video-Depth-Anything-Large</code>（519 张量全部匹配）　·　新训模块：ASTT + GEM（随机初始化）</p>
+<h1>GemDepth 复现 · 结果看板</h1>
+<p class="meta">更新日期：<b>2026-08-21</b>　·　对应论文：GemDepth（arXiv 2605.10525v4，ICML 2026）</p>
+<p class="meta">Stage-1：<code>config/stages/stage1_repro.yaml</code> → <code>checkpoint/gemdepth_stage1_repro/</code>（step 20000）</p>
+<p class="meta">Stage-2-lite：<code>config/stages/stage2_lite.yaml</code> → <code>checkpoint/gemdepth_stage2_lite/</code>（step 10000）</p>
+<p class="meta">初始化：<code>Video-Depth-Anything-Large</code>（519 张量全部匹配）　·　新训模块：ASTT + GEM（随机初始化）　·　分支 <code>feat/registry-mixdata</code></p>
 
 <h2>一、TL;DR</h2>
 <div class="good-box">
-<b>Stage-1 复现成功。</b> 以 VDA-L 为起点、从零训练 ASTT + GEM，20k 步后在论文 Table 4 的两个可比指标上分别差
-<b>5.1%（KITTI）</b>与 <b>7.1%（Sintel）</b>，且<b>同时优于 Baseline 与 +ASTT 两档</b>——说明 ASTT 与 GEM 的增益都被复现出来了。
+<b>Stage-1 复现成立，但按论文的 500 帧协议重测后成绩需要下调。</b>
+以 VDA-L 为起点从零训练 ASTT + GEM，20k 步后：<b>室内两集（Bonn / ScanNet）已超过 VDA 起点并逼近论文的完整两阶段成绩</b>；
+<b>室外两集（KITTI / Sintel）尚未超过起点</b>——这个分裂几乎可以直接归因到 Stage-1 数据配比失衡（室内数据严重过量，VKITTI2 只有论文的 1/4）。
 训练侧 <code>quat</code> 从 0.30 降到 0.004、<code>pose_loss</code> 降 75%，证明 GEM 的位姿监督真实有效而非摆设。
 </div>
+<div class="warn-box">
+<b>⚠ 相较 2026-08-17 版看板的三处修正</b>
+<ol style="margin:6px 0 0; padding-left:20px;">
+  <li><b>「两项都在 7% 内」不再成立</b>：短协议下 KITTI 0.0778 vs 论文 0.074 只差 5.1%，但 500 帧协议下是 0.0862 vs 0.074 = <b>+16.5%</b>。见第三节。</li>
+  <li><b>「PointOdyssey 占 ~90%」是错的</b>：那是没乘 RATIO 直接拿 clips 数算的。真实有效配比见第六节。</li>
+  <li><b>Stage-2 的定性要改</b>：不是「缺 IRS」，而是论文的 150K 野外立体视频<b>从未公开</b>，严格复现不可能。见第五节。</li>
+</ol>
+</div>
 
-<h2>二、本次复现结果（四集 zero-shot）</h2>
+<h2>二、Stage-1 结果 · 两套评测协议并列 <span class="badge badge-info">2026-08-21 新增</span></h2>
+<p class="note">同一个 Stage-1 checkpoint，两套协议。短协议 = four-bench 原始 json（KITTI~110 / Sintel~100 / Bonn~110 / ScanNet~90 帧）；500 帧 = 论文默认协议（官方 README 评测章节标题即 <code>## ~500frame</code>）。</p>
 <table>
-  <thead><tr><th>数据集</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>说明</th></tr></thead>
+  <thead>
+    <tr><th rowspan="2">数据集</th><th colspan="3">短协议 <span class="note">(~110 帧)</span></th><th colspan="3">500 帧 <span class="badge badge-good">论文口径</span></th><th rowspan="2">AbsRel 变化</th></tr>
+    <tr><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th></tr>
+  </thead>
   <tbody>
-    <tr><td>KITTI</td><td class="num">0.0778</td><td class="num">3.3647</td><td class="num">0.9497</td><td class="note">室外驾驶，主对标项</td></tr>
-    <tr><td>Sintel</td><td class="num">0.3160</td><td class="num">6.5260</td><td class="num">0.6286</td><td class="note">合成动画、非刚体大运动，最难</td></tr>
-    <tr><td>Bonn</td><td class="num">0.0513</td><td class="num">0.1756</td><td class="num">0.9734</td><td class="note">室内 RGBD 动态</td></tr>
-    <tr><td>ScanNet</td><td class="num">0.0676</td><td class="num">0.2000</td><td class="num">0.9644</td><td class="note">室内扫描</td></tr>
+    <tr><td>KITTI <span class="note">室外驾驶</span></td><td class="num">0.0778</td><td class="num">3.3647</td><td class="num">0.9497</td>
+        <td class="num">0.0862</td><td class="num">3.6354</td><td class="num">0.9301</td><td class="num bad">+10.8%</td></tr>
+    <tr><td>Sintel <span class="note">未切 500</span></td><td class="num">0.3160</td><td class="num">6.5260</td><td class="num">0.6286</td>
+        <td class="num">0.3165</td><td class="num">6.5291</td><td class="num">0.6279</td><td class="num note">+0.2%</td></tr>
+    <tr><td>Bonn <span class="note">室内 RGBD 动态</span></td><td class="num">0.0513</td><td class="num">0.1756</td><td class="num">0.9734</td>
+        <td class="num">0.0695</td><td class="num">0.2137</td><td class="num">0.9622</td><td class="num bad">+35.5%</td></tr>
+    <tr><td>ScanNet <span class="note">室内扫描</span></td><td class="num">0.0676</td><td class="num">0.2000</td><td class="num">0.9644</td>
+        <td class="num">0.0769</td><td class="num">0.2245</td><td class="num">0.9531</td><td class="num bad">+13.8%</td></tr>
   </tbody>
 </table>
+<div class="tldr">
+<b>为什么帧数会系统性影响分数</b>：<code>eval.py</code> 对<b>整条序列拟合一组全局 scale+shift</b>（视差空间 lstsq）再算 AbsRel。
+序列越短，一组仿射参数越容易拟合得好；序列越长，模型的尺度漂移逐帧累积，一组全局仿射兜不住。
+<b>所以帧数越少，视频深度方法的分数系统性越好看</b>——这不是噪声，是有方向的偏差。
+<br><br>
+<b>Sintel 那 +0.2% 是个有用的对照</b>：本次 <code>DATASETS</code> 里 Sintel 没切 500 协议，结果几乎不变（差异纯属 bf16 推理噪声），
+<b>反证了流程本身没有引入偏差</b>，其余三集的劣化是真实的协议效应。
+<br><br>
+<span class="note">★ 500 帧才是 GemDepth 的主场：GEM 提供的是跨帧几何一致性、对抗的正是长程尺度漂移。90～110 帧太短，根本测不出 GEM 的价值。</span>
+</div>
 
-<h2>三、对标论文 Table 4 <span class="badge badge-good">唯一严格可比</span></h2>
-<p class="note">论文 Table 4 的消融同样是 <b>Stage-1 / 20k steps</b>，与本次训练预算一致，是唯一能严格对标的一组。</p>
+<h2>三、对标论文 Table 4（Stage-1 / 20k steps）</h2>
+<p class="note">论文 Table 4 的消融同样是 <b>Stage-1 / 20k steps</b>，与本次训练预算一致，是训练预算上唯一能对标的一组。</p>
 <table>
   <thead><tr><th>配置</th><th>KITTI AbsRel ↓</th><th>Sintel AbsRel ↓</th><th>ScanNet TAE ↓</th><th>延迟</th></tr></thead>
   <tbody>
@@ -88,18 +120,27 @@
     <tr><td>+ Temporal only</td><td class="num">0.084</td><td class="num">0.343</td><td class="num">0.573</td><td class="num note">88 ms</td></tr>
     <tr><td>+ ASTT（空间+时序）</td><td class="num">0.080</td><td class="num">0.328</td><td class="num">0.566</td><td class="num note">95 ms</td></tr>
     <tr><td><b>Full (ASTT+GEM)</b> <span class="badge badge-good">论文目标</span></td><td class="num best">0.074</td><td class="num best">0.295</td><td class="num best">0.538</td><td class="num note">99 ms</td></tr>
-    <tr class="ours"><td>本次复现</td><td class="num">0.0778 <span class="badge badge-warn">+5.1%</span></td><td class="num">0.3160 <span class="badge badge-warn">+7.1%</span></td><td class="num note">未测</td><td class="num note">—</td></tr>
+    <tr class="ours"><td>本次复现 <span class="note">短协议</span></td><td class="num">0.0778 <span class="badge badge-warn">+5.1%</span></td><td class="num">0.3160 <span class="badge badge-warn">+7.1%</span></td><td class="num note">未测</td><td class="num note">—</td></tr>
+    <tr class="ours"><td>本次复现 <span class="badge badge-info">500 帧</span></td><td class="num">0.0862 <span class="badge badge-bad">+16.5%</span></td><td class="num">0.3165 <span class="badge badge-warn">+7.3%</span></td><td class="num note">未测</td><td class="num note">—</td></tr>
   </tbody>
 </table>
+<div class="warn-box">
+<b>⚠ 论文没有明说 Table 4 用的是哪套协议</b>，而这直接决定我们该报哪个数字：
+<ul style="margin:6px 0 0; padding-left:20px;">
+  <li><b>若 Table 4 = 500 帧</b>（判断为<b>大概率如此</b>——同一篇论文的评测栈，官方 README 也只提供 500 帧 json 作默认）→ 真实差距是 <b>KITTI +16.5% / Sintel +7.3%</b>。</li>
+  <li>若 Table 4 = 短协议 → 之前的 +5.1% / +7.1% 成立。</li>
+</ul>
+<b>结论：不能再按「两项都在 7% 内」宣称。</b>对外表述应取保守口径（KITTI +16.5%），并标注协议不确定性。
+</div>
 <div class="good-box">
-<b>判读</b>：两个可比指标都落在 <b>7% 以内</b>。更重要的是<b>相对位置正确</b>——我们同时优于 Baseline（0.092 / 0.356）和 +ASTT（0.080 / 0.328），
-说明 ASTT 的增益和 GEM 在其之上的额外增益<b>都拿到了</b>，不是只复现了其中一半。
+<b>不受协议影响、仍然成立的定性判断</b>：我们同时优于 Baseline（0.092 / 0.356）和 +ASTT（0.080 / 0.328）两档，
+说明 <b>ASTT 的增益和 GEM 在其之上的额外增益都拿到了</b>，不是只复现了其中一半。
 <br><br>
-<span class="note">⚠ ScanNet <b>TAE</b>（时序对齐误差）我们的评测脚本不计算，这一项无法对比。它正是 ASTT 时序分支的主要体现（论文 0.621→0.566），补上才算完整复现。</span>
+<span class="note">⚠ ScanNet <b>TAE</b> 这一列至今无法对比：<code>eval.py</code> 只实现了 AbsRel / RMSE / δ1，<b>TAE 指标本身没有实现</b>（全仓仅 <code>eval.py:229</code> 一处 <code>mvssynth_video_tae.json</code> 路径引用）。官方用 <code>scannet_video_tae.json</code>，需自己写指标。它正是 ASTT 时序分支的主要体现（论文 0.621→0.566）。</span>
 </div>
 
-<h2>四、与论文 Table 1 的粗定位 <span class="badge badge-bad">口径不同，不可直接比</span></h2>
-<p class="note">Table 1 是<b>完整两阶段训练</b>的最终模型。列序与论文一致：Sintel / KITTI / Bonn / ScanNet（AbsRel ↓）。</p>
+<h2>四、对标论文 Table 1（500 帧口径，已可比） <span class="badge badge-info">重要发现</span></h2>
+<p class="note">Table 1 是<b>完整两阶段训练</b>的最终模型，我们只有 Stage-1。列序与论文一致：Sintel / KITTI / Bonn / ScanNet（AbsRel ↓）。</p>
 <table>
   <thead><tr><th>方法</th><th>Sintel</th><th>KITTI</th><th>Bonn</th><th>ScanNet</th><th>延迟</th></tr></thead>
   <tbody>
@@ -107,21 +148,111 @@
     <tr><td>VideoDepthAnything <span class="note">(= 我们的起点)</span></td><td class="num">0.295</td><td class="num">0.071</td><td class="num">0.089</td><td class="num">0.083</td><td class="num note">85 ms</td></tr>
     <tr><td>GemDepth-DAv2</td><td class="num">0.188</td><td class="num">0.055</td><td class="num">0.069</td><td class="num">0.077</td><td class="num note">94 ms</td></tr>
     <tr><td>GemDepth-VDA <span class="badge badge-good">论文 SOTA</span></td><td class="num best">0.157</td><td class="num best">0.051</td><td class="num best">0.066</td><td class="num best">0.071</td><td class="num note">99 ms</td></tr>
-    <tr class="ours"><td>本次复现（仅 Stage-1）</td><td class="num">0.3160</td><td class="num">0.0778</td><td class="num">0.0513</td><td class="num">0.0676</td><td class="num note">—</td></tr>
+    <tr class="ours"><td>本次复现（仅 Stage-1，500 帧）</td>
+        <td class="num bad">0.3165</td><td class="num bad">0.0862</td>
+        <td class="num best">0.0695</td><td class="num best">0.0769</td><td class="num note">—</td></tr>
+    <tr><td class="note">相对 VDA 起点</td><td class="note bad">+7.3%</td><td class="note bad">+21.4%</td>
+        <td class="note best">−21.9%</td><td class="note best">−7.4%</td><td class="note">—</td></tr>
+  </tbody>
+</table>
+<div class="good-box">
+<b>★ 出现了一个清晰的室内 / 室外分裂：</b>
+<ul style="margin:6px 0 0; padding-left:20px;">
+  <li><b>室内两集已经赢过起点、且逼近论文的完整两阶段成绩</b>：Bonn 0.0695（VDA 0.089，论文最终 0.066）、ScanNet 0.0769（VDA 0.083，论文最终 0.071）。<b>只训了 Stage-1 就到这个位置，说明 ASTT+GEM 确实在起作用。</b></li>
+  <li><b>室外两集还没超过起点</b>：KITTI 0.0862（VDA 0.071）、Sintel 0.3165（VDA 0.295）。</li>
+</ul>
+<b>这个分裂几乎可以直接归因到第六节的数据配比失衡</b>——PointOdyssey（室内）有效占比 36.2%（论文 10.1%）、Dynamic Replica 也是室内；
+而唯一的 KITTI 域数据 VKITTI2 只占 1.4%（论文 5.8%，差 4.3 倍）。<b>喂进去什么，就在什么上强。</b>
+</div>
+<div class="warn-box">
+<b>⚠ 仍需注意的两条偏差</b>
+<ul style="margin:6px 0 0; padding-left:20px;">
+  <li><b>训练阶段不同</b>：Table 1 是完整两阶段（940K 帧），我们只有 Stage-1（690K 帧预算）。</li>
+  <li><b>Sintel 帧数仍不一致</b>：论文 50 帧、我们 ~100 帧，我们的协议更长更难，所以那个 +7.3% 是<b>偏保守</b>的。</li>
+</ul>
+</div>
+
+<h2>五、Stage-2-lite <span class="badge badge-good">已训完</span> <span class="badge badge-warn">待评测</span></h2>
+<div class="bad-box">
+<b>⚠ 先讲清楚定性：论文的 Stage-2 无法严格复现，本实验只是「机制近似」。</b>
+论文 3.5 节：Stage-2 = <b>冻结 GEM</b> + 微调其余，数据 = <b>IRS 100K + 野外立体视频 150K</b>（均无位姿 GT），总 940K 帧。
+<ul style="margin:6px 0 0; padding-left:20px;">
+  <li>那 <b>150K 野外立体视频作者从未公开</b>，官方 README 的 Training Data 只列了 7 个可下载的集，其中并无此项。</li>
+  <li><b>IRS 唯一下载入口是 OneDrive</b>（GitHub 仓库只有代码），HuggingFace 无镜像。</li>
+</ul>
+<b>因此结论中绝不能写「复现了 Stage-2」，只能写「Stage-2 机制的近似消融」。</b>
+</div>
+<h3>Stage-2 到底在解决什么问题</h3>
+<div class="tldr">
+Stage-2 修的是一个 <b>训练-推理不一致</b>：
+<pre style="margin:8px 0"><code>Stage-1 训练时： L_cam 用 GT 位姿监督 GEM → GEM 被拽向正确位姿
+                → ASTT 消费的是接近干净的几何
+推理时：         没有 GT 位姿 → GEM 自估位姿、必然有误差
+                → ASTT 突然要在带噪几何上工作 ← 它没训过这个</code></pre>
+Stage-2 冻住 GEM（固定住它<b>含自身误差</b>的输出），再微调 ASTT + head，<b>强迫 ASTT 学会消费 GEM 的真实输出而非理想输出</b>。
+这也是为什么 Stage-2 的数据<b>必须无位姿 GT</b>——有 GT 就又把 GEM 拽回理想状态，洞就补不上。
+<br><br>
+<b>旁证</b>：论文 Table 5「20% 位姿噪声 → AbsRel 0.066→0.071，仅掉 7.6%」，这份鲁棒性正是 Stage-2 训出来的。
+<br><br>
+所以完整表述是：<b>Stage-2 = 合成→真实的域适应 + 位姿噪声适应</b>。我们只能做后者（没有任何真实数据），因此增益预期明显小于论文。
+</div>
+<h3>Stage-2 值多少分</h3>
+<table>
+  <thead><tr><th></th><th>KITTI</th><th>Sintel</th></tr></thead>
+  <tbody>
+    <tr><td>Table 4 <code>Full</code> = 仅 Stage-1</td><td class="num">0.074</td><td class="num">0.295</td></tr>
+    <tr><td>Table 1 <code>GemDepth-VDA</code> = 完整两阶段</td><td class="num">0.051</td><td class="num">0.157</td></tr>
+    <tr><td><b>Stage-2 的贡献</b></td><td class="num best">−31%</td><td class="num best">−47%</td></tr>
+  </tbody>
+</table>
+<p class="note"><b>Stage-2 贡献了将近一半的最终性能，Sintel 上尤其猛。</b>
+这解释了我们 Sintel 卡在 0.3165 —— 不是训得差，是整个 Stage-2 不存在。（前提：Table 4 与 Table 1 协议一致，论文未明说。）</p>
+<h3>本次运行（<code>gemdepth_stage2_lite</code>）</h3>
+<table>
+  <thead><tr><th>项</th><th>设置 / 实测</th></tr></thead>
+  <tbody>
+    <tr><td>起点</td><td class="note"><code>checkpoint/gemdepth_stage1_repro/final_model.pth</code></td></tr>
+    <tr><td>权重加载</td><td class="note"><code>missing=0 unexpected=0</code>，<b>未触发 "depth-baseline init" 警告</b> → Stage-1 权重完整接上 ✅</td></tr>
+    <tr><td>冻结</td><td class="note"><code>freeze_mode: gem_frozen</code> → GEM 冻结 <b>268.66M</b>，可训练 <b>134.87M</b> ✅</td></tr>
+    <tr><td>位姿监督</td><td class="note"><code>pose_flag: false</code> → loss 行中已无 <code>pose/quat/trans</code> ✅</td></tr>
+    <tr><td>学习率</td><td class="note">新模块 1e-5（Stage-1 是 1e-4，精修降一档）/ 预训练 1e-6</td></tr>
+    <tr><td>数据</td><td class="bad">与 Stage-1 <b>完全相同的 5 个合成集</b>（我们只有这些）→ 缺失域适应那一半</td></tr>
+    <tr><td>步数 / 耗时</td><td class="note">10000 步 × grad_accum 2 = 20000 iter，<b>16 h 40 m</b>（~2.96 s/it）</td></tr>
+    <tr><td>训练 loss</td><td class="note"><code>ssi</code> 0.022–0.071 → <b>0.0126–0.0266</b>；<code>stable_loss</code> 0.013–0.022 → <b>0.0006–0.0009</b>（降一个数量级）</td></tr>
   </tbody>
 </table>
 <div class="warn-box">
-<b>⚠ 绝不能声称"超过论文 SOTA"</b>，尽管 Bonn（0.0513 vs 0.066）与 ScanNet（0.0676 vs 0.071）数字上更好：
-<ul style="margin:6px 0 0; padding-left:20px;">
-  <li><b>评测帧数不同</b>：我们的 four-bench 是 KITTI 110 / Sintel 100 / Bonn 110 / ScanNet 90 帧；论文是 Bonn·ScanNet·KITTI 各 <b>500 帧</b>、Sintel 50 帧。
-      <b>帧数少对视频方法系统性偏乐观</b>——漂移积累更少，且仿射对齐在更短序列上拟合得更好。</li>
-  <li><b>训练阶段不同</b>：Table 1 是完整两阶段（940K 帧），我们只有 Stage-1。</li>
-</ul>
-跨 Table 1 的比较只能作粗定位，<b>第三节的 Table 4 才是我们真正对上的基准</b>。
+<b>⚠ 训练 loss 降 ≠ 泛化好。</b> 用<b>同一批数据</b>再训 10k 步，本质接近「多训一轮 + 换了冻结策略」，<b>有过拟合风险</b>。
+<code>stable_loss</code> 掉一个数量级说明时序更稳，但是否转化为 benchmark 收益，<b>必须等 500 帧评测出来才算数</b>。
+<br><br>
+<span class="note">进度条上的 <code>19999/104271</code> 不是异常：104271 是 dataloader 单个 epoch 的总长度，训练按 <code>total_step=10000</code> 正常结束并写出了 <code>final.pth</code>。</span>
 </div>
 
-<h2>五、与我们自己的实验对比 <span class="badge badge-good">同评测口径，干净可比</span></h2>
-<p class="note">以下全部走同一套 four-bench 评测脚本与对齐口径，可以直接横向比较。</p>
+<h2>六、Stage-1 数据配比 <span class="badge badge-bad">已修正</span></h2>
+<p class="note">有效权重 = clips × RATIO（<code>mvs_synth=26</code>、<code>vkitti1=15</code>、其余 <code>=1</code>），总计约 834,172。
+<b>旧看板写的「PointOdyssey ~90%」是错的</b>——那是没乘 RATIO 直接拿 clips 数算的。</p>
+<table>
+  <thead><tr><th>数据集</th><th>clips</th><th>RATIO</th><th>有效权重</th><th>我们 %</th><th>论文 %</th><th>偏差</th></tr></thead>
+  <tbody>
+    <tr><td>TartanAir</td><td class="num">~295K</td><td class="num">1</td><td class="num">295,196</td><td class="num">35.4%</td><td class="num">43.5%</td><td class="best">接近 ✓</td></tr>
+    <tr><td>PointOdyssey <span class="note">室内</span></td><td class="num">301,594</td><td class="num">1</td><td class="num">301,594</td><td class="num">36.2%</td><td class="num">10.1%</td><td class="bad">3.6× 过量</td></tr>
+    <tr><td>MVS-Synth <span class="note">室外</span></td><td class="num">8,280</td><td class="num">26</td><td class="num">215,280</td><td class="num">25.8%</td><td class="num">11.6%</td><td class="bad">2.2× 过量</td></tr>
+    <tr><td>VKITTI2 <span class="note">唯一 KITTI 域</span></td><td class="num">11,342</td><td class="num">1</td><td class="num">11,342</td><td class="num">1.4%</td><td class="num">5.8%</td><td class="bad">4.3× 不足</td></tr>
+    <tr><td>Dynamic Replica <span class="note">室内</span></td><td class="num">10,760</td><td class="num">1</td><td class="num">10,760</td><td class="num">1.3%</td><td class="num">29.0%</td><td class="bad">22× 不足</td></tr>
+  </tbody>
+</table>
+<div class="warn-box">
+论文 Stage-1 帧数：TartanAir 300K + Dynamic Replica 200K + MVS-Synth 80K + PointOdyssey 70K + VKITTI2 40K = <b>690K</b>。
+<br><br>
+<b>Dynamic Replica 差 22 倍的根因</b>：其 train split（1.8TB）在下载时被跳过，我们只拿了 <code>valid</code>。
+<br>
+<b>VKITTI2 差 4.3 倍的根因</b>：论文的 40K 约等于双相机，我们只用了 <code>Camera_0</code>。
+<br><br>
+<b>→ 这正是第四节「室内强、室外弱」分裂的直接来源。</b>修配比是目前<b>性价比最高</b>的改进项（不需要新数据，只需重采样）。
+</div>
+
+<h2>七、与我们自己的实验对比 <span class="badge badge-good">同短协议，干净可比</span></h2>
+<p class="note">以下全部走同一套 four-bench <b>短协议</b>脚本与对齐口径，可以直接横向比较。</p>
 <table>
   <thead><tr><th>方案</th><th>Sintel</th><th>KITTI</th><th>Bonn</th><th>ScanNet</th></tr></thead>
   <tbody>
@@ -138,7 +269,7 @@
 <b>不是</b>解码头的结构。之前在 ConvNeXt-Small + 纯合成数据上反复调 head（multiscale / feedback / fullres 等一系列消融）始终碰不到这条天花板。
 </div>
 
-<h2>六、训练配置对照</h2>
+<h2>八、训练配置对照</h2>
 <table>
   <thead><tr><th>项</th><th>论文</th><th>本次复现</th></tr></thead>
   <tbody>
@@ -149,25 +280,13 @@
     <tr><td>有效 batch</td><td>16（16×A800）</td><td class="note">16（8×H20，batch 8 × grad_accum 2）</td></tr>
     <tr><td>判别式学习率</td><td>新模块 1e-4 / 预训练 1e-6</td><td class="note">同（需 <code>NEW_MODULE_PREFIXES</code> 补丁）</td></tr>
     <tr><td>损失</td><td>L<sub>ssi</sub> + 0.5·L<sub>gm</sub> + 10·L<sub>tgm</sub> + 0.2·L<sub>cam</sub></td><td class="note">同（<code>pose_flag: true</code> 启用 L<sub>cam</sub>）</td></tr>
-    <tr><td>Stage-1 数据</td><td>690K 帧 · 5 个带位姿集</td><td class="note">同 5 集，但配比不同（见下）</td></tr>
-    <tr><td>Stage-2</td><td>+250K 帧（IRS + 野外立体视频）</td><td class="bad">无（缺数据）</td></tr>
-    <tr><td>训练耗时</td><td>≈ 3 天 / stage</td><td class="note">37 h 55 m（20k 步，3.41–3.47 s/it）</td></tr>
+    <tr><td>Stage-1 数据</td><td>690K 帧 · 5 个带位姿集</td><td class="bad">同 5 集，但<b>配比严重失衡</b>（第六节）</td></tr>
+    <tr><td>Stage-2</td><td>+250K 帧（IRS 100K + <b>野外立体视频 150K</b>）</td><td class="bad">野外数据<b>从未公开</b>、IRS 仅 OneDrive → 只做了机制近似（第五节）</td></tr>
+    <tr><td>训练耗时</td><td>≈ 3 天 / stage</td><td class="note">Stage-1 37 h 55 m（20k 步）+ Stage-2-lite 16 h 40 m（10k 步）</td></tr>
   </tbody>
 </table>
 
-<h3>Stage-1 各数据集 clip 数（seq_len=32）</h3>
-<table>
-  <thead><tr><th>数据集</th><th>clips</th><th>占比</th><th>备注</th></tr></thead>
-  <tbody>
-    <tr><td>PointOdyssey</td><td class="num">301,594</td><td class="num bad">~90%</td><td class="note">⚠ 占比过高，室内合成为主</td></tr>
-    <tr><td>VKITTI2</td><td class="num">11,342</td><td class="num">~3%</td><td class="note">唯一 KITTI 域合成数据</td></tr>
-    <tr><td>Dynamic Replica</td><td class="num">10,760</td><td class="num">~3%</td><td class="note">室内</td></tr>
-    <tr><td>MVS-Synth</td><td class="num">8,280</td><td class="num">~2%</td><td class="note">室外 GTA-V，大深度</td></tr>
-    <tr><td>TartanAir</td><td class="note">未打印计数</td><td class="note">—</td><td class="note">多样室内外</td></tr>
-  </tbody>
-</table>
-
-<h2>七、训练收敛（step 0 → 19800）</h2>
+<h2>九、Stage-1 训练收敛（step 0 → 19800）</h2>
 <table>
   <thead><tr><th>损失项</th><th>起始</th><th>末期</th><th>变化</th><th>含义</th></tr></thead>
   <tbody>
@@ -181,7 +300,7 @@
 </table>
 <p class="note">每步打印两行是因为 <code>grad_accum=2</code>，两个 micro-batch 都记在同一个 <code>total_step</code> 上。</p>
 
-<h2>八、复现过程中修掉的坑</h2>
+<h2>十、复现过程中修掉的坑</h2>
 <table>
   <thead><tr><th>#</th><th>问题</th><th>根因</th><th>修法</th></tr></thead>
   <tbody>
@@ -190,35 +309,47 @@
     <tr><td>3</td><td>加载 VDA 触发"必须零 missing"断言</td><td>守卫是为"完整 GemDepth→完整 GemDepth"写的，不认识基线初始化</td><td class="note">从 checkpoint 自身探测（无 GEM/ASTT 张量→基线初始化）</td></tr>
     <tr><td>4</td><td>8 卡首次反向即崩 <code>expect_autograd_hooks_</code></td><td><b><code>static_graph=True</code> 与梯度累积的 <code>no_sync()</code> 不兼容</b>；此前所有实验都是 grad_accum=1 故未暴露</td><td class="note">grad_accum&gt;1 时改用 <code>find_unused_parameters</code></td></tr>
     <tr><td>5</td><td>DDP 拒绝未使用参数</td><td>legacy <code>head.proj</code> 可训练却永不收梯度，原先只在 <code>encoder_decoder_only</code> 时冻结，而该开关与 GEM/ASTT 互斥</td><td class="note">无条件冻结（87.372M→84.486M）</td></tr>
-    <tr><td>6</td><td>KITTI 莫名退化 14.7%</td><td>新增的 VKITTI2 场景级 split 把训练数据从 ~21k 砍到 1010 clips，<b>且该分支不打印 clip 数，完全静默</b></td><td class="note">加 <code>vkitti_scene_split</code> 开关 + 强制打印 clip 数</td></tr>
+    <tr><td>6</td><td>KITTI 莫名退化 14.7%</td><td>PR#8 的 VKITTI2 场景级 split 把训练数据从 ~21k 砍到 1010 clips，<b>且该分支不打印 clip 数，完全静默</b></td><td class="note">加 <code>vkitti_scene_split</code> 开关 + 强制打印 clip 数</td></tr>
+    <tr><td>7</td><td><b>500 帧评测全部静默跳过</b>（2026-08-17 那次结果无效）</td><td>推理循环写死 <code>json=$BENCH/$ds/${ds}_video.json</code>，传 <code>kitti_500</code> 就去找不存在的 <code>kitti_500/kitti_500_video.json</code> → <code>[infer] SKIP</code> → eval 报 <code>Missing prediction file</code></td><td class="note">剥 <code>_500</code> 后缀取基名做 npy 目录与 <code>--datasets</code>，json 选 500 帧版（<code>c338f98</code>）</td></tr>
   </tbody>
 </table>
+<p class="note">其它教训：<code>results.txt</code> 是<b>追加写</b>（同集跑两次出两行，实测 0.0778 vs 0.0780 = bf16 推理噪声）；8 个 DDP 进程各扫一遍数据集，启动时几分钟静默是正常的；<b>禁用 <code>| tail -N</code></b>（全缓冲看着像卡死），用 <code>python -u</code> + 日志 <code>tail -f</code>。</p>
 
-<h2>九、待办</h2>
+<h2>十一、待办</h2>
 <ul class="todo">
-  <li class="done">Stage-1 复现（VDA 初始化 + ASTT + GEM）—— 已完成，Table 4 两项均在 7% 内</li>
-  <li><b>补 ScanNet TAE 指标</b>：Table 4 唯一还没对上的一列，也是 ASTT 时序分支的主要体现（论文 0.621→0.566）</li>
-  <li><b>做自己的消融</b>：关掉 <code>use_gem</code> / <code>use_astt</code> 各训一版，复刻 Table 4 的四行——这是最有说服力的结果</li>
-  <li><b>修 Stage-1 数据配比</b>：PointOdyssey 占约 90%，调 RATIO 平衡后 Sintel 预计还能再降</li>
-  <li>Stage-2（需 IRS + 野外立体视频，当前无此数据）</li>
+  <li class="done">Stage-1 复现（VDA 初始化 + ASTT + GEM），20k 步 / 37h55m</li>
+  <li class="done">四集短协议评测</li>
+  <li class="done">修复 <code>_500</code> 评测脚本 bug，跑通 500 帧协议</li>
+  <li class="done">Stage-2-lite 训练（GEM 冻结 + 关 L<sub>cam</sub>），10k 步 / 16h40m</li>
+  <li class="run"><b>评测 Stage-2-lite（500 帧）</b> —— 得到唯一变量为「冻结 GEM + 关 L<sub>cam</sub> + 多训 10k 步」的干净对照</li>
+  <li><b>接入 errmap</b>（核心工作）：<code>DPTHeadErrorMap</code> 已在 decoder registry 注册；<code>gemdepth.py</code> 的 <code>decoder_requires_geometry_inputs</code> 会自动探测签名并传几何输入。<b>对照组 = 我们自己的 <code>stage1_repro</code></b>，不是论文数字</li>
+  <li><b>修 Stage-1 数据配比</b>（性价比最高）：<code>mix_weights</code> 重采样机制 + 补 Dynamic Replica train split + VKITTI2 第二相机 → 预期直接改善 KITTI/Sintel</li>
+  <li>Table 4 消融行：Baseline（<code>use_gem=false, use_astt=false</code>）、+ASTT（<code>use_gem=false</code>）纯 config 各 38h；<b>+Spatial only / +Temporal only 需改代码</b>（<code>model/gemdepth.py</code> 里 spatial 与 temporal 是成对循环、无开关）</li>
+  <li>实现 ScanNet <b>TAE</b> 指标（<code>eval.py</code> 未实现）</li>
+  <li class="note">Stage-2 严格复现 —— <b>已判定不可行</b>（150K 野外立体视频从未公开）</li>
 </ul>
 
-<h2>十、复现命令</h2>
-<h3>训练（8 卡，约 38 小时）</h3>
+<h2>十二、复现命令</h2>
+<h3>Stage-1 训练（8 卡，约 38 小时）</h3>
 <pre><code>cd /mnt/data/PROJECT_CHEN/code/PP-DPT
 OPENCV_IO_ENABLE_OPENEXR=1 NCCL_P2P_DISABLE=1 NCCL_NVLS_ENABLE=0 NCCL_DEBUG=WARN \
 nohup python -u -m accelerate.commands.launch --num_processes 8 --mixed_precision bf16 \
   train.py --config-name=stages/stage1_repro &gt; runlogs/stage1_repro.log 2&gt;&amp;1 &amp;</code></pre>
 
-<h3>四集评测</h3>
-<pre><code>cd /mnt/data/PROJECT_CHEN/code/PP-DPT
-OPENCV_IO_ENABLE_OPENEXR=1 \
+<h3>Stage-2-lite 训练（8 卡，约 17 小时）</h3>
+<pre><code>OPENCV_IO_ENABLE_OPENEXR=1 NCCL_P2P_DISABLE=1 NCCL_NVLS_ENABLE=0 NCCL_DEBUG=WARN \
+nohup python -u -m accelerate.commands.launch --num_processes 8 --mixed_precision bf16 \
+  train.py --config-name=stages/stage2_lite &gt; runlogs/stage2_lite.log 2&gt;&amp;1 &amp;</code></pre>
+
+<h3>四集评测 · 500 帧协议（论文口径）</h3>
+<pre><code>OPENCV_IO_ENABLE_OPENEXR=1 \
 CONFIG=config/stages/stage1_repro.yaml \
 CKPT=checkpoint/gemdepth_stage1_repro/final.pth \
 BENCH=/mnt/data/PROJECT_CHEN/data/eval \
-OUT=output_eval/gemdepth_stage1_repro_all \
-DATASETS="kitti sintel bonn scannet" GPU=0 \
+OUT=output_eval/gd500 \
+DATASETS="kitti_500 sintel bonn_500 scannet_500" GPU=0 \
 bash scripts/eval_gemdepth_4bench.sh</code></pre>
+<p class="note">⚠ 每次换 checkpoint 都要用<b>全新的 <code>OUT</code> 目录</b>——残留 npy 会污染结果。短协议把 <code>DATASETS</code> 换成 <code>"kitti sintel bonn scannet"</code> 即可。</p>
 
 <h3>权重下载</h3>
 <pre><code>mkdir -p /mnt/data/PROJECT_CHEN/weights &amp;&amp; cd /mnt/data/PROJECT_CHEN/weights
@@ -226,8 +357,8 @@ wget -c -O video_depth_anything_vitl.pth \
   "https://huggingface.co/depth-anything/Video-Depth-Anything-Large/resolve/main/video_depth_anything_vitl.pth?download=true"</code></pre>
 
 <footer>
-PP-DPT · GemDepth Stage-1 复现看板 · 生成于 2026-08-17 ·
-分支 <code>feat/registry-mixdata</code> · 所有数字均为实测，跨口径比较处已标注偏差
+PP-DPT · GemDepth 复现看板 · 更新于 2026-08-21 ·
+分支 <code>feat/registry-mixdata</code> · 所有数字均为实测；跨口径比较处已标注偏差，未验证的推断已标注不确定性
 </footer>
 
 </body>
