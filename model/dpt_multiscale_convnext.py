@@ -36,10 +36,17 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
     def __init__(self, in_channels_list, features=256, use_bn=False,
                  out_channels=[256, 512, 1024, 1024], use_clstoken=False,
                  num_frames=32, pe='ape', use_temporal=False, patch_size=4,
-                 fullres_mode='none', depth_feedback=False, fp32_head=False):
+                 fullres_mode='none', depth_feedback=False, fp32_head=False,
+                 refine_rounds=1):
         super().__init__(in_channels_list, features, use_bn, out_channels,
                          use_clstoken, num_frames=num_frames, pe=pe,
                          use_temporal=use_temporal, patch_size=patch_size)
+
+        # How many times the coarse-to-fine ladder is walked. One round is the
+        # original behaviour; more rounds re-enter at the coarsest scale carrying
+        # the running depth, which only pays off if something in the loop changes
+        # between rounds (see the iterative / error-map subclasses).
+        self.refine_rounds = max(1, int(refine_rounds))
 
         # Kept for configuration/checkpoint API compatibility. Feature-first
         # upsampling now applies to every scale, independently of this legacy
@@ -89,7 +96,41 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0),
         )
 
-    def _predict_delta(self, scale_index, feat, depth_prev, output_size):
+    # ------------------------------------------------------------------
+    # Extension points. Each one is a no-op here, so subclasses can change a
+    # single aspect of the refinement loop without restating it.
+    # ------------------------------------------------------------------
+    def _carry(self, depth):
+        """The depth handed from one refinement step to the next.
+
+        Detaching makes every step an independent predictor: it reads the running
+        depth but sends no gradient back along the coarse-to-fine chain.
+        """
+        return depth.detach()
+
+    def _refine_context(self, images, extrinsics, intrinsics, frame_length):
+        """Per-forward state shared by every refinement step.
+
+        Holds the geometry inputs (unused by this head) and gives subclasses a
+        place to keep state that must survive across scales and rounds.
+        """
+        return {
+            'images': images,
+            'extrinsics': extrinsics,
+            'intrinsics': intrinsics,
+            'frame_length': frame_length,
+        }
+
+    def _adapt_feat(self, scale_index, feat, depth_prev, output_size, ctx):
+        """Extra evidence folded into a scale's feature before predicting.
+
+        The base head refines from backbone features alone, which are constant
+        across rounds; subclasses inject signals that depend on the running depth.
+        """
+        return feat
+
+    def _delta_input(self, scale_index, feat, depth_prev, output_size):
+        """Projected feature concatenated with the encoded running depth."""
         depth_feature = self.output_conv1_heads[scale_index](feat)
         depth_feature = F.interpolate(
             depth_feature, size=output_size,
@@ -102,17 +143,17 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
             )
         else:
             depth_prev = F.interpolate(
-                depth_prev.detach(), size=output_size,
+                self._carry(depth_prev), size=output_size,
                 mode="bilinear", align_corners=True
             )
             last_depth_feature = self.depth_encoder(
                 depth_prev.to(depth_feature.dtype)
             )
-        depth_feature = torch.cat(
-            [depth_feature, last_depth_feature], dim=1
-        )
+        return torch.cat([depth_feature, last_depth_feature], dim=1)
 
-        return self.delta_heads[scale_index](depth_feature)
+    def _predict_delta(self, scale_index, feat, depth_prev, output_size, ctx=None):
+        return self.delta_heads[scale_index](
+            self._delta_input(scale_index, feat, depth_prev, output_size))
 
     def _build_pyramid(self, out_features, frame_length,
                        layer_3_att=None, layer_4_att=None, mode=False):
@@ -155,12 +196,18 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
         return [path_4, path_3, path_2, path_1]
 
     def forward(self, out_features, patch_h, patch_w, frame_length,
-                init_depth=None, layer_3_att=None, layer_4_att=None, mode=None):
+                init_depth=None, images=None, extrinsics=None, intrinsics=None,
+                layer_3_att=None, layer_4_att=None, mode=None):
         """Coarse-to-fine multi-scale depth refinement over the ConvNeXt pyramid.
 
-        In training mode returns four depth predictions from coarse to fine.
-        Each prediction is 4x the corresponding native ConvNeXt stage
-        resolution. In eval/inference mode returns the finest prediction.
+        In training mode returns every intermediate depth from coarse to fine
+        (``4 * refine_rounds`` of them). Each prediction is 4x the corresponding
+        native ConvNeXt stage resolution. In eval/inference mode returns the
+        finest prediction of the last round.
+
+        ``images`` / ``extrinsics`` / ``intrinsics`` are the optional geometry
+        contract shared by the decoders; this head ignores them and hands them to
+        ``_refine_context`` for subclasses.
         """
         mode = False
 
@@ -171,41 +218,45 @@ class DPTHeadMultiScaleRefineConvNeXt(DPTHeadTemporalConvNeXt):
         full_size = (int(patch_h * self.head_patch_size), int(patch_w * self.head_patch_size))
 
         depth_prev = None if init_depth is None else init_depth.detach().to(paths[0].dtype)
+        ctx = self._refine_context(images, extrinsics, intrinsics, frame_length)
 
         scale_depths = []
-        for i, feat in enumerate(paths):
-            # refinenet has already enlarged each native ConvNeXt stage by 2x;
-            # another 2x here gives depth resolutions of 4x the native stages.
-            output_size = (
-                min(feat.shape[-2] * 2, full_size[0]),
-                min(feat.shape[-1] * 2, full_size[1]),
-            )
-            if self.fp32_head:
-                ori_dtype = feat.dtype
-                with torch.autocast(device_type=feat.device.type, enabled=False):
+        for _round in range(self.refine_rounds):
+            for i, feat in enumerate(paths):
+                # refinenet has already enlarged each native ConvNeXt stage by 2x;
+                # another 2x here gives depth resolutions of 4x the native stages.
+                output_size = (
+                    min(feat.shape[-2] * 2, full_size[0]),
+                    min(feat.shape[-1] * 2, full_size[1]),
+                )
+                feat = self._adapt_feat(i, feat, depth_prev, output_size, ctx)
+                if self.fp32_head:
+                    ori_dtype = feat.dtype
+                    with torch.autocast(device_type=feat.device.type, enabled=False):
+                        delta_z = self._predict_delta(
+                            i,
+                            feat.float(),
+                            None if depth_prev is None else depth_prev.float(),
+                            output_size,
+                            ctx,
+                        )
+                    delta_z = delta_z.to(ori_dtype)
+                else:
                     delta_z = self._predict_delta(
-                        i,
-                        feat.float(),
-                        None if depth_prev is None else depth_prev.float(),
-                        output_size,
+                        i, feat, depth_prev, output_size, ctx
                     )
-                delta_z = delta_z.to(ori_dtype)
-            else:
-                delta_z = self._predict_delta(
-                    i, feat, depth_prev, output_size
-                )
 
-            if depth_prev is None:
-                depth_cur = delta_z
-            else:
-                depth_prev_resized = F.interpolate(
-                    depth_prev.detach(), size=output_size,
-                    mode="bilinear", align_corners=True
-                )
-                depth_cur = depth_prev_resized + delta_z
+                if depth_prev is None:
+                    depth_cur = delta_z
+                else:
+                    depth_prev_resized = F.interpolate(
+                        self._carry(depth_prev), size=output_size,
+                        mode="bilinear", align_corners=True
+                    )
+                    depth_cur = depth_prev_resized + delta_z
 
-            scale_depths.append(depth_cur)
-            depth_prev = depth_cur
+                scale_depths.append(depth_cur)
+                depth_prev = depth_cur
 
         if self.training:
             return scale_depths

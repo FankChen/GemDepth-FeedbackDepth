@@ -1,0 +1,26 @@
+# @package _global_
+# Path D -- differentiable coarse-to-fine chain.
+#
+# Identical to vkitti_multiscale_depth_concat except that the depth handed from
+# one refinement step to the next is no longer detached, so the ladder trains end
+# to end instead of behaving as four independent predictors. It adds no
+# parameters, which is what makes it a clean test of "does the structure help"
+# without the capacity confound.
+#
+# Loss weighting matches vkitti_ms_norm (uniform average over scales) instead of
+# the parent's unnormalised sum, so every arm in this batch sees the same
+# effective learning rate. ==> compare against vkitti_ms_norm.
+defaults:
+  - vkitti_multiscale_depth_concat
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_grad
+  log_dir: ./logs/vkitti_ms_grad
+
+model:
+  decoder: DPTHeadMultiScaleGradConvNeXt
+
+multiscale_scale_weights: null
+multiscale_normalize_scale_weights: true
+project_name: vkitti_ms_grad

@@ -1,0 +1,37 @@
+# @package _global_
+# GEM enabled, no error map -- the control arm for the error-map experiment.
+#
+# The error-map head needs camera poses, and the only source of poses at
+# inference time is GEM. Turning GEM on changes the model by ~268M parameters and
+# adds a pose loss, so any gain from the error map would be unattributable
+# without this arm. ==> vkitti_ms_errmap must be compared against THIS, never
+# against the GEM-free arms.
+#
+# ConvNeXt reaches GEM through the pyramid feature adapter: level 3 (stride 32,
+# 14x14 at crop 448) is exposed as tokens, GEM predicts the pose from it, and the
+# level is folded back to NCHW for the hierarchical head. GEM/ASTT width follows
+# that level's channel count (768) automatically.
+#
+# ASTT stays off: this arm only needs GEM's pose, and leaving ASTT out keeps the
+# delta against vkitti_ms_norm down to "poses exist".
+defaults:
+  - vkitti_multiscale_depth_concat
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_gem
+  log_dir: ./logs/vkitti_ms_gem
+
+model:
+  # GEM is incompatible with encoder_decoder_only by assertion in train.py.
+  encoder_decoder_only: false
+  use_gem: true
+  use_astt: false
+
+# Supervise GEM's pose head with the VKITTI ground-truth extrinsics; without it
+# GEM's poses are unconstrained and the warp they drive would be meaningless.
+pose_flag: true
+
+multiscale_scale_weights: null
+multiscale_normalize_scale_weights: true
+project_name: vkitti_ms_gem

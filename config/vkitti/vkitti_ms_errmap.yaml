@@ -1,0 +1,30 @@
+# @package _global_
+# Path A -- photometric re-measurement between refinement steps.
+#
+# Each step warps the neighbouring frames with the running depth and GEM's pose,
+# and folds the residual into the feature. Unlike backbone features, that
+# residual is a function of the depth, so it is genuinely new information at
+# every step: this is the monocular-video stand-in for the cost-volume lookup
+# that makes RAFT/IGEV iteration worth repeating.
+#
+# The error encoders are zero-initialised, so training starts numerically
+# identical to vkitti_ms_gem -- which is also the arm to compare against, since
+# both carry GEM and the pose loss.
+#
+# predicts_inverse_depth: the video/SSI loss trains this head in disparity space,
+# so the running prediction is inverted before it is used to move pixels.
+defaults:
+  - vkitti_ms_gem
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_errmap
+  log_dir: ./logs/vkitti_ms_errmap
+
+model:
+  decoder: DPTHeadMultiScaleErrMapConvNeXt
+  decoder_kwargs:
+    warp_offsets: [-1, 1]
+    predicts_inverse_depth: true
+
+project_name: vkitti_ms_errmap

@@ -1,0 +1,31 @@
+# @package _global_
+# Path A + C -- the full analogy: iterate, and re-measure on every iteration.
+#
+# 4 rounds of a weight-shared ConvGRU update (parameter count independent of the
+# round count) where every round re-warps the neighbours with the current depth.
+# This is the arm the whole batch is building towards; the others exist to say
+# what any gain here is actually due to:
+#
+#   vs vkitti_ms_iter4   -> what the geometric evidence adds
+#   vs vkitti_ms_errmap  -> what iterating on that evidence adds
+#   vs vkitti_ms_gem     -> what the two together add over plain multi-scale
+#
+# 4 rounds x 4 scales = 16 supervised outputs, averaged uniformly (the gamma
+# variant of that weighting is tested separately on vkitti_ms_iter4_gamma08).
+defaults:
+  - vkitti_ms_gem
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_errmap_iter4
+  log_dir: ./logs/vkitti_ms_errmap_iter4
+
+model:
+  decoder: DPTHeadMultiScaleErrMapIterConvNeXt
+  decoder_kwargs:
+    refine_rounds: 4
+    hidden_dim: 64
+    warp_offsets: [-1, 1]
+    predicts_inverse_depth: true
+
+project_name: vkitti_ms_errmap_iter4

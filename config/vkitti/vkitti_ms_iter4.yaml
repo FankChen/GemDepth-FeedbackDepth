@@ -1,0 +1,29 @@
+# @package _global_
+# Path C -- iterate a weight-shared update operator.
+#
+# Walks the coarse-to-fine ladder four times, reusing one ConvGRU per scale on
+# every round. Parameter count is therefore independent of refine_rounds, which
+# is exactly what separates "iterating helps" from "a bigger head helps" -- the
+# confound that currently explains the in-domain gain of the base head.
+#
+# Deliberately adds no new evidence: the pyramid features are identical every
+# round, so this is the null hypothesis for the error-map arm. 4 rounds x 4
+# scales = 16 supervised outputs; leaving multiscale_scale_weights unset makes
+# the loss average over all of them.
+defaults:
+  - vkitti_multiscale_depth_concat
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_iter4
+  log_dir: ./logs/vkitti_ms_iter4
+
+model:
+  decoder: DPTHeadMultiScaleIterConvNeXt
+  decoder_kwargs:
+    refine_rounds: 4
+    hidden_dim: 64
+
+multiscale_scale_weights: null
+multiscale_normalize_scale_weights: true
+project_name: vkitti_ms_iter4

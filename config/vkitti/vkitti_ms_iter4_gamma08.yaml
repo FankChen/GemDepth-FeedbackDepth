@@ -1,0 +1,23 @@
+# @package _global_
+# IGEV-style exponential weighting, retested on a long enough sequence.
+#
+# gamma=0.8 was a negative result on 4 scales (ConvNeXt 0.104 -> 0.126, the worst
+# of that batch). The explanation offered at the time was that four supervised
+# outputs are too short a sequence for exponential weighting to mean anything.
+# The iterative head produces 16 (4 rounds x 4 scales), which is the regime the
+# weighting was designed for, so the claim is now testable.
+#
+# Weights run coarse->fine as [g^15, ..., g^1, g^0]; the loss normalises them, so
+# only the ratios matter. Compare against vkitti_ms_iter4 (uniform), which is the
+# same model with the same budget.
+defaults:
+  - vkitti_ms_iter4
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_iter4_gamma08
+  log_dir: ./logs/vkitti_ms_iter4_gamma08
+
+multiscale_gamma: 0.8
+multiscale_scales: 16
+project_name: vkitti_ms_iter4_gamma08
