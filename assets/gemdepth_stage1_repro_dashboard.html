@@ -280,13 +280,17 @@ per_sample_cam_input_mask       = torch.rand(B)   &lt; 0.5    # 50% 整段丢相
 <code>vkitti_baseline</code> <b>0 个</b>。两边完全对上。
 <div class="warn-box" style="margin-top:10px">
 <b>⚠ 别漏了 <code>single_a100/*</code> 这条老线 —— 它也开着 GEM。</b>
-后果直接落在两个当前议题上：
+不过复核后<b>并不阻塞当前工作</b>，两种情况：
 <ul style="margin:6px 0 0; padding-left:20px;">
-  <li><code>single_a100_multiscale_fix</code> = 历史最佳多尺度 <b>0.0725</b> —— 该数字受影响</li>
-  <li><code>single_a100_errormap</code> / <code>em_single</code> = <b>errmap 实验</b>，
-      正是 P1 要往 stage1_repro 里搬的那套 —— 它的历史对照数字同样受影响</li>
+  <li><code>single_a100_multiscale_fix</code> = 历史最佳多尺度 <b>0.0725</b> ——
+      <b>ckpt 已不存在</b>（软链目标下只剩 baseline / errormap / em_single），
+      全盘搜索也没有。该数字<b>永久无法复核，此后不得再引用</b>。</li>
+  <li><code>single_a100_errormap</code> / <code>em_single</code> = errmap 老实验，ckpt 还在。
+      但它们的数字<b>并未被任何在用结论引用</b> —— errmap 的对照组是
+      <b>我们自己的 <code>stage1_repro</code></b>（见 <code>HANDOVER_gemdepth_stage1.md</code>），
+      不是这批老跑。所以重测它们是<b>可选项，不是前置条件</b>。</li>
 </ul>
-搬 errmap 之前，这批 ckpt 得先重测，否则拿旧数字当对照就是错的。
+真正必须重测的只有 <code>stage1_repro</code>（在用数字 + errmap 对照组）与 <code>stage2_lite</code>（null result 结论所依赖）。
 </div>
 </div>
 <div class="warn-box">
