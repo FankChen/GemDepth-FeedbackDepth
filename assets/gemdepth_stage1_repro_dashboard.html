@@ -273,6 +273,21 @@ per_sample_cam_input_mask       = torch.rand(B)   &lt; 0.5    # 50% 整段丢相
 受影响的那批数字既带额外方差，也少用了一半几何信息。
 之前归因为 bf16 的 0.0778 vs 0.0780、Stage-2-lite 的 ±0.9%，现在都有了更直接的解释。
 <b>需重新评测已有 checkpoint 才能得到可引用的数字</b>（无需重训）。
+<br><br>
+<b>ckpt 层面的决定性验证</b>（不看 config 看权重，<code>use_gem</code> 未设时默认 True 容易漏判）：
+数一下 state_dict 里 <code>camera_head/camera_token/global_blocks/cam_*_encoder</code> 前缀的键 ——
+<code>single_a100_{baseline,errormap,em_single}</code> 各 <b>163 个</b>，
+<code>vkitti_baseline</code> <b>0 个</b>。两边完全对上。
+<div class="warn-box" style="margin-top:10px">
+<b>⚠ 别漏了 <code>single_a100/*</code> 这条老线 —— 它也开着 GEM。</b>
+后果直接落在两个当前议题上：
+<ul style="margin:6px 0 0; padding-left:20px;">
+  <li><code>single_a100_multiscale_fix</code> = 历史最佳多尺度 <b>0.0725</b> —— 该数字受影响</li>
+  <li><code>single_a100_errormap</code> / <code>em_single</code> = <b>errmap 实验</b>，
+      正是 P1 要往 stage1_repro 里搬的那套 —— 它的历史对照数字同样受影响</li>
+</ul>
+搬 errmap 之前，这批 ckpt 得先重测，否则拿旧数字当对照就是错的。
+</div>
 </div>
 <div class="warn-box">
 <b>订正一条自己的说法：“±0.0006 种子噪声带一并作废”—— 说过头了。</b>
