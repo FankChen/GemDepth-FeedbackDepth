@@ -254,6 +254,33 @@ class GemDepth(nn.Module):
             return [_one(d, resize=not self.multiscale_native_res) for d in depth]
         return _one(depth)
 
+    def _pose_input_mask(self, B, T, device):
+        """Which frames get GEM's predicted pose injected; the rest get identity.
+
+        This is dropout on the geometry *input* (paper Tab. 9: injecting pose
+        into ~50% of the frames scores the same as 100%), so like any dropout it
+        must only fire while training. At eval every frame keeps its pose, which
+        also makes inference deterministic -- without this guard the same
+        checkpoint scores differently on every run, because a random ~57% of the
+        frames silently fall back to an identity pose.
+        """
+        if not self.training:
+            return torch.ones(B * T, dtype=torch.bool, device=device)
+
+        # Kept bit-exact with the runs already on record.
+        # NOTE: `.repeat(T)` tiles the (B,) draw as [b_0..b_{B-1}] x T, but the
+        # axis being masked is (B, T) flattened, i.e. index b*T + t. So the
+        # clip-level draws land on the wrong frames and "a whole clip loses its
+        # pose" degrades into per-frame noise. The marginal rates (0.9 / 0.95 /
+        # 0.5, ~43% of frames injected) are unchanged, which is why it went
+        # unnoticed. Correcting it means `repeat_interleave(T)` plus a retrain.
+        clip_keeps_geometry = (torch.rand(B, device=device) < 0.9).repeat(T)
+        frame_keeps_geometry = (
+            (torch.rand(B * T, device=device) < 0.95) & clip_keeps_geometry
+        )
+        clip_keeps_pose = (torch.rand(B, device=device) < 0.5).repeat(T)
+        return clip_keeps_pose & frame_keeps_geometry
+
     def forward(self, x):
         feats=[]
         tokens=[]
@@ -316,26 +343,7 @@ class GemDepth(nn.Module):
                 #pose mask
                 device =feats[0].device
                 dtype = feats[0].dtype
-                overall_geometric_input_mask = (
-                    torch.rand(B, device=device)
-                    < 0.9
-                )
-                overall_geometric_input_mask = overall_geometric_input_mask.repeat(T)
-                per_sample_geometric_input_mask = torch.rand(
-                    B * T, device=device
-                ) < 0.95
-                per_sample_geometric_input_mask = (
-                    per_sample_geometric_input_mask & overall_geometric_input_mask
-                )
-                # Get the camera input mask
-                per_sample_cam_input_mask = (
-                    torch.rand(B, device=device)
-                    < 0.5
-                )
-                per_sample_cam_input_mask = per_sample_cam_input_mask.repeat(T)
-                per_sample_cam_input_mask = (
-                    per_sample_cam_input_mask & per_sample_geometric_input_mask
-                )
+                per_sample_cam_input_mask = self._pose_input_mask(B, T, device)
                 # Initialize the pose quats and trans for all views as identity
                 pose_quats_across_views = torch.tensor(
                     [0.0, 0.0, 0.0, 1.0], dtype=dtype, device=device
@@ -379,6 +387,13 @@ class GemDepth(nn.Module):
             num_images = (torch.max(image_ids) + 1).cpu().item()
             image_idx_emb = self.image_idx_emb[:num_images]
             image_pos = image_idx_emb[image_ids]
+            #这个循环实现的功能是对每一层的特征图进行处理，主要包括以下几个步骤：
+            #1. 如果使用GEM模块，将pose_quats_features、pose_trans_features和pose_trans_scale_features加到当前层的特征图上。
+            #2. 对当前层的特征图进行归一化处理。
+            #3. 将图像位置编码加到当前层的特征图上。
+            #4. 将特征图的形状从(B*T, L, C)转换为(B, T*L, C)，以便进行后续的空间和时间块处理。
+            #5. 对每一层的特征图进行空间块和时间块的处理，使用spatial_blocks和time_blocks进行交替处理。
+            #6. 将特征图的形状从(B, T*L, C)转换回(B*T, L, C)。
             for m in range(3,4):
                 if self.use_gem:
                     feats[m]=feats[m]+pose_quats_features.unsqueeze(1)+pose_trans_features.unsqueeze(1)+pose_trans_scale_features.unsqueeze(1)

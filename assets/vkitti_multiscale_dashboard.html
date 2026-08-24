@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VKITTI 多尺度 vs Temporal 对照实验看板</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --line:#e3e6ea; --text:#1f2328; --muted:#6b7280;
+    --good:#0f7b3f; --goodbg:#e8f5ee; --bad:#b42318; --badbg:#fdecea;
+    --warn:#8a5a00; --warnbg:#fff6e5; --info:#1f4d8f; --infobg:#eaf1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+       line-height:1.65;font-size:15px}
+  .wrap{max-width:1120px;margin:0 auto;padding:32px 24px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:18px;margin-bottom:28px}
+  h1{font-size:26px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:10px;border-left:4px solid #2f6feb}
+  h3{font-size:16px;margin:22px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:center}
+  th{background:#f0f2f5;font-weight:600}
+  td.l,th.l{text-align:left}
+  tbody tr:nth-child(even){background:#fafbfc}
+  .win{background:var(--goodbg);color:var(--good);font-weight:700}
+  .lose{background:var(--badbg);color:var(--bad)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+  code{background:#f0f2f5;border-radius:4px;padding:1px 5px;font-size:13px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre{background:#f6f8fa;border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+      overflow-x:auto;font-size:12.5px;line-height:1.5}
+  .box{border-radius:8px;padding:12px 16px;margin:12px 0;border:1px solid}
+  .box.good{background:var(--goodbg);border-color:#b7e0c8}
+  .box.bad{background:var(--badbg);border-color:#f5c2bd}
+  .box.warn{background:var(--warnbg);border-color:#f0dcae}
+  .box.info{background:var(--infobg);border-color:#c2d5f0}
+  .box b{display:block;margin-bottom:4px}
+  ul{margin:8px 0;padding-left:22px} li{margin:4px 0}
+  .tag{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;
+       border:1px solid var(--line);background:#f0f2f5;color:var(--muted);margin-right:6px}
+  .flip{font-size:15px;font-weight:700;color:var(--bad)}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);
+         color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>VKITTI 多尺度头 vs Temporal 基线 —— 对照实验看板</h1>
+  <div class="sub">
+    PP-DPT · 分支 <span class="mono">feat/registry-mixdata</span> (PR#8 注册表重构后) ·
+    训练 2026-08-21 → 08-24 · 阿里云 DSW 8×H20 ·
+    评测日期 2026-08-24
+  </div>
+</header>
+
+<!-- ============ 1 结论 ============ -->
+<h2>0. 一句话结论</h2>
+<div class="box bad">
+  <b>域内赢、泛化输 —— 符号翻转。</b>
+  多尺度 refine 头在训练域 VKITTI 上比同配方 temporal 基线好 5.8%（AbsRel 0.1192 → 0.1123），
+  但换到 KITTI zero-shot 就反过来落后 2.3%（0.0981 → 0.1004），RMSE / δ1 同向落后。
+  <b style="margin-top:8px">这更像容量与等效学习率带来的过拟合，而不是头结构的方法增益。</b>
+  在补齐两个消融 arm 之前，<u>不得宣称多尺度头优于 temporal</u>。
+</div>
+<div class="box good">
+  <b>✅ 已排除：同日修的那个位姿 dropout P0，对本页三路无影响。</b>
+  <code>model/gemdepth.py</code> 的位姿 dropout 缺 <code>self.training</code> 守卫，推理时会随机抹掉约 57% 帧的位姿。
+  但那整段代码在 <code>if self.use_gem:</code> 里，而三个 arm 都是
+  <code>use_gem: false / use_astt: false</code>（ConvNeXt pyramid 骨干<b>强制要求</b>如此，
+  见 <code>gemdepth.py</code> 的 <code>backbone_format == 'pyramid'</code> 断言）—— 根本不执行。
+  该 P0 只涉及 <code>config/stages/</code> 下的 GemDepth 正统复现线。
+  <b>本页数字无需重测。</b>
+</div>
+
+<!-- ============ 2 对照矩阵 ============ -->
+<h2>1. 对照矩阵（是否满足同协议要求）</h2>
+<div class="card">
+<table>
+  <thead><tr>
+    <th class="l">项目</th><th>temporal 基线</th><th>ms (fp32 head)</th><th>ms (nofp32)</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="l">config</td>
+        <td class="mono">vkitti_convnext_<br>temporal_baseline.yaml</td>
+        <td class="mono">vkitti_multiscale_<br>depth_concat.yaml</td>
+        <td class="mono">同左 +<br>fp32_head=false</td></tr>
+    <tr><td class="l">decoder</td>
+        <td class="mono">DPTHeadTemporal<br>ConvNeXt</td>
+        <td class="mono" colspan="2">DPTHeadMultiScaleRefineConvNeXt</td></tr>
+    <tr><td class="l">backbone</td><td colspan="3" class="mono">DINOv3ConvNeXtSmallBackbone（pyramid, patch 4, LoRA r8 α16, encoder_decoder_only）</td></tr>
+    <tr><td class="l">数据</td><td colspan="3">VKITTI2，1010 clips，<code>scene_split=True</code>，crop 448，seq_len 4</td></tr>
+    <tr><td class="l">优化</td><td colspan="3">AdamW，全组 lr 1e-4，wd 0.01，seed 0，batch 32 (16/GPU × 2 GPU)，grad_accum 1</td></tr>
+    <tr><td class="l">预算</td><td colspan="3">10000 步（约 1.8 s/it，31 步/epoch）</td></tr>
+    <tr><td class="l">loss</td>
+        <td><code>VideoDepthLoss</code><br>单尺度</td>
+        <td colspan="2"><code>MultiScaleVideoDepthLoss</code><br>4 尺度，<b>求和不平均</b></td></tr>
+  </tbody>
+</table>
+<div class="box warn">
+  <b>⚠ 唯一的对照缺陷：loss 尺度不匹配</b>
+  ms arm 用 <code>multiscale_scale_weights: [1,1,1,1]</code> + <code>normalize_scale_weights: false</code>
+  → 四个尺度的 loss <b>直接相加</b>（实测 step 0 的 <span class="mono">total_loss = 12.8476</span> 正好等于四项之和）。
+  decoder 收到的梯度约是 temporal 基线的 <b>4 倍</b>，两个 arm 严格说不是同训练预算。
+</div>
+<div class="box info">
+  <b>✅ 可用 baseline 只有一个</b>
+  上表的 temporal arm 是本次唯一合法对照。历史数字 <b>不能</b>当 baseline：
+  exp7 单训 VKITTI 的 ConvNeXt-s temporal <span class="mono">KITTI 0.0891</span> 是 20000 步 / 8 卡 / PR#8 之前的代码；
+  论文 VDA 0.083、GemDepth 0.071 是 5–7 数据集 690K 步 + 预训练初始化。量级都对不上。
+</div>
+</div>
+
+<!-- ============ 3 结果 ============ -->
+<h2>2. 结果</h2>
+
+<h3>2.1 VKITTI 域内 dense（训练域，268 帧 / 1 条 held-out 序列）</h3>
+<div class="card">
+<table>
+  <thead><tr><th class="l">arm</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>vs 基线 (AbsRel)</th></tr></thead>
+  <tbody>
+    <tr><td class="l">temporal 基线</td><td>0.1192</td><td>7.2573</td><td>0.8579</td><td>—</td></tr>
+    <tr><td class="l"><b>ms (fp32 head)</b></td><td class="win">0.1123</td><td class="win">6.7774</td><td class="win">0.8727</td><td class="win">−5.8%</td></tr>
+    <tr><td class="l">ms (nofp32)</td><td>0.1155</td><td>7.1985</td><td>0.8661</td><td class="win">−3.1%</td></tr>
+  </tbody>
+</table>
+<div class="sub">口径：<code>eval_vkitti_dense.py</code>，<code>--align_space disparity</code>，不加 <code>--invert</code>（三个 arm 都输出视差）。</div>
+</div>
+
+<h3>2.2 KITTI zero-shot（<code>kitti_video.json</code>，110 帧协议，13 序列）</h3>
+<div class="card">
+<table>
+  <thead><tr><th class="l">arm</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>vs 基线 (AbsRel)</th></tr></thead>
+  <tbody>
+    <tr><td class="l"><b>temporal 基线</b></td><td class="win">0.0981</td><td class="win">3.5770</td><td class="win">0.9027</td><td>—</td></tr>
+    <tr><td class="l">ms (fp32 head)</td><td class="lose">0.1004</td><td class="lose">3.8282</td><td class="lose">0.8943</td><td class="lose">+2.3%</td></tr>
+    <tr><td class="l">ms (nofp32)</td><td class="lose">0.0991</td><td class="lose">3.7389</td><td class="lose">0.8966</td><td class="lose">+1.0%</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>2.3 翻转一览</h3>
+<div class="card">
+<table>
+  <thead><tr><th class="l">arm</th><th>VKITTI 域内 AbsRel</th><th>KITTI zero-shot AbsRel</th><th>方向</th></tr></thead>
+  <tbody>
+    <tr><td class="l">temporal 基线</td><td>0.1192</td><td>0.0981</td><td>—</td></tr>
+    <tr><td class="l">ms (fp32)</td><td class="win">0.1123 (−5.8%)</td><td class="lose">0.1004 (+2.3%)</td><td class="flip">✗ 翻转</td></tr>
+    <tr><td class="l">ms (nofp32)</td><td class="win">0.1155 (−3.1%)</td><td class="lose">0.0991 (+1.0%)</td><td class="flip">✗ 翻转</td></tr>
+  </tbody>
+</table>
+<div class="box bad">
+  <b>符号翻转是过拟合的典型特征。</b>
+  VKITTI 只有 5 个 scene，且 <code>dataset/vkitti_split.py</code> 的 train split 用了序列 0–100%
+  （val 取后 10% 但 <b>train 也覆盖了这批帧</b>），域内评测本身就偏乐观 —— 容量更大的头在这种设定下最容易"赢"。
+  KITTI 是真实 LiDAR、完全没见过的域，翻转说明域内那点优势没有迁移出去。
+</div>
+</div>
+
+<!-- ============ 4 代码归因 ============ -->
+<h2>3. 代码层面：ms 相对基线多了什么</h2>
+<div class="card">
+<h3>基线出深度（<span class="mono">model/dpt_convnext.py</span>）</h3>
+<pre>path_1 = refinenet1(...)                 # 224²
+out = scratch.output_conv1(path_1)       # 256 → 128
+out = interpolate(out, 448²)             # 特征先上采样
+with autocast(enabled=False):            # ← 无条件 FP32
+    out = scratch.output_conv2(out.float())   # 128 → 32 → 1</pre>
+
+<h3>多尺度头（<span class="mono">model/dpt_multiscale_convnext.py</span>）</h3>
+<pre>for i, feat in enumerate([path_4(28²), path_3(56²), path_2(112²), path_1(224²)]):
+    out_size = min(feat*2, 448)                        # 56 / 112 / 224 / 448
+    f = output_conv1_heads[i](feat)                    # 256 → 128
+    f = interpolate(f, out_size)
+    e = depth_encoder(resize(depth_prev.detach()))     # 1 → 32   深度反馈
+    delta = delta_heads[i](cat[f, e])                  # 160 → 32 → 1
+    depth_i = resize(depth_prev).detach() + delta      # 残差累积
+训练返回 4 个尺度；eval 返回 scale_depths[-1]（448²，与基线同分辨率）</pre>
+
+<div class="box info">
+  <b>结构上，ms ≈ 把基线的 output_conv1/output_conv2 在四个尺度各复制一份，再给每份额外喂一张上级深度图。</b>
+</div>
+
+<h3>四条差异及其归因排序</h3>
+<table>
+  <thead><tr><th>#</th><th class="l">差异</th><th class="l">性质</th><th class="l">对"VKITTI +5.8%"的嫌疑</th></tr></thead>
+  <tbody>
+    <tr><td><b>B</b></td><td class="l">loss 四尺度求和<br>→ 等效 lr ×4</td>
+        <td class="l"><b>混淆因素</b><br>不是方法增益</td>
+        <td class="l"><b>最大</b>。1010 clips / 10000 步的短训练里，更大的等效 lr 本身就能把域内 loss 压低。不排除它，后面所有归因都不干净。</td></tr>
+    <tr><td><b>C</b></td><td class="l">头部参数量约 4 倍<br>(4×conv1 + 4×delta + depth_encoder)</td>
+        <td class="l"><b>容量</b></td>
+        <td class="l"><b>第二</b>，并且<u>直接解释了翻转</u>：容量增益的典型表现就是域内涨、zero-shot 跌。</td></tr>
+    <tr><td><b>A</b></td><td class="l">四尺度深监督<br>(56/112/224/448 都接 GT)</td>
+        <td class="l"><b>真正的方法假设</b></td>
+        <td class="l">理论上应<b>同时</b>改善域内和泛化。现在泛化是负的 → 即使有效也被 B/C 盖过。<b>目前看不见。</b></td></tr>
+    <tr><td><b>D</b></td><td class="l">c2f 残差 + 深度反馈</td>
+        <td class="l">归纳偏置</td>
+        <td class="l"><b>最小</b>。<code>depth_prev.detach()</code> 用了两次，<b>跨尺度梯度完全切断</b> → 实质是"4 个独立头共享 backbone + 各自多一张先验输入图"，不是端到端 c2f 优化。与历史 E 系列消融（反馈约 +3%、四变体统计不可分）一致。</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============ 5 fp32 ============ -->
+<h2>4. 关于 <code>multiscale_fp32_head</code>（一条订正）</h2>
+<div class="card">
+<div class="box good">
+  <b>订正：在本次对照里 <code>fp32_head: true</code> 才是同口径的那个 arm。</b>
+  基线的 <code>scratch.output_conv2</code> 在代码里是 <b>无条件 FP32</b>（<code>with autocast(enabled=False)</code> 写死）。
+  师兄 config 开 <code>true</code> 是刻意与基线对齐，不是随手打开的。
+  我们额外加的 nofp32 arm 反而<b>多引入了一个变量</b>。
+</div>
+<div class="box warn">
+  <b>历史上"fp32_head 是负结果"的结论不适用于此处。</b>
+  那来自 mixdata 配方下 E2a/E4 两组消融（各退化约 0.003 ≈ 种子噪声 5 倍），是另一套代码与数据配比。
+  本次两个协议还打架：VKITTI 域内 fp32 更好（0.1123 vs 0.1155），KITTI 上 nofp32 更好（0.0991 vs 0.1004），
+  差距 0.0013–0.0032，<b>在本次样本量下判不出优劣</b>。
+</div>
+</div>
+
+<!-- ============ 6 局限 ============ -->
+<h2>5. 必须标注的局限（诚实清单）</h2>
+<div class="card">
+<ul>
+  <li><b>VKITTI 域内样本量极小</b>：1 条 held-out 序列 / 268 帧。历史实测的种子噪声带是 AbsRel ±0.0006（在四集 benchmark 上），单序列方差只会更大。</li>
+  <li><b>VKITTI val 帧训练时见过</b>：train split 的 <code>end_idx = round(seq_num)</code> = 0–100%，val 取后 10% 落在训练集内。域内数字系统性偏乐观，只能当 sanity / 对照，<b>绝对值不可对外引用</b>。</li>
+  <li><b>单 seed</b>：三个 arm 都只有 seed 0。KITTI 上 2.3% / 1.0% 的差距未经多种子确认。</li>
+  <li><b>loss 尺度不匹配</b>：见 §1 的对照缺陷，尚未消除。</li>
+  <li><b>头结构已与历史 E 系列不同</b>：PR#8 之后是"特征先上采样再出残差 + depth_feedback 恒开"，<code>fullres_mode</code> 退化成死开关。
+      <b>不能</b>把本次数字与历史 C / E1 / E2a / E3 / E4（0.0915–0.0946 那批）横向比较。</li>
+  <li><b>KITTI 用 110 帧短协议</b>（<code>kitti_video.json</code>），不是论文的 500 帧协议。短协议对视频方法系统性偏乐观（实测 kitti 短→500 会劣化约 10.8%）。</li>
+</ul>
+</div>
+
+<!-- ============ 7 下一步 ============ -->
+<h2>6. 下一步：把 A 与 B/C 分开</h2>
+<div class="card">
+<table>
+  <thead><tr><th class="l">arm</th><th class="l">改动</th><th class="l">能回答什么</th><th>状态</th></tr></thead>
+  <tbody>
+    <tr><td class="l"><b>ms_norm</b></td>
+        <td class="l"><code>multiscale_normalize_scale_weights: true</code><br>（四尺度取平均）</td>
+        <td class="l">消掉 <b>B</b>。若域内提升仍在 → 不是等效 lr 的功劳。</td>
+        <td>待跑</td></tr>
+    <tr><td class="l"><b>ms_finealone</b></td>
+        <td class="l"><code>multiscale_scale_weights: [0,0,0,1]</code><br>（只监督最细层）</td>
+        <td class="l">消掉 <b>A</b>，保留 C+D 结构。若提升消失 → 深监督是主因；若不变 → 是容量。</td>
+        <td>待跑</td></tr>
+    <tr><td class="l">四集 benchmark</td>
+        <td class="l">现有 3 个 ckpt 补 sintel / bonn / scannet</td>
+        <td class="l">确认翻转是否四集一致（现在只有 KITTI 一个泛化集）。</td>
+        <td>待跑</td></tr>
+    <tr><td class="l">多种子</td>
+        <td class="l">seed 1 / 2 重跑 baseline 与 ms</td>
+        <td class="l">确定 KITTI 上 2.3% 是否超出噪声带。</td>
+        <td>待定</td></tr>
+  </tbody>
+</table>
+<div class="sub">前两个 arm 各约 5 小时、可并行（GPU 2,3 与 4,5）。</div>
+</div>
+
+<!-- ============ 8 复现 ============ -->
+<h2>7. 复现命令</h2>
+<div class="card">
+<h3>训练</h3>
+<pre>cd /mnt/data/PROJECT_CHEN/code/PP-DPT
+# baseline
+CUDA_VISIBLE_DEVICES=0,1 VKITTI_ROOT=/mnt/data/PROJECT_CHEN/data/train/vkitti2/vkitti \
+  CONFIG_NAME=vkitti/vkitti_convnext_temporal_baseline NUM_PROCESSES=2 \
+  nohup bash scripts/vkitti.sh train &gt; runlogs/vk_temporal.log 2&gt;&amp;1 &amp;
+# multiscale
+CUDA_VISIBLE_DEVICES=2,3 VKITTI_ROOT=... \
+  CONFIG_NAME=vkitti/vkitti_multiscale_depth_concat NUM_PROCESSES=2 \
+  nohup bash scripts/vkitti.sh train &gt; runlogs/vk_ms.log 2&gt;&amp;1 &amp;</pre>
+
+<h3>评测（三个 arm 循环）</h3>
+<pre># VKITTI 域内 dense
+for n in vkitti_convnext_temporal_baseline vkitti_multiscale_depth_concat vkitti_ms_nofp32; do
+  CUDA_VISIBLE_DEVICES=0 python evaluation/inference/eval_vkitti_dense.py \
+    --config config/vkitti/$n.yaml --ckpt checkpoint/$n/final.pth \
+    --vkitti_root /mnt/data/PROJECT_CHEN/data/train/vkitti2/vkitti \
+    --out_viz runlogs/viz/$n.png
+done
+# KITTI zero-shot
+for n in vkitti_convnext_temporal_baseline vkitti_multiscale_depth_concat vkitti_ms_nofp32; do
+  CONFIG=config/vkitti/$n.yaml CKPT=checkpoint/$n/final.pth \
+  BENCH=/mnt/data/PROJECT_CHEN/data/eval OUT=output_eval/$n \
+  DATASETS="kitti" GPU=0 bash scripts/eval_gemdepth_4bench.sh
+done</pre>
+<div class="box warn">
+  <b>评测口径</b>：三个 arm 都是视差（inverse depth）输出 → <b>不加 <code>--invert</code></b>，
+  <code>--align_space</code> 用默认 <code>disparity</code>。错配会让 AbsRel 系统性虚高（vkitti dense 上曾放大约 5 倍）。
+</div>
+</div>
+
+<!-- ============ 9 踩坑 ============ -->
+<h2>8. 本轮踩坑记录</h2>
+<div class="card">
+<ul>
+  <li><b>首轮两个 ms arm 全部 Exit 1</b>：<code>TypeError: MultiScaleVideoDepthLoss.__init__() got an unexpected keyword argument 'normalize_scale_weights'</code>。
+      根因是阿里云工作树<b>版本错配</b>——<code>train.py</code> 是新版会传该参数，<code>loss/multiscale_videoloss.py</code> 还是旧版。
+      起因是之前用 <code>git checkout FETCH_HEAD -- &lt;部分文件&gt;</code> 挑文件时漏了 <code>loss/</code>。
+      修法：<code>git checkout FETCH_HEAD -- loss/multiscale_videoloss.py</code>。</li>
+  <li><b>torchrun 只在末尾留 <code>&lt;NO_OTHER_FAILURES&gt;</code> 尾巴</b>，真因在其上方的 Root Cause 段 —— <code>tail -2</code> 看不到，要 <code>tail -60</code>。</li>
+  <li><b>日志里 tqdm 的 <code>\r</code></b> 会把后续 print 挂在同一"行"上，<code>grep "^\[loss\]"</code> 只匹配到第一条；
+      要先 <code>tr '\r' '\n'</code>。含控制字符的日志还需 <code>grep -a</code>，否则报 "binary file matches"。</li>
+  <li><b>多尺度未退化</b>：step 0 四尺度 total_loss = 3.3313 / 3.2473 / 2.8966 / 3.3724（<b>不全等</b>），
+      历史上"多尺度塌缩成单尺度"的老毛病没有复发。</li>
+</ul>
+</div>
+
+<footer>
+  生成于 2026-08-24 · 数据来源：<span class="mono">runlogs/vk_{temporal,ms,ms_nofp32}.log</span>、
+  <span class="mono">output_eval/&lt;arm&gt;/results.txt</span> ·
+  硬规则：结果诚实记录，不美化；无同协议 baseline 的数字不得形成方法结论。
+</footer>
+
+</div>
+</body>
+</html>

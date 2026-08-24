@@ -247,18 +247,51 @@ per_sample_cam_input_mask       = torch.rand(B)   &lt; 0.5    # 50% 整段丢相
 这也从机制上解释了下面的 null result。
 </div>
 <div class="bad-box">
-<b>🚩 待查的 P0 问题：推理是否确定性？</b>
+<b>✅ P0 已确认并修复（2026-08-24）：推理一直是不确定的</b>
 <br><br>
-上述三个 <code>torch.rand</code> <b>没看到 <code>if self.training</code> 守卫</b>。若推理时仍生效：
+逐行核实：<code>model/gemdepth.py</code> 全文<b>没有任何 <code>self.training</code></b>，三个 <code>torch.rand</code> 在
+<code>GemDepth.forward</code> 里无条件执行；而 <code>evaluation/inference/infer.py</code>、
+<code>eval_vkitti_dense.py</code> 都确实调了 <code>.eval()</code>。两边合起来就是：
 <ul style="margin:6px 0 0; padding-left:20px;">
-  <li>每次评测约 57% 的帧<b>随机</b>被抹掉位姿</li>
+  <li>每次评测约 <b>57% 的帧随机</b>被换成单位位姿（保留率 0.9×0.95×0.5 ≈ 43%）</li>
   <li><b>同一个 checkpoint 跑两次结果不同</b></li>
+  <li>并且是<b>系统性变差</b>：推理时本来应该每帧都拿得到 GEM 自己预测的位姿</li>
 </ul>
-疑似证据：同集两次 0.0778 vs 0.0780（原归因为 bf16）、Stage-2-lite 的 ±0.9%。
+修法：抽出 <code>GemDepth._pose_input_mask()</code>，<code>not self.training</code> 时返回全 True；
+训练分支保持位不变。单测 <code>test/test_pose_input_mask.py</code> 锁住（含“推理不消耗全局 RNG”）。
 <br><br>
-<b>在做任何小规模方法验证（errmap / multiscale）之前必须先查清并修掉</b>——
-否则 1–3% 的方法增益会淹没在评测噪声里。
-<pre style="margin:8px 0"><code>sed -n '300,340p' model/gemdepth.py</code></pre>
+<b>影响面（已逐个 config 核实，比最初估的窄很多）：</b>
+该代码整段在 <code>if self.use_gem:</code> 里，所以<b>只打到开了 GEM 的跑</b>：
+<ul style="margin:6px 0 0; padding-left:20px;">
+  <li>✅ <b>受影响</b>：<code>config/stages/stage1_repro</code>、<code>stage2_lite</code>（显式 true），
+      以及 <code>stages/stage1</code>、<code>stage2</code>、<code>single_a100/*</code>（未设 →
+      <code>factory.py</code> 默认 <b>True</b>）。即本页的四集数字与 Stage-2-lite。</li>
+  <li>❌ <b>不受影响</b>：<code>config/scratch/**</code> 全部（含两个 <b>mixdata</b> 8gpu）、
+      <code>config/vkitti/*</code>、<code>multilevel_decoder</code> —— 它们 <code>use_gem: false</code>。
+      ConvNeXt pyramid 骨干<b>强制</b>如此（<code>gemdepth.py</code> 里有断言），结构性免疫。</li>
+</ul>
+受影响的那批数字既带额外方差，也少用了一半几何信息。
+之前归因为 bf16 的 0.0778 vs 0.0780、Stage-2-lite 的 ±0.9%，现在都有了更直接的解释。
+<b>需重新评测已有 checkpoint 才能得到可引用的数字</b>（无需重训）。
+</div>
+<div class="warn-box">
+<b>订正一条自己的说法：“±0.0006 种子噪声带一并作废”—— 说过头了。</b>
+<br><br>
+那个带是从 <code>E2a_feedback_s1/s2</code> 量出来的，属于 ConvNeXt <code>use_gem: false</code> 一族，
+<b>不受本 bug 影响，在 scratch/mixdata 系列里仍然成立</b>。
+真正的问题是：它从来就<b>不该被拿去判 GEM 模型</b>（stage1_repro / stage2-lite）的差异，
+而后者目前<b>没有任何已测的噪声带</b>—— 这才是空白所在。
+</div>
+<div class="warn-box">
+<b>顺带发现（未改，会变训练语义）：<code>.repeat(T)</code> 对齐错位</b>
+<br><br>
+<code>rand(B).repeat(T)</code> 把 (B,) 抽样平铺成 <code>[b₀..b_{B-1}] × T</code>，
+但被掩的那个轴是 (B,T) 展平的（下标 <code>b*T+t</code>，看
+<code>pose_trans_across_views.unflatten(0,(B,T))</code> 可确认）。
+VKITTI 配置下 B=16/卡、T=4，B≠T → “整段 clip 一起丢位姿”的语义退化成了逐帧噪声。
+边际概率（0.9 / 0.95 / 0.5）不变，所以一直没被发现。
+改成 <code>repeat_interleave(T)</code> 会<b>改变训练行为并作废与现有跑的可比性</b>，
+因此只在代码里加了 NOTE，<b>未擅自修改</b>。
 </div>
 <h3>Stage-2 值多少分（Table 6 两行相减）</h3>
 <table>
@@ -422,7 +455,7 @@ PointOdyssey <b>只用有背景深度 GT 的子集</b>（follow FlashDepth）。
   <li class="done">修复 <code>_500</code> 评测脚本 bug，跑通 500 帧协议</li>
   <li class="done">Stage-2-lite 训练 + 评测 —— <b>null result，方向已封口</b></li>
   <li class="done">论文原文核实（列序订正 + Table 6 对标 + 均匀采样 + 多分辨率）</li>
-  <li class="run"><b>P0：查 <code>self.training</code> 守卫</b> —— 确保推理确定性。<b>优先于一切方法验证</b>，否则 1–3% 的增益测不出来</li>
+  <li class="run"><b>P0（✅ 已修）<code>self.training</code> 守卫</b> —— 已确认缺失并修复；<b>剩下的动作是重新评测已有 checkpoint</b>，没重测前旧数字不可引用</li>
   <li><b>P1：接入 errmap</b>（核心工作）。<code>DPTHeadErrorMap</code> 已在 decoder registry 注册；<code>decoder_requires_geometry_inputs</code> 会自动探测签名并传几何输入。
       <b>对照组 = 我们自己的 <code>stage1_repro</code></b>；快速判据用 <code>kitti_500</code> zero-shot（~5 分钟）</li>
   <li><b>P1：小规模验证要同配方</b> —— backbone / 初始化必须保持 ViT-L + VDA，只缩步数与数据量。
