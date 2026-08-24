@@ -21,6 +21,14 @@ class DINOv2Backbone(DinoVisionTransformer):
     is_hierarchical = False
     patch_size = 14
 
+    # Which transformer blocks feed the four DPT levels. Declared here, like the
+    # ConvNeXt/DINOv3 backbones' ``self.indices``, so feature adapters only ever
+    # need the backbone contract.
+    INTERMEDIATE_LAYER_IDX = {
+        'vits': [2, 5, 8, 11],
+        'vitl': [4, 11, 17, 23],
+    }
+
     def __init__(
         self,
         encoder="vitl",
@@ -36,6 +44,7 @@ class DINOv2Backbone(DinoVisionTransformer):
         self.__dict__ = base.__dict__.copy()
         self.embed_dims = [self.embed_dim] * 4
         self.feat_strides = [self.patch_size] * 4
+        self.indices = self.INTERMEDIATE_LAYER_IDX[encoder]
 
         if weights and pretrained:
             if str(weights).startswith("timm://"):

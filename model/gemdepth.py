@@ -14,6 +14,7 @@ from functools import partial
 from model.tools.pos_embed import  get_1d_sincos_pos_embed_from_grid,RoPE2D
 from model.backbone_registry import build_backbone
 from model.decoder_registry import build_decoder, get_decoder_class
+from model.feature_adapters import get_adapter
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
 from model.utils.util import compute_scale_and_shift, get_interpolate_frames
 from model.tools.geometry import GlobalRepresentationEncoder,normalize_pose_translations,transform_pose_using_quats_and_trans_2_to_1
@@ -38,7 +39,6 @@ class GemDepth(nn.Module):
         use_clstoken=False,
         num_frames=32,
         pe='ape',
-        embed_dim=1024,
         num_heads=32,
         depth1=2,
         depth2=2,
@@ -72,11 +72,6 @@ class GemDepth(nn.Module):
     ):
         super(GemDepth, self).__init__()
 
-        self.intermediate_layer_idx = {
-            'vits': [2, 5, 8, 11],
-            'vitl': [4, 11, 17, 23]
-        }
-
         self.use_gem = use_gem
         self.use_astt = use_astt
         self.encoder = encoder
@@ -104,16 +99,19 @@ class GemDepth(nn.Module):
             pretrained=load_backbone_pretrained,
         )
         self.backbone_format = self.pretrained.feature_format
+        self.adapter = get_adapter(self.backbone_format)
         self.patch_size = self.pretrained.patch_size
         self.enc_embed_dim = getattr(
             self.pretrained, 'embed_dim', self.pretrained.embed_dims[0])
+        # GEM and ASTT attach to the deepest backbone level, so their width is
+        # that level's channel count. Deriving it here instead of restating it in
+        # every config keeps the two in sync: it reproduces the historical 1024
+        # for DINOv2-L and gives ConvNeXt its stride-32 width (768) for free.
+        embed_dim = self.pretrained.embed_dims[3]
         print(
             f"[backbone] {backbone} format={self.backbone_format} "
             f"patch_size={self.patch_size} "
             f"embed_dims={self.pretrained.embed_dims}")
-
-        if self.backbone_format == 'pyramid' and (use_gem or use_astt):
-            raise ValueError("ConvNeXt hierarchical features require use_gem=false and use_astt=false")
 
         # ---- ASTT spatial RoPE (only used when ASTT is enabled) ----
         self.rope = None
@@ -167,9 +165,12 @@ class GemDepth(nn.Module):
             self.register_token = nn.Parameter(torch.randn(1, 2, num_register_tokens, embed_dim))
             self.patch_start_idx = 1 + num_register_tokens
             self.camera_head = CameraHead(dim_in=2*embed_dim)
-            self.cam_rot_encoder = GlobalRepresentationEncoder(name="cam_rot_quats_encoder", in_chans=4)
-            self.cam_trans_encoder = GlobalRepresentationEncoder(name="cam_trans_encoder", in_chans=3)
-            self.cam_trans_scale_encoder = GlobalRepresentationEncoder(name="scale_encoder", in_chans=1)
+            self.cam_rot_encoder = GlobalRepresentationEncoder(
+                name="cam_rot_quats_encoder", in_chans=4, enc_embed_dim=embed_dim)
+            self.cam_trans_encoder = GlobalRepresentationEncoder(
+                name="cam_trans_encoder", in_chans=3, enc_embed_dim=embed_dim)
+            self.cam_trans_scale_encoder = GlobalRepresentationEncoder(
+                name="scale_encoder", in_chans=1, enc_embed_dim=embed_dim)
         else:
             self.patch_start_idx = 0
 
@@ -282,49 +283,32 @@ class GemDepth(nn.Module):
         return clip_keeps_pose & frame_keeps_geometry
 
     def forward(self, x):
-        feats=[]
-        tokens=[]
-        depth=[]
-        pos=[]     
-        pos_cam=[]
-        pos_special=[]    
-        features=[]
-        pos=[]
         image_ids=[]
         B, T, C, H, W = x.shape
         input_images = x
         frame_idx = 0
         global_idx = 0
+        # Two grids that coincide only for uniform-stride ViTs: the DPT head
+        # upsamples from the patch grid, while GEM/ASTT run on the deepest
+        # backbone level (stride 32, i.e. 8x coarser, for ConvNeXt).
         patch_h, patch_w = H // self.patch_size, W // self.patch_size
-        if self.backbone_format == 'pyramid':
-            # Hierarchical ConvNeXt: feed the native NCHW pyramid straight to the DPT head,
-            # bypassing all token-based pos / GEM / ASTT logic (encoder+decoder only).
-            conv_feats = [f.float() for f in self.pretrained(x.flatten(0, 1))]
-            with torch.autocast(device_type=x.device.type, enabled=False):
-                depth = self.head(conv_feats, patch_h, patch_w, T)
-                depth = self._postprocess_depth(depth, B, T, H, W)
-            return depth, None, None, None
-        if self.backbone_format == 'dinov2_tokens':
-            features = self.pretrained.get_intermediate_layers(x.flatten(0,1), self.intermediate_layer_idx[self.encoder], return_class_token=True)
-        elif self.backbone_format == 'nchw_tokens':
-            # DINOv3 ViT: 4 NCHW maps (uniform stride) -> (token, dummy_cls) matching the DPT head API.
-            features = []
-            for f in self.pretrained(x.flatten(0, 1)):
-                tok = f.flatten(2).permute(0, 2, 1).contiguous()  # (BT, h*w, C)
-                features.append((tok, tok.new_zeros((tok.shape[0], tok.shape[2]))))
-        else:
-            raise NotImplementedError(
-                f"Unknown backbone feature_format {self.backbone_format}")
-        for j, x in enumerate(features):
-            x, cls_token = x[0], x[1]
-            feats.append(x)
-            tokens.append(cls_token)
-            pos.append(self.pos(feats[j].shape[0], patch_h, patch_w, feats[j].device))
-            if self.patch_start_idx > 0:
-                pos[j] = pos[j] + 1
-                pos_special.append(torch.zeros(B * T, self.patch_start_idx, 2).to(feats[j].device).to(pos[j].dtype))
-                pos_cam.append(torch.cat([pos_special[j], pos[j]], dim=1))
+        feats, tokens, geometry_hw = self.adapter.encode(
+            self.pretrained, x.flatten(0, 1))
+        gh, gw = geometry_hw
         BT,L,C=feats[3].shape
+
+        # Spatial positions for GEM/ASTT. Every level shares one grid and only the
+        # deepest is consumed, so a single tensor replaces the old per-level list.
+        # The +1 offset keeps index 0 free for the camera/register tokens.
+        pos = pos_cam = None
+        if self.use_gem or self.use_astt:
+            pos = self.pos(BT, gh, gw, feats[3].device)
+            if self.patch_start_idx > 0:
+                pos = pos + 1
+                pos_special = torch.zeros(
+                    BT, self.patch_start_idx, 2,
+                    device=pos.device, dtype=pos.dtype)
+                pos_cam = torch.cat([pos_special, pos], dim=1)
 
         # ---- GEM: predict camera pose + geometric embeddings (optional) ----
         pose_enc_list = extrinsic = intrinsic = None
@@ -334,15 +318,15 @@ class GemDepth(nn.Module):
             register_token = self.slice_expand_and_flatten(self.register_token, B, T)
             tokens_all = torch.cat([camera_token, register_token, feats[3]], dim=1)
             _,P,_=tokens_all.shape
-            tokens_all,frame_idx,frame_intermediates=self._process_frame_attention(tokens_all, B, T, P, C, frame_idx, pos=pos_cam[0])
-            tokens_all,global_idx,global_intermediates=self._process_global_attention(tokens_all, B, T, P, C, global_idx, pos=pos_cam[0])
+            tokens_all,frame_idx,frame_intermediates=self._process_frame_attention(tokens_all, B, T, P, C, frame_idx, pos=pos_cam)
+            tokens_all,global_idx,global_intermediates=self._process_global_attention(tokens_all, B, T, P, C, global_idx, pos=pos_cam)
             concat_inter = torch.cat([frame_intermediates,global_intermediates], dim=-1)
             with torch.autocast("cuda", enabled=False):
                 pose_enc_list = self.camera_head(concat_inter)
                 extrinsic, intrinsic = pose_encoding_to_extri_intri(pose_enc_list[-1], H, W)
                 #pose mask
-                device =feats[0].device
-                dtype = feats[0].dtype
+                device =feats[3].device
+                dtype = feats[3].dtype
                 per_sample_cam_input_mask = self._pose_input_mask(B, T, device)
                 # Initialize the pose quats and trans for all views as identity
                 pose_quats_across_views = torch.tensor(
@@ -383,7 +367,7 @@ class GemDepth(nn.Module):
             for b in range(B):
                 for i in range(T):
                     image_ids.extend([i] * L)
-            image_ids = torch.tensor(image_ids).reshape(B * T, L).to(feats[0][0].device)
+            image_ids = torch.tensor(image_ids).reshape(B * T, L).to(feats[3].device)
             num_images = (torch.max(image_ids) + 1).cpu().item()
             image_idx_emb = self.image_idx_emb[:num_images]
             image_pos = image_idx_emb[image_ids]
@@ -400,24 +384,24 @@ class GemDepth(nn.Module):
                 feats[m]=self.dec_norm(feats[m])
                 feats[m]=feats[m]+image_pos
                 feats[m] = rearrange(feats[m], "(b t) l c -> b (t l) c",b=B,t=T,l=L,c=C)
-                pos[m] = rearrange(pos[m], "(b t) l two -> b (t l) two",b=B,t=T,l=L)
+                astt_pos = rearrange(pos, "(b t) l two -> b (t l) two",b=B,t=T,l=L)
                 for blk1,blk2 in zip(self.spatial_blocks,self.time_blocks):
-                    feats[m] = blk1(feats[m],pos[m])
+                    feats[m] = blk1(feats[m],astt_pos)
                     feats[m] = rearrange(feats[m], "b (t l) c -> (b l) t c",b=B,t=T,l=L,c=C)
                     feats[m] = blk2(feats[m])
                     feats[m] = rearrange(feats[m], "(b l) t c -> b (t l) c",b=B,t=T,l=L,c=C)
                 feats[m] = rearrange(feats[m], "b (t l) c -> (b t) l c",b=B,t=T,l=L,c=C)
         # The DPT heads intentionally run in fp32. Explicit conversion is required:
         # disabling autocast alone does not promote bf16 backbone activations.
-        features_attn=tuple((feat.float(), token.float()) for feat, token in zip(feats, tokens))
-        
+        head_features = self.adapter.decode(feats, tokens, geometry_hw)
+
         #dpt_head
-        with torch.autocast(device_type=x.device.type, enabled=False):
+        with torch.autocast(device_type=input_images.device.type, enabled=False):
             if self.decoder_requires_geometry_inputs:
-                depth = self.head(features_attn, patch_h, patch_w, T,
+                depth = self.head(head_features, patch_h, patch_w, T,
                                   images=input_images, extrinsics=extrinsic, intrinsics=intrinsic)
             else:
-                depth = self.head(features_attn, patch_h, patch_w,T)
+                depth = self.head(head_features, patch_h, patch_w,T)
             depth = self._postprocess_depth(depth, B, T, H, W)
         return depth, pose_enc_list, extrinsic, intrinsic
     

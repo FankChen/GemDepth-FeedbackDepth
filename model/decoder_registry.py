@@ -46,14 +46,41 @@ def get_decoder_class(name):
     return decoder_cls
 
 
+def _constructor_parameters(decoder_cls):
+    """Constructor parameters of the class *and* of the heads it forwards to.
+
+    A variant written as ``__init__(self, *args, extra=1, **kwargs)`` passes
+    everything it does not name to its parent, so the parent's parameters are
+    just as injectable as its own -- ``inspect.signature`` alone only sees
+    ``*args, **kwargs`` and would force every variant to restate the twenty
+    arguments of the head it specialises.
+
+    The walk runs leaf-first (so a subclass overrides an inherited default) and
+    stops at the first class that does *not* accept ``**kwargs``: that class
+    consumes its arguments rather than passing them on, so anything its own
+    ancestors declare is unreachable and must not be injected.
+    """
+    parameters = {}
+    for klass in inspect.getmro(decoder_cls):
+        init = klass.__dict__.get("__init__")
+        if klass is object or init is None:
+            continue
+        own = {
+            name: parameter
+            for name, parameter in inspect.signature(init).parameters.items()
+            if name != "self"
+        }
+        for name, parameter in own.items():
+            parameters.setdefault(name, parameter)
+        if not any(parameter.kind == inspect.Parameter.VAR_KEYWORD
+                   for parameter in own.values()):
+            break
+    return parameters
+
+
 def build_decoder(decoder_cls, decoder_kwargs=None, **context):
     """Instantiate a registered class by injecting matching constructor args."""
-    signature = inspect.signature(decoder_cls.__init__)
-    parameters = {
-        name: parameter
-        for name, parameter in signature.parameters.items()
-        if name != "self"
-    }
+    parameters = _constructor_parameters(decoder_cls)
     accepts_kwargs = any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
         for parameter in parameters.values()
