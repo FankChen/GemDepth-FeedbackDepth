@@ -19,6 +19,12 @@ defaults:
 training:
   checkpoint_dir: ./checkpoint/vkitti_ms_errmap_iter4
   log_dir: ./logs/vkitti_ms_errmap_iter4
+  # Same memory story as vkitti_ms_iter4, plus GEM and the per-round warps.
+  # Effective batch stays 32.
+  grad_accum: 2
+
+dataloader:
+  batch_size: 16
 
 model:
   decoder: DPTHeadMultiScaleErrMapIterConvNeXt
