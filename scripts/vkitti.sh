@@ -14,6 +14,10 @@ shift
 PYTHON="${PYTHON:-python}"
 CONFIG_NAME="${CONFIG_NAME:-vkitti/vkitti}"
 NUM_PROCESSES="${NUM_PROCESSES:-1}"
+# Every accelerate launch grabs the same rendezvous port by default, so a second
+# concurrent run on other GPUs dies with "address already in use". Arms are meant
+# to run side by side, so give each one its own port.
+MAIN_PROCESS_PORT="${MAIN_PROCESS_PORT:-29500}"
 VKITTI_ROOT="${VKITTI_ROOT:-/mnt/workspace/vkitti/vkitti}"
 
 if [[ ! -d "$VKITTI_ROOT" ]]; then
@@ -38,6 +42,7 @@ case "$MODE" in
     fi
     exec "$PYTHON" -m accelerate.commands.launch \
       --num_processes "$NUM_PROCESSES" \
+      --main_process_port "$MAIN_PROCESS_PORT" \
       --mixed_precision bf16 \
       train.py \
       "${TRAIN_ARGS[@]}" \
