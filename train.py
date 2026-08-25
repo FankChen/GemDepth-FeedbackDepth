@@ -530,10 +530,16 @@ def main(cfg):
                 loss=loss_dict['total_loss']
                 if total_step % 200 == 0 and accelerator.is_main_process:
                     if isinstance(depth_pred, (list, tuple)):
+                        # Per-scale diagnostics, plus the pose terms: those are the
+                        # only evidence that GEM's geometry is converging, and any
+                        # experiment that warps with GEM's pose is uninterpretable
+                        # without them. They were being computed and trained on, but
+                        # not shown.
                         log_items = {
                             key: value
                             for key, value in loss_dict.items()
-                            if key.startswith('scale_') or key == 'total_loss'
+                            if key.startswith('scale_')
+                            or key in ('total_loss', 'pose_loss', 'trans', 'quat')
                         }
                     else:
                         log_items = loss_dict
