@@ -32,6 +32,13 @@ model:
 # GEM's poses are unconstrained and the warp they drive would be meaningless.
 pose_flag: true
 
+# encoder_decoder_only doubles as evaluation's "trained from scratch" signal, and
+# GEM forces it false -- so state the clip length here, or these arms would be
+# scored under the 32-frame overlapping protocol while the arms they are compared
+# against use 4, and the difference would be read as a result.
+inference:
+  clip_len: 4
+
 multiscale_scale_weights: null
 multiscale_normalize_scale_weights: true
 project_name: vkitti_ms_gem

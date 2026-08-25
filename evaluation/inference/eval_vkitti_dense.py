@@ -37,7 +37,8 @@ for _p in (_ROOT, _HERE, _EVAL):
         sys.path.append(_p)
 from model.factory import build_gemdepth_from_config          # noqa: E402
 from dataset.vkitti_split import TEST_SCENES, VARIATION       # noqa: E402
-from protocol import infer_video_with_protocol, resolve_inference_clip_len  # noqa: E402
+from protocol import (infer_video_with_protocol, load_experiment_config,  # noqa: E402
+                      resolve_inference_clip_len)
 from alignment import stable_scale_and_shift                  # noqa: E402
 
 
@@ -141,7 +142,7 @@ def colorize_err(pred, gt, valid, vmax=0.3):
 
 
 def load_model(config, ckpt, device):
-    cfg = OmegaConf.load(config)
+    cfg = load_experiment_config(config)
     model = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
     obj = torch.load(ckpt, map_location="cpu", weights_only=False)
     # Training checkpoints are dicts {model_state_dict, optimizer_state_dict, ...};

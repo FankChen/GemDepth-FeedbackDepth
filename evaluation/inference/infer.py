@@ -16,7 +16,8 @@ from model.backbone_registry import available_backbone_names
 from model.decoder_registry import available_decoder_names
 from model.factory import build_gemdepth_from_config
 from omegaconf import OmegaConf
-from protocol import infer_video_with_protocol, resolve_inference_clip_len
+from protocol import (infer_video_with_protocol, load_experiment_config,
+                      resolve_inference_clip_len)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -48,7 +49,7 @@ if __name__ == '__main__':
         if args.config:
             # Build identically to training. Backbone weights come from the checkpoint
             # (strict load below), so skip re-downloading pretrained backbones.
-            cfg = OmegaConf.load(args.config)
+            cfg = load_experiment_config(args.config)
             gemdepth = build_gemdepth_from_config(cfg, load_backbone_pretrained=False)
             clip_len = resolve_inference_clip_len(cfg)
             if clip_len is not None:
