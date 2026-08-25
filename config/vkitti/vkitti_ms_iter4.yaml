@@ -17,14 +17,15 @@ defaults:
 training:
   checkpoint_dir: ./checkpoint/vkitti_ms_iter4
   log_dir: ./logs/vkitti_ms_iter4
-  # 4 rounds keep every round's activations, and the finest scale runs the GRU at
-  # 448x448 (~10.7 GB per round at the baseline micro-batch), which OOMs on a
-  # 140 GB card. Halve the micro-batch and accumulate twice: the effective batch
-  # stays 32, so this arm remains comparable to every other one.
-  grad_accum: 2
+  # 4 rounds keep every round's activations, and the GRU follows the pyramid up to
+  # 448x448, so backward needs gradients for all 16 of them at once. Measured:
+  # micro-batch 16 peaks at 137 GB and still OOMs on a 140 GB card. Quarter the
+  # micro-batch and accumulate four times -- effective batch stays 32, so this arm
+  # is still comparable to the rest.
+  grad_accum: 4
 
 dataloader:
-  batch_size: 16
+  batch_size: 8
 
 model:
   decoder: DPTHeadMultiScaleIterConvNeXt

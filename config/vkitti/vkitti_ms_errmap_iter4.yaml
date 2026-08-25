@@ -21,10 +21,10 @@ training:
   log_dir: ./logs/vkitti_ms_errmap_iter4
   # Same memory story as vkitti_ms_iter4, plus GEM and the per-round warps.
   # Effective batch stays 32.
-  grad_accum: 2
+  grad_accum: 4
 
 dataloader:
-  batch_size: 16
+  batch_size: 8
 
 model:
   decoder: DPTHeadMultiScaleErrMapIterConvNeXt
