@@ -1,0 +1,42 @@
+# @package _global_
+# Baseline variant: sample the five training sources uniformly.
+#
+# The paper's appendix specifies a uniform sampling probability across sources.
+# The native mix is nowhere near it -- TartanAir 36.1%, PointOdyssey 35.7%,
+# MVS-Synth 25.5%, VKITTI2 1.3%, DynamicReplica 1.4% -- and the shape of that
+# gap lines up with where our reproduction is weakest:
+#
+#   ScanNet   1.33 aspect, indoor    -1.4% vs the paper (we are ahead)
+#   Bonn      1.33 aspect, indoor    +6.9%
+#   Sintel    2.35 aspect            +13.8%
+#   KITTI     3.31 aspect, driving   +11.9%
+#
+# VKITTI2 and MVS-Synth are the only driving-domain sources we have, and between
+# them the native mix gives the driving domain about 27% -- almost all of it from
+# MVS-Synth, whose synthetic urban footage is a poor stand-in for KITTI's camera.
+# VKITTI2, which shares KITTI's rig and layout outright, contributes 1.3%.
+#
+# At this budget that is close to decisive: 5000 steps x effective batch 16 draws
+# 80k clips from an 845k-entry list, so a source at 1.3% is seen on the order of
+# a thousand times in the entire run.
+#
+# uniform pulls VKITTI2 to 20.2% (x27) and DynamicReplica to 19.7% (x25), leaving
+# the two large sets untouched.
+#
+# One variable against stage1_lite. Run it before committing the method arms:
+# whichever of the two is the better base is the one they should sit on,
+# because a method whose benefit is specific to camera motion or fine structure
+# cannot show itself on a mix that barely contains the domain it is read on.
+defaults:
+  - stage1_lite
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/gemdepth_stage1_lite_uniform
+  log_dir: ./logs/gemdepth_stage1_lite_uniform
+
+dataset:
+  train:
+    mix_policy: uniform
+
+project_name: gemdepth_stage1_lite_uniform

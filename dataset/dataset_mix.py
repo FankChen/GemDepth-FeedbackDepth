@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation as R
 from torchvision.transforms import Compose
 from model.util.transform import Resize, NormalizeImage, PrepareForNet
 from dataset.loaders import get_loader
+from dataset.mix_registry import apply_mix_policy
 from dataset.vkitti_split import scene_is_selected
 
 def safe_collate(batch):
@@ -67,7 +68,7 @@ class RandomCropWithInfo(A.DualTransform):
 
 class DepthVideoDataset(Dataset):
     def __init__(self, mode, data_dirs=[''], crop_size=518, seq_len=4,
-                 vkitti_scene_split=True):
+                 vkitti_scene_split=True, mix_policy='native'):
         if data_dirs is None:
             data_dirs = ['']
         elif isinstance(data_dirs, str):
@@ -85,8 +86,9 @@ class DepthVideoDataset(Dataset):
         #                      instead drop ~95% of the only KITTI-domain training data
         #                      (21k clips -> 1010).
         self.vkitti_scene_split = bool(vkitti_scene_split)
-        self.tartanair_ratio=1 #30.5W
-        self.vkitti_ratio=1
+        # How the sources are blended; see dataset/mix_policies.py. 'native'
+        # reproduces every run recorded so far.
+        self.mix_policy = mix_policy
         self.max_depth_outer=200
         self.max_depth_inner = 80
         self.data_paths = []
@@ -197,10 +199,38 @@ class DepthVideoDataset(Dataset):
                             set_paths.append([image_path, depth_path,pose_path])
                         self.tartanair_data_paths.append(['TartanAir', set_paths])
 
-        self.data_paths = self.vkitti_data_paths * self.vkitti_ratio + self.tartanair_data_paths*self.tartanair_ratio  
-
+        # Sampling is uniform over the concatenated list, so how many times a
+        # source is repeated here *is* its sampling probability. That used to be
+        # decided in two unrelated places -- instance attributes for vkitti and
+        # tartanair, a loader class attribute for everything else -- which is how
+        # VKITTI2 ended up at 1.4% of the mix while MVS-Synth, with fewer clips,
+        # sat at 25.8%: MVS-Synth had been given RATIO=26 to pull it towards the
+        # big sets and VKITTI2 was never wired into the same mechanism. One table
+        # now, one policy, and the resulting split is printed rather than implied.
+        sources = {}
+        if self.vkitti_data_paths:
+            sources['vkitti'] = (self.vkitti_data_paths, 1)
+        if self.tartanair_data_paths:
+            sources['TartanAir'] = (self.tartanair_data_paths, 1)
         for label, clips in self.extra_data_paths.items():
-            self.data_paths += clips * self.loaders[label].RATIO
+            sources[label] = (clips, self.loaders[label].RATIO)
+
+        ratios = apply_mix_policy(
+            self.mix_policy,
+            counts={label: len(clips) for label, (clips, _) in sources.items()},
+            native_ratios={label: ratio for label, (_, ratio) in sources.items()},
+        )
+
+        self.data_paths = []
+        for label, (clips, _) in sources.items():
+            self.data_paths += clips * int(ratios[label])
+
+        total = len(self.data_paths) or 1
+        print(f"[mix] policy={self.mix_policy}")
+        for label, (clips, _) in sources.items():
+            entries = len(clips) * int(ratios[label])
+            print(f"[mix]   {label:<16} {len(clips):>7} clips x{int(ratios[label]):<3} "
+                  f"= {entries:>7}  ({100.0 * entries / total:5.1f}%)")
 
         self.scale = {
             'vkitti': RandomScale(scale_limit=(0.8, 0.85), last_ch=4*(seq_len-1)),
