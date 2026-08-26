@@ -13,13 +13,15 @@ from dataset.mix_registry import (
     register,
 )
 
-# Measured on the five training sets of config/stages/stage1_repro.yaml.
+# Measured from a stage1_lite launch on the five training sets of
+# config/stages/stage1_repro.yaml. TartanAir prints no count, so it is the
+# remainder of the 834172-entry list the dataloader reports.
 _COUNTS = {
-    'TartanAir': 305000,
+    'TartanAir': 295196,
     'pointodyssey': 301594,
     'mvs_synth': 8280,
     'vkitti': 11342,
-    'dynamic_replica': 12000,
+    'dynamic_replica': 10760,
 }
 # What the code did before the policy existed: hardcoded 1 for vkitti and
 # tartanair, the loader's class attribute for the rest.
@@ -66,6 +68,14 @@ class MixRegistryTest(unittest.TestCase):
         self.assertLess(shares['vkitti'], 0.02)
         self.assertGreater(shares['mvs_synth'], 0.2)
         self.assertGreater(_COUNTS['vkitti'], _COUNTS['mvs_synth'])
+
+        # Pins the split the recorded runs were trained under, so a change to
+        # the default shows up here rather than as an unexplained result shift.
+        self.assertAlmostEqual(shares['pointodyssey'], 0.362, delta=0.003)
+        self.assertAlmostEqual(shares['TartanAir'], 0.354, delta=0.003)
+        self.assertAlmostEqual(shares['mvs_synth'], 0.258, delta=0.003)
+        self.assertAlmostEqual(shares['vkitti'], 0.0136, delta=0.001)
+        self.assertAlmostEqual(shares['dynamic_replica'], 0.0129, delta=0.001)
 
     def test_explicit_null_falls_back_to_native(self):
         self.assertEqual(
