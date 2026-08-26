@@ -1,0 +1,34 @@
+# @package _global_
+# Method arm: photometric error-map feedback, on the mixed dataset.
+#
+# One line differs from stage1_lite -- the decoder. Everything else is inherited,
+# so the pair is a single-variable comparison by construction rather than by
+# discipline.
+#
+# DPTHeadErrorMap subclasses the DPTHeadTemporal that stage1_lite already runs.
+# After each top-down fusion stage it decodes a coarse depth, inverse-warps the
+# neighbouring frames with it and GEM's predicted pose, and folds the photometric
+# residual back into the stage feature. The error encoders are zero-initialised,
+# so at step 0 this head is numerically identical to the baseline: the two arms
+# start from the same point and any divergence is learned, not an initialisation
+# artefact. gemdepth.py detects that the head's forward takes images/extrinsics/
+# intrinsics and routes them automatically, so no wiring is needed here.
+#
+# WHY THIS SCALE AND NOT VKITTI. errmap was already measured there and came back
+# null (ms_gem 0.1082 -> ms_errmap 0.1076, -0.6%). That number is not evidence
+# against the method, because errmap warps with GEM's pose and GEM itself cost
+# 7.8% on that data -- the measurement it feeds on was noise about a bad pose.
+# Whether errmap works is only answerable where GEM has enough data to estimate
+# pose properly, which is this recipe.
+defaults:
+  - stage1_lite
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/gemdepth_stage1_lite_errmap
+  log_dir: ./logs/gemdepth_stage1_lite_errmap
+
+model:
+  decoder: DPTHeadErrorMap
+
+project_name: gemdepth_stage1_lite_errmap

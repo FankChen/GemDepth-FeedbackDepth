@@ -1,0 +1,40 @@
+# @package _global_
+# Reduced-budget Stage-1: the testbed for method arms on the mixed dataset.
+#
+# WHY NOT A SMALLER MODEL. The obvious way to buy speed is a ConvNeXt-S run from
+# scratch -- five hours instead of thirty-eight. We have already paid for that
+# lesson: every head ablation ranked on ConvNeXt-S was overturned by a single
+# backbone swap (0.0891 -> 0.0778), and the vkitti arms show the same thing from
+# the other side, eight variants all losing to the plain baseline. A cheap
+# testbed whose conclusions do not transfer is worse than an expensive one,
+# because it produces confident answers to the wrong question.
+#
+# So this keeps everything that decides the outcome -- ViT-L, the VDA
+# initialisation, GEM, ASTT, the five training sets, the discriminative learning
+# rates -- and cuts the one thing that is purely a budget: step count.
+#
+# WHY ONLY STEPS. The other two obvious levers each smuggle in a confound:
+#   crop_size   evaluation runs at input_size 518, and this repo trains a single
+#               square crop (dataset_mix.py uses StatefulRandomCrop(h=w=crop)).
+#               Training smaller means testing off-distribution. The paper avoids
+#               this by training six resolutions; we cannot until that lands.
+#   seq_len     resolve_inference_clip_len returns None here, i.e. the historical
+#               32-frame overlapping protocol. Training on shorter clips would
+#               score the model under a protocol it never saw, and the protocol
+#               difference would show up as a result.
+# Step count changes none of that, so stage1_repro at 20k remains the reference
+# this ladder is anchored to.
+#
+# 20000 -> 5000 steps is roughly 38h -> 9.5h on 8 GPUs. Effective batch stays 16
+# (8 x grad_accum 2), so every arm derived from this file is budget-matched by
+# construction; override total_step here and it moves for all of them at once.
+defaults:
+  - stage1_repro
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/gemdepth_stage1_lite
+  log_dir: ./logs/gemdepth_stage1_lite
+
+total_step: 5000
+project_name: gemdepth_stage1_lite
