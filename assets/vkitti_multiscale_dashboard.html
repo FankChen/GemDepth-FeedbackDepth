@@ -166,6 +166,84 @@
 差距 0.006–0.011 = 种子噪声带（0.0006）的 10–18 倍。<b>有 GEM 与无 GEM 两条线不可直接对比，各自内部比。</b></div>
 </div>
 
+<h3>2.2b 这八个 arm 到底差在哪（白话版）</h3>
+<div class="card">
+<div class="box info">
+  <b>先说共同点。</b>八个 arm 用<b>同一个骨干</b>（DINOv3 ConvNeXt-S + LoRA）、<b>同一份数据</b>（VKITTI2，1010 clips，
+  按场景留出测试集）、<b>同样 10000 步</b>、<b>同样有效 batch 32</b>、<b>同一个 seed</b>、<b>同样的评测口径</b>。
+  所以任意两个之间的差别，<b>只来自下表「改了什么」那一栏</b>。
+</div>
+<table>
+  <thead><tr>
+    <th class="l">arm</th><th class="l">白话：它到底做了什么</th>
+    <th class="l">改自</th><th class="l">单一变量</th><th>KITTI</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="l"><b>temporal 基线</b></td>
+        <td class="l">最朴素那版。<b>只在最终分辨率出一张深度图</b>，中间不分档，没有任何附加模块。</td>
+        <td class="l">—</td><td class="l">—</td><td class="win">0.0981</td></tr>
+
+    <tr><td class="l"><b>ms_depth_concat</b></td>
+        <td class="l">改成<b>由粗到细分四档</b>：先出一张很模糊的深度图，再把它当参考画清楚一点，重复四次。
+            四档<b>都打分，分数相加</b>。</td>
+        <td class="l">基线</td><td class="l">换成多尺度头</td><td>0.1004</td></tr>
+
+    <tr><td class="l">ms_nofp32</td>
+        <td class="l">跟上面<b>完全一样</b>，只是最后一层卷积用低精度（bf16）算，而不是高精度（fp32）。
+            纯数值精度开关，不改结构。</td>
+        <td class="l">depth_concat</td><td class="l">最后一层的数值精度</td><td>0.0991</td></tr>
+
+    <tr><td class="l">ms_norm</td>
+        <td class="l">四档的分数从<b>相加</b>改成<b>取平均</b>。
+            <span class="lose">副作用：最终那档的打分权重从 1.0 掉到 0.25</span> —— 见 §2.3。</td>
+        <td class="l">depth_concat</td><td class="l">四档分数求和 → 取平均</td><td class="lose">0.1094</td></tr>
+
+    <tr><td class="l">ms_finealone</td>
+        <td class="l">同一个四档结构，但<b>只给最后那档打分</b>，前三档草稿不打分。</td>
+        <td class="l">depth_concat</td><td class="l">粗档监督：开 → 关</td><td>0.1016</td></tr>
+
+    <tr><td class="l">ms_grad</td>
+        <td class="l">基础版里，每档参考上一档时会<b>切断反馈</b>（<code>depth_prev.detach()</code>），
+            等于四个档各学各的、只是多看一张参考图。这版<b>去掉切断</b>，让四档串成一条真正端到端的链。</td>
+        <td class="l">depth_concat</td><td class="l">跨档梯度：断 → 通</td><td>0.1066</td></tr>
+
+    <tr><td class="l">ms_gem <span class="tag">GEM</span></td>
+        <td class="l">打开 <b>GEM</b>：多一个模块去估计<b>相机在帧之间怎么移动</b>，
+            把这个几何信息喂给深度网络。想法是"知道相机怎么动，就能靠三角测量算距离"。</td>
+        <td class="l">depth_concat</td><td class="l">GEM：关 → 开</td><td class="lose">0.1082</td></tr>
+
+    <tr><td class="l">ms_errmap <span class="tag">GEM</span></td>
+        <td class="l">在 ms_gem 之上再加<b>自检</b>：用当前深度 + GEM 给的相机运动，把前后帧「扭」到当前视角比一比，
+            哪里对不上就说明哪里可能猜错了，把这张「疑似出错图」喂回去让它自己修。</td>
+        <td class="l">ms_gem</td><td class="l">光度自检：无 → 有</td><td>0.1076</td></tr>
+  </tbody>
+</table>
+
+<h3 style="margin-top:20px">继承关系：谁该跟谁比</h3>
+<pre>temporal 基线（什么都不加）  0.0981
+      │
+      └─ ms_depth_concat  0.1004  ─┬─ ms_nofp32     0.0991   只换数值精度
+                                   ├─ ms_norm       0.1094   四档打分改取平均
+                                   ├─ ms_finealone  0.1016   只给最后一档打分
+                                   ├─ ms_grad       0.1066   四档之间不再切断反馈
+                                   └─ ms_gem        0.1082   加相机运动估计
+                                            │
+                                            └─ ms_errmap  0.1076   再加光度自检</pre>
+<div class="box warn">
+  <b>⚠ 只能沿着这棵树的边比，不能跨枝比。</b>
+  例如 <code>ms_errmap</code> 的对照是 <code>ms_gem</code>（两者都开 GEM），
+  <b>不是</b> <code>ms_depth_concat</code> —— 后者关着 GEM，跨过去比会把「加 GEM」和「加自检」两件事混在一起。
+</div>
+
+<div class="box bad">
+  <b>一个容易被忽略的结果：<code>ms_grad</code> 说明「切断反馈」原本是在帮忙。</b>
+  基础版四档之间是 <code>detach</code> 断开的，看板 §3 曾把这点当作缺陷记下来（"实质是 4 个独立头共享骨干，
+  不是真正的端到端 coarse-to-fine"）。<code>ms_grad</code> 把它接通之后
+  <span class="mono">0.1004 → 0.1066，<b>+6.2%</b></span> —— <b>接通反而更差</b>。
+  在这个数据量下，让四档互相牵扯只会把误差沿着链条放大，各学各的更稳。
+</div>
+</div>
+
 <h3>2.3 干净的两两分解（本轮核心结果）</h3>
 <div class="card">
 <div class="box bad">
