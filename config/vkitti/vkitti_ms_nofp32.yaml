@@ -1,0 +1,24 @@
+# @package _global_
+# Control for multiscale_fp32_head.
+#
+# The base arm keeps fp32_head true, which matches the temporal baseline: its
+# scratch.output_conv2 runs under an unconditional `autocast(enabled=False)`.
+# Turning it off therefore *adds* a variable rather than removing one, so this
+# arm is a sanity control, not part of the main ladder.
+#
+# NOTE: written after the run finished -- the arm was launched with a
+# command-line override (model.multiscale_fp32_head=false). Recorded here so the
+# checkpoint can be re-evaluated without hand-passing overrides, which is how
+# evaluation silently ends up scoring a differently-built model.
+defaults:
+  - vkitti_multiscale_depth_concat
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_nofp32
+  log_dir: ./logs/vkitti_ms_nofp32
+
+model:
+  multiscale_fp32_head: false
+
+project_name: vkitti_ms_nofp32

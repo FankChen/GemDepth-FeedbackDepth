@@ -1,0 +1,27 @@
+# @package _global_
+# Ablation A -- supervise only the finest scale.
+#
+# Keeps the multiscale head (its four output branches, the depth feedback path,
+# and therefore its parameter count) but drops the loss on the three coarse
+# scales. Against vkitti_ms_norm, which supervises all four under the same
+# normalised weighting, the single variable is deep supervision itself:
+#
+#   gain survives -> the extra head capacity is doing the work
+#   gain vanishes -> coarse-to-fine supervision is doing the work
+#
+# The weights already sum to one, so normalising is a no-op here; it is set
+# anyway so that this file and vkitti_ms_norm differ in exactly one line.
+#
+# NOTE: written after the run finished -- see the note in vkitti_ms_norm.yaml.
+# Confirm against runlogs/vk_ms_finealone.log before retraining from it.
+defaults:
+  - vkitti_multiscale_depth_concat
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_finealone
+  log_dir: ./logs/vkitti_ms_finealone
+
+multiscale_scale_weights: [0.0, 0.0, 0.0, 1.0]
+multiscale_normalize_scale_weights: true
+project_name: vkitti_ms_finealone

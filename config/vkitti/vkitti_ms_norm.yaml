@@ -1,0 +1,27 @@
+# @package _global_
+# Ablation B -- average the four scale losses instead of summing them.
+#
+# The base arm leaves normalize_scale_weights false with weights [1,1,1,1], so
+# the four scales are added: the decoder sees roughly 4x the gradient of the
+# temporal baseline, and the two arms are therefore not on the same training
+# budget. Normalising turns the weights into a distribution, which removes that
+# confound while keeping the deep supervision and the extra head capacity.
+#
+# Compared against the base arm this isolates the effective-learning-rate
+# confound; compared against vkitti_ms_finealone it isolates deep supervision.
+#
+# NOTE: this file was written after the run finished -- the arm was launched
+# with a command-line override, so the settings were never in version control.
+# Only the loss weighting differs from the base arm, and that affects training
+# alone, so evaluation is unaffected either way; but before reusing this file to
+# *retrain*, confirm it against the launch line recorded in runlogs/vk_ms_norm.log.
+defaults:
+  - vkitti_multiscale_depth_concat
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_norm
+  log_dir: ./logs/vkitti_ms_norm
+
+multiscale_normalize_scale_weights: true
+project_name: vkitti_ms_norm
