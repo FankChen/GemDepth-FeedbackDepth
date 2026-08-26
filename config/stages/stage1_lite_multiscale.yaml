@@ -1,0 +1,37 @@
+# @package _global_
+# Method arm: coarse-to-fine multi-scale head, on ViT.
+#
+# One line differs from stage1_lite -- the decoder.
+#
+# WHY RUN THIS AT ALL, given the vkitti result. On ConvNeXt the question is
+# settled and negative: eight vkitti arms all lost to the plain temporal head,
+# and on mixdata the same head lost on three of four benchmarks (KITTI
+# 0.0961 -> 0.1119). But the best multi-scale number on record is 0.0725, from
+# single_a100_multiscale_fix -- this head, on ViT-L, where it matched or beat
+# temporal. Head rankings have already reversed once under a backbone swap
+# (0.0891 -> 0.0778), so "multi-scale loses" cannot be carried over from
+# ConvNeXt without measuring it on the backbone the final recipe actually uses.
+#
+# The head returns one depth per pyramid level at its native resolution during
+# training, so multiscale_loss downsamples the ground truth to each level;
+# at eval it returns the finest level alone, upsampled once. That keeps the
+# evaluated quantity identical to the baseline's.
+defaults:
+  - stage1_lite
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/gemdepth_stage1_lite_multiscale
+  log_dir: ./logs/gemdepth_stage1_lite_multiscale
+
+model:
+  decoder: DPTHeadMultiScaleRefine
+
+# Not a second variable: train.py routes on the head's output type
+# (isinstance(depth_pred, list)), so this key is inert for the two arms whose
+# heads return a tensor. It has to be set here because the default is 'l2', and
+# the loss is the largest lever measured on this head -- the L2 variants scored
+# 0.104-0.108 against 0.0946 for the video loss, which adds the disparity-space
+# SSI and gradient-matching terms the single-scale baseline already uses.
+multiscale_loss: video
+project_name: gemdepth_stage1_lite_multiscale
