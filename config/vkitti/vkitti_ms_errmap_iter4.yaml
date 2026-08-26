@@ -35,3 +35,23 @@ model:
     predicts_inverse_depth: true
 
 project_name: vkitti_ms_errmap_iter4
+
+# RAFT/IGEV-style weighting, and without it this arm cannot answer its own
+# question. Uniform weights split evenly over all 16 outputs, so the one output
+# evaluation actually reads -- the last round's finest scale -- would carry
+# 1/16 of the supervision against 1/4 in the single-round control. Measured on
+# the ms_norm / ms_finealone pair, quartering the evaluated output's weight
+# costs 7.7% on its own, which would swamp whatever iterating is worth.
+#
+# Uniform weighting is also actively wrong for an iterative operator: telling
+# every round to be equally correct removes any reason to improve between
+# rounds. ms_iter4 runs uniform and its rounds 2-4 are already indistinguishable
+# by step 200 -- a fixed point, which is what that arm was built to demonstrate.
+#
+# gamma factorises into (scale grading) x (round grading), so the share of
+# supervision landing on each resolution is independent of the round count:
+# both this arm and vkitti_ms_errmap_gamma put 0.3388 on the finest resolution
+# and 0.1734 on the coarsest. That is what makes the pair a single-variable
+# comparison -- rounds -- rather than a weighting change in disguise.
+multiscale_gamma: 0.8
+multiscale_scales: 16

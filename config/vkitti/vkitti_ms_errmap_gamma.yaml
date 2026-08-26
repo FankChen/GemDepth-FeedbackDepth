@@ -1,0 +1,27 @@
+# @package _global_
+# Weight-matched control for vkitti_ms_errmap_iter4.
+#
+# Same head, same photometric feedback, one pass instead of four -- and the same
+# gamma weighting, which is the point. Plain ms_errmap uses uniform weights, so
+# comparing it against the gamma-weighted iterative arm would move two things at
+# once. Here gamma is applied over this arm's 4 outputs, and because the scheme
+# factorises into (scale grading) x (round grading), both arms end up putting
+# 0.3388 of the total supervision on the finest resolution and 0.1734 on the
+# coarsest. The only remaining difference is how many times the shared update
+# operator runs.
+#
+# Read it as a three-point ladder:
+#   ms_errmap        uniform weights, 1 round   -> what the weighting change costs
+#   ms_errmap_gamma  gamma weights,   1 round   -> the control
+#   ms_errmap_iter4  gamma weights,   4 rounds  -> does iterating help
+defaults:
+  - vkitti_ms_errmap
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_ms_errmap_gamma
+  log_dir: ./logs/vkitti_ms_errmap_gamma
+
+multiscale_gamma: 0.8
+multiscale_scales: 4
+project_name: vkitti_ms_errmap_gamma
