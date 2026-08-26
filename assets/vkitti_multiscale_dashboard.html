@@ -62,20 +62,30 @@
 <!-- ============ 1 结论 ============ -->
 <h2>0. 一句话结论</h2>
 <div class="box bad">
-  <b>域内赢、泛化输 —— 符号翻转。</b>
-  多尺度 refine 头在训练域 VKITTI 上比同配方 temporal 基线好 5.8%（AbsRel 0.1192 → 0.1123），
-  但换到 KITTI zero-shot 就反过来落后 2.3%（0.0981 → 0.1004），RMSE / δ1 同向落后。
-  <b style="margin-top:8px">这更像容量与等效学习率带来的过拟合，而不是头结构的方法增益。</b>
-  在补齐两个消融 arm 之前，<u>不得宣称多尺度头优于 temporal</u>。
+  <b>八个 arm，没有一个赢过朴素的 temporal 基线。</b>
+  KITTI zero-shot 上的排序几乎就是“越简单越好”：
+  temporal <b>0.0981</b> → nofp32 0.0991 → depth_concat 0.1004 → finealone 0.1016 →
+  grad 0.1066 → errmap 0.1076 → gem 0.1082 → norm 0.1094。
+  差距 0.006–0.011，是种子噪声带（0.0006）的 <b>10–18 倍</b>，不是噪声。
+  <b style="margin-top:8px">拆开看：粗尺度深监督几乎不贡献（−1.2%），真正起作用的是最细层的监督强度（+7.7%）；
+  GEM 在这个规模上是负收益（+7.8%）；errmap 相对 GEM 是 null（−0.6%）。</b>
+  <u>目前没有任何证据支持多尺度头、GEM 或 errmap 在此配方下优于 temporal。</u>
+</div>
+<div class="box warn">
+  <b>但“域内赢 / 泛化输”这个叙事目前<u>只剩一半证据</u>。</b>
+  域内 dense 只测了最早的三个 arm（§2.1），新增的五个还没跑。
+  在补齐之前，“翻转是过拟合”只是假设，不是结论。
 </div>
 <div class="box good">
-  <b>✅ 已排除：同日修的那个位姿 dropout P0，对本页三路无影响。</b>
-  <code>model/gemdepth.py</code> 的位姿 dropout 缺 <code>self.training</code> 守卫，推理时会随机抹掉约 57% 帧的位姿。
-  但那整段代码在 <code>if self.use_gem:</code> 里，而三个 arm 都是
-  <code>use_gem: false / use_astt: false</code>（ConvNeXt pyramid 骨干<b>强制要求</b>如此，
-  见 <code>gemdepth.py</code> 的 <code>backbone_format == 'pyramid'</code> 断言）—— 根本不执行。
-  该 P0 只涉及 <code>config/stages/</code> 下的 GemDepth 正统复现线。
-  <b>本页数字无需重测。</b>
+  <b>✅ 位姿 dropout P0：对本页结论无影响，且实测量级远小于当初估计。</b>
+  <code>model/gemdepth.py</code> 的位姿 dropout 曾缺 <code>self.training</code> 守卫，08-24 已修。
+  <ul style="margin:6px 0 0">
+    <li><b>六个无 GEM 的 arm 完全不受影响</b> —— 那段代码在 <code>if self.use_gem:</code> 里，根本不执行。</li>
+    <li><b><code>ms_gem</code> / <code>ms_errmap</code> 确实开了 GEM，但它们训练与评测都在修复之后</b>，拿到的是确定性结果。
+        （注：<code>93fae0c</code> 之后 ConvNeXt 已可开 GEM，早先“ConvNeXt 结构性免疫”的说法<b>已失效</b>。）</li>
+    <li><b>实测量级</b>：<code>stage1_repro</code> 在 KITTI 500 帧上重测，0.086233 → 0.086110，
+        逐序列最大差 0.00054、均值差 0.00012。当初“会淹没 1–3% 方法增益”的判断<b>说大了两个数量级</b>。</li>
+  </ul>
 </div>
 
 <!-- ============ 2 对照矩阵 ============ -->
@@ -83,7 +93,7 @@
 <div class="card">
 <table>
   <thead><tr>
-    <th class="l">项目</th><th>temporal 基线</th><th>ms (fp32 head)</th><th>ms (nofp32)</th>
+    <th class="l">项目</th><th>temporal 基线</th><th>ms_depth_concat</th><th>ms_nofp32</th>
   </tr></thead>
   <tbody>
     <tr><td class="l">config</td>
@@ -125,11 +135,16 @@
   <thead><tr><th class="l">arm</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>vs 基线 (AbsRel)</th></tr></thead>
   <tbody>
     <tr><td class="l">temporal 基线</td><td>0.1192</td><td>7.2573</td><td>0.8579</td><td>—</td></tr>
-    <tr><td class="l"><b>ms (fp32 head)</b></td><td class="win">0.1123</td><td class="win">6.7774</td><td class="win">0.8727</td><td class="win">−5.8%</td></tr>
-    <tr><td class="l">ms (nofp32)</td><td>0.1155</td><td>7.1985</td><td>0.8661</td><td class="win">−3.1%</td></tr>
+    <tr><td class="l"><b>ms_depth_concat</b></td><td class="win">0.1123</td><td class="win">6.7774</td><td class="win">0.8727</td><td class="win">−5.8%</td></tr>
+    <tr><td class="l">ms_nofp32</td><td>0.1155</td><td>7.1985</td><td>0.8661</td><td class="win">−3.1%</td></tr>
   </tbody>
 </table>
 <div class="sub">口径：<code>eval_vkitti_dense.py</code>，<code>--align_space disparity</code>，不加 <code>--invert</code>（三个 arm 都输出视差）。</div>
+<div class="box warn">
+  <b>⚠ 这张表只覆盖最早的三个 arm。</b>
+  <code>ms_norm</code> / <code>ms_finealone</code> / <code>ms_gem</code> / <code>ms_grad</code> /
+  <code>ms_errmap</code> 的域内数字<b>尚未测</b>，所以 §2.4 的“翻转”只对这三个成立。
+</div>
 </div>
 
 <h3>2.2 KITTI zero-shot（<code>kitti_video.json</code>，110 帧协议，13 序列）</h3>
@@ -138,20 +153,72 @@
   <thead><tr><th class="l">arm</th><th>AbsRel ↓</th><th>RMSE ↓</th><th>δ1 ↑</th><th>vs 基线 (AbsRel)</th></tr></thead>
   <tbody>
     <tr><td class="l"><b>temporal 基线</b></td><td class="win">0.0981</td><td class="win">3.5770</td><td class="win">0.9027</td><td>—</td></tr>
-    <tr><td class="l">ms (fp32 head)</td><td class="lose">0.1004</td><td class="lose">3.8282</td><td class="lose">0.8943</td><td class="lose">+2.3%</td></tr>
-    <tr><td class="l">ms (nofp32)</td><td class="lose">0.0991</td><td class="lose">3.7389</td><td class="lose">0.8966</td><td class="lose">+1.0%</td></tr>
+    <tr><td class="l">ms_nofp32 <span class="tag">无GEM</span></td><td>0.0991</td><td>3.7389</td><td>0.8966</td><td class="lose">+1.0%</td></tr>
+    <tr><td class="l">ms_depth_concat <span class="tag">无GEM</span></td><td>0.1004</td><td>3.8282</td><td>0.8943</td><td class="lose">+2.3%</td></tr>
+    <tr><td class="l">ms_finealone <span class="tag">无GEM</span></td><td>0.1016</td><td>3.7352</td><td>0.8954</td><td class="lose">+3.6%</td></tr>
+    <tr><td class="l">ms_grad <span class="tag">无GEM</span></td><td>0.1066</td><td>3.8822</td><td>0.8868</td><td class="lose">+8.7%</td></tr>
+    <tr><td class="l">ms_errmap <span class="tag">GEM</span></td><td>0.1076</td><td>3.8945</td><td>0.8844</td><td class="lose">+9.7%</td></tr>
+    <tr><td class="l">ms_gem <span class="tag">GEM</span></td><td>0.1082</td><td>3.9029</td><td>0.8821</td><td class="lose">+10.3%</td></tr>
+    <tr><td class="l">ms_norm <span class="tag">无GEM</span></td><td class="lose">0.1094</td><td class="lose">3.9978</td><td class="lose">0.8795</td><td class="lose">+11.5%</td></tr>
   </tbody>
 </table>
+<div class="sub">八个数值全落在 0.098–0.110，无“配置对不上导致随机权重”事故（那会是 0.3–0.4 量级）。
+差距 0.006–0.011 = 种子噪声带（0.0006）的 10–18 倍。<b>有 GEM 与无 GEM 两条线不可直接对比，各自内部比。</b></div>
 </div>
 
-<h3>2.3 翻转一览</h3>
+<h3>2.3 干净的两两分解（本轮核心结果）</h3>
+<div class="card">
+<div class="box bad">
+  <b>✖ 先订正一条：<code>ms_norm</code> 是个设计坏了的消融。</b>
+  它并不“只去掉四尺度求和带来的梯度放大”。看 <code>loss/multiscale_videoloss.py</code>：
+  <code>normalize_scale_weights</code> 就是 <code>weights = [w / weight_sum ...]</code>。
+  于是它把<b>最细层</b>的监督也一并砸到了 1/4 —— 而最细层正是唯一被拿去评测的那一层
+  （eval 取 <code>scale_depths[-1]</code>）。所以 0.1094 这个全场最差反映的是“最细层欠训”，
+  不是“去掉混淆后的真实水平”。看板早先把它写成“消掉 B”，那个说法作废。
+</div>
+<table>
+  <thead><tr><th class="l">arm</th><th>最细层权重</th><th>各粗层权重</th><th>总量</th><th>KITTI AbsRel</th></tr></thead>
+  <tbody>
+    <tr><td class="l">ms_depth_concat</td><td><b>1.0</b></td><td>1.0</td><td>4.0</td><td>0.1004</td></tr>
+    <tr><td class="l">ms_finealone</td><td><b>1.0</b></td><td>0</td><td>1.0</td><td>0.1016</td></tr>
+    <tr><td class="l">ms_norm</td><td><b>0.25</b></td><td>0.25</td><td>1.0</td><td>0.1094</td></tr>
+  </tbody>
+</table>
+<div class="box info">
+  <b>① 粗尺度深监督值多少？几乎为零。</b>
+  <code>depth_concat</code> vs <code>finealone</code> —— 最细层权重都是 <b>1.0</b>，唯一差别是粗层监督开/关：
+  <span class="mono">0.1004 vs 0.1016 → 加上粗层监督 <b>−1.2%</b></span>。
+  这是对“多尺度深监督（假设 A）”的直接否定，与 7 月 E 系列消融（四变体统计不可分）方向一致。
+</div>
+<div class="box info">
+  <b>② 最细层监督强度值多少？很多。</b>
+  <code>ms_norm</code> vs <code>finealone</code> —— 总量都是 <b>1.0</b>，只差最细层是 0.25 还是 1.0：
+  <span class="mono">0.1094 vs 0.1016 → <b>−7.7%</b></span>。
+  <b>真正起作用的是最细层的监督强度，粗层几乎不贡献。</b>
+</div>
+<div class="box bad">
+  <b>③ GEM 在这个规模上是负收益。</b>
+  <span class="mono">depth_concat 0.1004 → ms_gem 0.1082，<b>+7.8%</b></span>。
+  同一个头、同一份数据、同样 10k 步，只加 GEM，KITTI zero-shot 就差 7.8%。
+</div>
+<div class="box bad">
+  <b>④ errmap 是 null。</b>
+  <span class="mono">ms_gem 0.1082 → ms_errmap 0.1076，<b>−0.6%</b></span>。
+  在 GEM 之上加 errmap，<b>基本没有变化</b>。这是 P1 核心工作线的第一个对照数据。
+  <b style="display:block;margin-top:6px">Caveat</b>
+  仅 VKITTI 单数据集 / 1010 clips / 10k 步 / 单 seed，不能直接外推到 stage1 那种 690k 数据的配方。
+  但在本规模验证里，errmap 没显出效果。
+</div>
+</div>
+
+<h3>2.4 翻转一览（仅最早三个 arm，待补齐）</h3>
 <div class="card">
 <table>
   <thead><tr><th class="l">arm</th><th>VKITTI 域内 AbsRel</th><th>KITTI zero-shot AbsRel</th><th>方向</th></tr></thead>
   <tbody>
     <tr><td class="l">temporal 基线</td><td>0.1192</td><td>0.0981</td><td>—</td></tr>
-    <tr><td class="l">ms (fp32)</td><td class="win">0.1123 (−5.8%)</td><td class="lose">0.1004 (+2.3%)</td><td class="flip">✗ 翻转</td></tr>
-    <tr><td class="l">ms (nofp32)</td><td class="win">0.1155 (−3.1%)</td><td class="lose">0.0991 (+1.0%)</td><td class="flip">✗ 翻转</td></tr>
+    <tr><td class="l">ms_depth_concat</td><td class="win">0.1123 (−5.8%)</td><td class="lose">0.1004 (+2.3%)</td><td class="flip">✗ 翻转</td></tr>
+    <tr><td class="l">ms_nofp32</td><td class="win">0.1155 (−3.1%)</td><td class="lose">0.0991 (+1.0%)</td><td class="flip">✗ 翻转</td></tr>
   </tbody>
 </table>
 <div class="box bad">
@@ -238,30 +305,34 @@ with autocast(enabled=False):            # ← 无条件 FP32
 </div>
 
 <!-- ============ 7 下一步 ============ -->
-<h2>6. 下一步：把 A 与 B/C 分开</h2>
+<h2>6. 下一步</h2>
 <div class="card">
 <table>
-  <thead><tr><th class="l">arm</th><th class="l">改动</th><th class="l">能回答什么</th><th>状态</th></tr></thead>
+  <thead><tr><th class="l">动作</th><th class="l">能回答什么</th><th>优先级</th><th>状态</th></tr></thead>
   <tbody>
-    <tr><td class="l"><b>ms_norm</b></td>
-        <td class="l"><code>multiscale_normalize_scale_weights: true</code><br>（四尺度取平均）</td>
-        <td class="l">消掉 <b>B</b>。若域内提升仍在 → 不是等效 lr 的功劳。</td>
-        <td>待跑</td></tr>
-    <tr><td class="l"><b>ms_finealone</b></td>
-        <td class="l"><code>multiscale_scale_weights: [0,0,0,1]</code><br>（只监督最细层）</td>
-        <td class="l">消掉 <b>A</b>，保留 C+D 结构。若提升消失 → 深监督是主因；若不变 → 是容量。</td>
-        <td>待跑</td></tr>
-    <tr><td class="l">四集 benchmark</td>
-        <td class="l">现有 3 个 ckpt 补 sintel / bonn / scannet</td>
-        <td class="l">确认翻转是否四集一致（现在只有 KITTI 一个泛化集）。</td>
-        <td>待跑</td></tr>
+    <tr><td class="l"><b>五个新 arm 补域内 dense</b></td>
+        <td class="l">完成 §2.4。关键是 <code>ms_gem</code>/<code>ms_errmap</code>：
+            若它们<b>连域内也输</b>，那就不是过拟合，而是方法在这个规模上不工作。</td>
+        <td>高</td><td>待跑（几分钟/个）</td></tr>
+    <tr><td class="l"><b>ms_iter4</b></td>
+        <td class="l">迭代是否有用。早期信号：step 200 时轮 2/3/4 的逐尺度 loss
+            <b>互相打平</b>，第 4 轮四个尺度全部略差于第 2 轮 —— 正是配置注释里预言的 null。</td>
+        <td>中</td><td>训练中 4200/10000</td></tr>
     <tr><td class="l">多种子</td>
-        <td class="l">seed 1 / 2 重跑 baseline 与 ms</td>
-        <td class="l">确定 KITTI 上 2.3% 是否超出噪声带。</td>
-        <td>待定</td></tr>
+        <td class="l">目前全部单 seed。但本轮差距是噪声带的 10–18 倍，优先级不高。</td>
+        <td>低</td><td>待定</td></tr>
+    <tr><td class="l">四集 benchmark</td>
+        <td class="l">现在只有 KITTI 一个泛化集。但八个 arm 全输，补齐不太可能推翻结论。</td>
+        <td>低</td><td>待定</td></tr>
   </tbody>
 </table>
-<div class="sub">前两个 arm 各约 5 小时、可并行（GPU 2,3 与 4,5）。</div>
+<div class="box warn">
+  <b>不建议再加新 arm，先把现有的读完。</b>
+  八个 arm 全输给基线，且分解后指向同一件事：<b>在这个规模上，给最细层足够监督就是全部，
+  粗层、GEM、errmap、梯度头都不带来增益。</b>
+  再加变体只会多几行负结果。真要推进 errmap，应当换到 <code>stage1_repro</code> 那个配方（预训初始化 + 多数据集），
+  而不是在 VKITTI 单数据集 10k 步上继续加模块。
+</div>
 </div>
 
 <!-- ============ 8 复现 ============ -->
