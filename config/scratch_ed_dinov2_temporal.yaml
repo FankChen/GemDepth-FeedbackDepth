@@ -1,0 +1,61 @@
+# Experiment 2: encoder+decoder ONLY baseline, FROM SCRATCH, DINOv2 ViT-L, temporal head, 4-frame.
+#
+# - GEM + ASTT disabled (use_gem/use_astt = false) -> plain encoder+decoder (VideoDepthAnything-style).
+# - Official DINOv2 backbone checkpoint is loaded directly BEFORE LoRA injection. gemdepth.pth is
+#   never read; the DPT head is random-init and everything except the backbone starts from scratch.
+# - Backbone is frozen but LoRA-finetuned (lora=true). DPT temporal head trained from scratch.
+# - 4-frame temporal training on VKITTI. Eval on KITTI (inverse-depth SSI alignment).
+training:
+  seed: 0
+  checkpoint_dir: ./checkpoint/scratch_ed_dinov2_temporal
+  save_freq: 2000
+  val_freq: 10000
+  log_dir: ./logs/scratch_ed_dinov2_temporal
+  freeze_mode: default        # DINOv2 base frozen; DPT head + LoRA adapters trainable
+  grad_accum: 1               # per-GPU batch=4, 2 GPUs -> effective batch = 8
+  aux_depth_weight: 0.0       # temporal head has no auxiliary depths
+
+optimizer:
+  kind: adamw
+  learning_rate: 1.0e-4
+  dec_lr: 1.0e-4              # (no ASTT here; kept for param-group compatibility)
+  other_lr: 1.0e-4           # DPT head trained from scratch -> full lr
+  lora_lr: 1.0e-4            # LoRA adapters on the frozen DINOv2 backbone
+  weight_decay: 0.01
+
+dataset:
+  train:
+    mode: train
+    data_dirs: ['${oc.env:VKITTI_ROOT,/mnt/workspace/vkitti/vkitti/}']
+    crop_size: 518
+    seq_len: 4
+  val:
+    mode: train
+    data_dirs: []
+    crop_size: 518
+    seq_len: 4
+
+dataloader:
+  batch_size: 8              # total across GPUs; per-GPU = 8 // num_processes(2) = 4
+  num_workers: 8
+
+model:
+  video_path: null                          # NEVER load GemDepth weights; head is random-init
+  dinov2_weights: "timm://vit_large_patch14_dinov2.lvd142m"  # official DINOv2 via HF
+  require_pretrained_backbone: true
+  encoder_decoder_only: true
+  head_type: temporal
+  use_gem: false
+  use_astt: false
+  use_temporal: true
+  lora: true
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+
+encoder: 'vitl'
+pose_flag: false
+num_gpus: 2
+total_step: 20000
+project_name: scratch_ed_dinov2_temporal
+resume: false

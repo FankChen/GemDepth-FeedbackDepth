@@ -1,0 +1,40 @@
+#!/bin/bash -l
+#BSUB -J BH-000425-08-05-GemDepth-MultiScale
+#BSUB -P BH-000425-08-05
+#BSUB -o jobs/gemdepth_multiscale.%J.stdout
+#BSUB -e jobs/gemdepth_multiscale.%J.stderr
+#BSUB -q batch_h200
+#BSUB -U resv_cr_tfx_h200
+#BSUB -m rng-dl01-w24n01
+#BSUB -W 72:00
+#BSUB -n 8
+#BSUB -M 80000
+#BSUB -gpu "num=1:aff=no"
+
+# Single-GPU multi-scale coarse-to-fine depth-refinement head (head-only fine-tune
+# on VKITTI from pretrained GemDepth weights). Runs on the reserved H200 node.
+#
+# Usage:
+#   bsub < scripts/train_multiscale.bsub
+#   RESUME=-resume bsub < scripts/train_multiscale.bsub
+set -e
+module purge
+module load conda/4.8.5
+module load cuda/12.4.0
+
+export TORCH_CUDA_ARCH_LIST="9.0"
+export HYDRA_FULL_ERROR=1
+export PYTHONPATH=$PWD
+export no_proxy=".bosch.com"
+
+mkdir -p jobs logs checkpoint
+
+RESUME=${RESUME:-}
+
+# Use the project's gemdepth conda interpreter directly (no activation needed since
+# accelerate is launched via the absolute interpreter path).
+export PY=${PY:-/home/izi2sgh/.conda/envs/gemdepth/bin/python}
+
+echo "[$(date)] submit multiscale training on $(hostname)"
+bash scripts/train_single_a100.sh multiscale "$RESUME"
+echo "[$(date)] multiscale training finished"

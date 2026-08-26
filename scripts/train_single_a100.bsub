@@ -18,9 +18,14 @@ set -e
 module purge
 module load conda/4.8.5
 module load cuda/12.4.0
+ 
 
-ROOT=/home/izi2sgh/MYDATA/quanjie/liren/depth_baselines/GemDepth
-cd "$ROOT"
+export TORCH_CUDA_ARCH_LIST="9.0"
+export HYDRA_FULL_ERROR=1
+export PYTHONPATH=$PWD
+
+# ROOT=/home/izi2sgh/MYDATA/quanjie/liren/depth_baselines/GemDepth
+# cd "$ROOT"
 mkdir -p jobs logs checkpoint
 
 ARM=${ARM:-baseline}
