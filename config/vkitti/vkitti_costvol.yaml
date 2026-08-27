@@ -19,10 +19,6 @@ defaults:
 training:
   checkpoint_dir: ./checkpoint/vkitti_costvol
   log_dir: ./logs/vkitti_costvol
-  grad_accum: 2
-
-dataloader:
-  batch_size: 16
 
 model:
   decoder: DPTHeadCostVolumeConvNeXt
