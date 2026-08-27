@@ -111,6 +111,9 @@ def test_output_contract_and_gradients():
     sum(o.float().mean() for o in outputs).backward()
     starved = [name for name, p in head.named_parameters() if p.grad is None]
     assert not starved, f"parameters never used: {starved[:5]}"
+    unstable = [name for name, p in head.named_parameters()
+                if not torch.isfinite(p.grad).all()]
+    assert not unstable, f"non-finite gradients: {unstable[:5]}"
 
     head.eval()
     with torch.no_grad():
@@ -121,17 +124,37 @@ def test_output_contract_and_gradients():
 
 
 def test_survives_non_finite_intrinsics():
-    """An unconverged GEM can emit inf focal lengths; that must not reach the output."""
+    """An unconverged GEM can emit inf focal lengths; that must not reach the output.
+
+    Nor the gradients. GEM's intrinsics carry gradient, so without an explicit detach the
+    sweep backpropagates into the camera head, where 0 * inf = NaN -- training checks the
+    global gradient norm and aborts on a non-finite one, so this fails the run at step 0.
+    The pose is evidence here, supervised by the camera loss, not something to optimise
+    through the warp; asserting that no gradient reaches it pins that decision down.
+    """
     torch.manual_seed(0)
     head = _make()
     images, extrinsics, intrinsics = _geometry()
     intrinsics[:, :, 0, 0] = float('inf')
     intrinsics[:, :, 1, 1] = float('inf')
+    intrinsics.requires_grad_(True)
+    extrinsics.requires_grad_(True)
 
-    outputs = head(_pyramid(), _BASE // _PATCH, _BASE // _PATCH, _FRAMES,
+    features = [f.requires_grad_(True) for f in _pyramid()]
+    outputs = head(features, _BASE // _PATCH, _BASE // _PATCH, _FRAMES,
                    images=images, extrinsics=extrinsics, intrinsics=intrinsics)
     assert all(torch.isfinite(o).all() for o in outputs), \
         'non-finite intrinsics leaked into the prediction'
+
+    sum(o.float().mean() for o in outputs).backward()
+    assert intrinsics.grad is None and extrinsics.grad is None, \
+        'the sweep must not backpropagate into the pose'
+    bad = [name for name, p in head.named_parameters()
+           if p.grad is not None and not torch.isfinite(p.grad).all()]
+    assert not bad, f'non-finite gradients in the head: {bad[:5]}'
+    leaked = [i for i, f in enumerate(features)
+              if f.grad is not None and not torch.isfinite(f.grad).all()]
+    assert not leaked, f'non-finite gradient reached backbone levels {leaked}'
 
 
 def test_zero_baseline_is_survivable():

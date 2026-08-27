@@ -134,8 +134,13 @@ class DPTHeadCostVolumeConvNeXt(nn.Module):
         batch = total // frame_length
         descriptors = descriptors.reshape(batch, frame_length, -1, height, width)
 
-        K = scale_intrinsics(intrinsics.float(), images.shape[-2:], (height, width))
-        extrinsics = extrinsics.float()
+        # Detached on purpose, for two reasons. Geometrically the pose is evidence here,
+        # not something to optimise through the warp -- it has its own supervision via the
+        # camera loss, and IGEV-MVS treats the projection matrices as data. Numerically an
+        # unconverged GEM emits inf focal lengths, and a gradient flowing back through that
+        # yields 0 * inf = NaN in the camera head, which kills the gradient norm at step 0.
+        K = scale_intrinsics(intrinsics.detach().float(), images.shape[-2:], (height, width))
+        extrinsics = extrinsics.detach().float()
         samples = depth_hypotheses(self.depth_min, self.depth_max, self.num_sample,
                                    height, width, descriptors.device, torch.float32)
 
