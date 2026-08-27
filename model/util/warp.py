@@ -157,3 +157,68 @@ def photometric_error_map(images, depth, K, extrinsics, offsets=(-1, 1), eps=1e-
 # (e.g. a projected DPT feature or a HOG descriptor). The warping/residual computation is
 # identical, so we reuse ``photometric_error_map`` which already averages over the channel dim.
 signal_error_map = photometric_error_map
+
+
+def plane_sweep_warp(src_feat, depth_samples, K_ref, K_src, ext_ref, ext_src, eps=1e-6):
+    """Warp source features into the reference frame under a whole set of depth hypotheses.
+
+    This is the plane sweep that turns matching between two arbitrarily posed views into a
+    1D search: instead of scanning an epipolar line, we scan a list of candidate depths and
+    record where each one lands. ``photometric_error_map`` above is the D=1 special case,
+    evaluated at the depth the network currently believes.
+
+    Args:
+        src_feat: (N,C,H,W) source-frame features to sample.
+        depth_samples: (N,D,H,W) positive metric depth hypotheses for the reference frame.
+        K_ref, K_src: (N,3,3) intrinsics at (H,W).
+        ext_ref, ext_src: (N,4,4) world->camera extrinsics (OpenCV).
+    Returns:
+        warped: (N,C,D,H,W) source features sampled at the reference pixels, per hypothesis.
+        valid: (N,1,D,H,W) float mask of hypotheses that land in front of the source camera
+            and inside its image.
+    """
+    N, C, H, W = src_feat.shape
+    D = depth_samples.shape[1]
+    device, dtype = src_feat.device, src_feat.dtype
+
+    vv, uu = torch.meshgrid(
+        torch.arange(H, device=device, dtype=dtype),
+        torch.arange(W, device=device, dtype=dtype),
+        indexing='ij',
+    )
+    pix = torch.stack([uu, vv, torch.ones_like(uu)], dim=0).reshape(3, -1)
+    pix = pix.unsqueeze(0).expand(N, -1, -1)                       # (N,3,H*W)
+
+    # Compose reference-pixel -> source-pixel once, so the depth sweep is a single
+    # broadcast multiply rather than D separate projections.
+    M = torch.bmm(ext_src.to(dtype), torch.inverse(ext_ref.to(dtype)))
+    KR = torch.bmm(K_src.to(dtype), M[:, :3, :3])                  # (N,3,3)
+    Kt = torch.bmm(K_src.to(dtype), M[:, :3, 3:4])                 # (N,3,1)
+    ray = torch.bmm(torch.inverse(K_ref.to(dtype)), pix)           # (N,3,H*W)
+    base = torch.bmm(KR, ray)                                      # (N,3,H*W)
+
+    proj = (base.unsqueeze(2) * depth_samples.reshape(N, 1, D, H * W)
+            + Kt.reshape(N, 3, 1, 1))                              # (N,3,D,H*W)
+    z = proj[:, 2:3]
+    in_front = z > eps
+    z_safe = torch.where(in_front, z, torch.full_like(z, eps))
+    gx = 2.0 * (proj[:, 0:1] / z_safe) / (W - 1) - 1.0
+    gy = 2.0 * (proj[:, 1:2] / z_safe) / (H - 1) - 1.0
+
+    # A non-finite projection means there is no correspondence, which is the same thing
+    # "out of frame" already means -- so map it out of bounds and let the shared valid
+    # test below reject it. Without this, an intrinsics matrix that has not converged yet
+    # (GEM's focal length can still overflow to inf early in training) makes grid_sample
+    # return NaN, and NaN * valid is still NaN however carefully the mask is applied.
+    out_of_bounds = torch.full_like(gx, 2.0)
+    gx = torch.where(torch.isfinite(gx), gx, out_of_bounds)
+    gy = torch.where(torch.isfinite(gy), gy, out_of_bounds)
+
+    grid = torch.cat([gx, gy], dim=1).permute(0, 2, 3, 1)          # (N,D,H*W,2)
+    warped = F.grid_sample(
+        src_feat, grid.reshape(N, D * H, W, 2),
+        mode='bilinear', padding_mode='zeros', align_corners=True)
+    warped = warped.reshape(N, C, D, H, W)
+
+    valid = (in_front & (gx.abs() <= 1.0) & (gy.abs() <= 1.0))
+    return warped, valid.reshape(N, 1, D, H, W).to(dtype)

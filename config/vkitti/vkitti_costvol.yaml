@@ -1,0 +1,47 @@
+# @package _global_
+# IGEV-MVS ported to consecutive frames -- a direct port, not a redesign.
+#
+# The DPT stack is replaced outright: the backbone pyramid now feeds a cost volume
+# (level 1 supplies matching features, levels 2-3 guide the 3D aggregation) and the
+# depth comes out of the volume via softargmin + ConvGRU iterations.
+#
+# Compare against vkitti_ms_gem, which carries the same GEM and the same pose loss and
+# differs only in the decoder. Comparing against a GEM-free arm would confound the
+# decoder with ~268M parameters of camera module.
+#
+# Two settings deviate from IGEV-MVS's defaults, both for memory, and both are
+# configurations the paper itself reports: the volume sits at stride 8 rather than
+# stride 4 (their Table 3: 1/8 costs EPE 0.47 -> 0.49) with 32 hypotheses rather than 64.
+defaults:
+  - vkitti_ms_gem
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_costvol
+  log_dir: ./logs/vkitti_costvol
+  grad_accum: 2
+
+dataloader:
+  batch_size: 16
+
+model:
+  decoder: DPTHeadCostVolumeConvNeXt
+  decoder_kwargs:
+    volume_level: 1
+    num_sample: 32
+    num_groups: 8
+    iters: 8
+    corr_radius: 4
+    corr_levels: 2
+    # VKITTI's supervised range; train.py caps this dataset at 80m too.
+    depth_min: 0.5
+    depth_max: 80.0
+    warp_offsets: [-1, 1]
+
+# IGEV's own weighting: gamma^(N-i) over the iteration sequence, finest last. Unlike the
+# 4-scale case where gamma=0.8 was a clear negative result, this is the regime the
+# weighting was designed for -- a sequence of refinements of one quantity.
+# 9 = the softargmin initialisation plus 8 iterations.
+multiscale_gamma: 0.9
+multiscale_scales: 9
+project_name: vkitti_costvol
