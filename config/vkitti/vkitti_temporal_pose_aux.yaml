@@ -1,0 +1,35 @@
+# @package _global_
+# Training-only pose auxiliary on the strongest architecture baseline.
+#
+# use_gem=true + use_astt=false means pose features are NOT injected into the
+# depth branch: GEM contributes only an auxiliary camera task through the shared
+# ConvNeXt LoRA features. This isolates multi-task supervision from geometry
+# conditioning. At deployment the GEM tensors can be stripped with no change to
+# the depth data path (verify exact output parity before claiming zero overhead).
+defaults:
+  - vkitti_temporal_carve_full
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_temporal_pose_aux
+  log_dir: ./logs/vkitti_temporal_pose_aux
+
+model:
+  encoder_decoder_only: false
+  use_gem: true
+  use_astt: false
+
+pose_flag: true
+inference:
+  clip_len: 4
+
+loss:
+  objective: video
+  kwargs:
+    alpha: 0.5
+    stable_scale: 10.0
+    # Historical CameraLoss silently discarded FoV error. This arm supervises
+    # the whole camera, not only R/T, so downstream geometry can use its K.
+    camera_weight_focal: 0.5
+
+project_name: vkitti_temporal_pose_aux

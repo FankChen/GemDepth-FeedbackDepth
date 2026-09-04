@@ -29,12 +29,12 @@ class MultiScaleVideoDepthLoss(nn.Module):
 
     def __init__(self, alpha=0.5, beta=0.2, scales=4, trim=0, stable_scale=10,
                  reduction="batch-based", pose_flag=True, scale_weights=None,
-                 normalize_scale_weights=True):
+                 normalize_scale_weights=True, camera_weight_focal=0.0):
         super().__init__()
         self.beta = beta
         self.spatial_loss = TrimmedProcrustesLoss(alpha=alpha, scales=scales, trim=trim, reduction=reduction)
         self.stable_loss = TemporalGradientMatchingLoss(trim=trim, reduction=reduction, temp_grad_decay=0.5, temp_grad_scales=1)
-        self.camera_loss = Cameraloss()
+        self.camera_loss = Cameraloss(weight_focal=camera_weight_focal)
         self.stable_scale = stable_scale
         self.data_loss = TrimmedMAELoss(trim=trim, reduction=reduction)
         self.pose_flag = pose_flag
@@ -98,9 +98,12 @@ class MultiScaleVideoDepthLoss(nn.Module):
                 prediction=pred.flatten(0, 1), target=tinv.flatten(0, 1), mask=m.flatten(0, 1).float())
 
             # Temporal-stability loss after a per-sample scale+shift alignment.
-            scale, shift = compute_scale_and_shift(pred.flatten(1, 2), tinv.flatten(1, 2), m.flatten(1, 2))
-            pred_aligned = scale.view(-1, 1, 1, 1) * pred + shift.view(-1, 1, 1, 1)
-            stable = self.stable_loss(prediction=pred_aligned, target=tinv, mask=m) * self.stable_scale
+            if self.stable_scale > 0:
+                scale, shift = compute_scale_and_shift(pred.flatten(1, 2), tinv.flatten(1, 2), m.flatten(1, 2))
+                pred_aligned = scale.view(-1, 1, 1, 1) * pred + shift.view(-1, 1, 1, 1)
+                stable = self.stable_loss(prediction=pred_aligned, target=tinv, mask=m) * self.stable_scale
+            else:
+                stable = pred.new_zeros(())
             scale_total = spatial + stable
 
             # Keep the unweighted loss of every prediction level visible for
@@ -127,8 +130,10 @@ class MultiScaleVideoDepthLoss(nn.Module):
         if self.pose_flag:
             extrinsic_gt = torch.stack(extrinsic_gt, dim=1)
             finest = torch.clamp(predictions[-1], min=5e-3, max=1500)
-            loss_dict['pose_loss'], loss_dict['trans'], loss_dict['quat'] = self.camera_loss(
-                finest, target, mask, extrinsic_gt, intrinsic_gt, extrinsic_pred, pose_enc_list)
+            (loss_dict['pose_loss'], loss_dict['trans'], loss_dict['quat'],
+             loss_dict['focal']) = self.camera_loss(
+                finest, target, mask, extrinsic_gt, intrinsic_gt,
+                extrinsic_pred, pose_enc_list)
             total = total + loss_dict['pose_loss'] * self.beta
 
         loss_dict['total_loss'] = total

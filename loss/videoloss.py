@@ -434,7 +434,8 @@ class compute_camera_loss(nn.Module):
         # Compute total weighted camera loss
         total_camera_loss = (
             avg_loss_T * self.weight_trans +
-            avg_loss_R * self.weight_rot 
+            avg_loss_R * self.weight_rot +
+            avg_loss_FL * self.weight_focal
         )
 
         # Return loss dictionary with individual components
@@ -442,12 +443,15 @@ class compute_camera_loss(nn.Module):
             "loss_camera": total_camera_loss,
             "loss_T": avg_loss_T,
             "loss_R": avg_loss_R,
+            "loss_FL": avg_loss_FL,
         }
     
 class Cameraloss(nn.Module):
-    def __init__(self,):
+    def __init__(self, weight_focal=0.0):
         super().__init__()
-        self.compute_camera_loss=compute_camera_loss()
+        # Historical runs computed focal/FoV error but omitted it from the total.
+        # Keep 0 as the compatibility default; geometry-aware objectives opt in.
+        self.compute_camera_loss=compute_camera_loss(weight_focal=weight_focal)
 
     def closed_form_inverse_se3(self,se3, R=None, T=None):
         """
@@ -561,15 +565,18 @@ class Cameraloss(nn.Module):
         loss_camera=camera_loss_dict["loss_camera"]
         loss_T=camera_loss_dict['loss_T']
         loss_R=camera_loss_dict['loss_R']
-        return loss_camera,loss_T,loss_R
+        loss_FL=camera_loss_dict['loss_FL']
+        return loss_camera,loss_T,loss_R,loss_FL
 
 class VideoDepthLoss(nn.Module):
-    def __init__(self, alpha=0.5, beta=0.2, scales=4, trim=0, stable_scale=10, reduction="batch-based", pose_flag=True):
+    def __init__(self, alpha=0.5, beta=0.2, scales=4, trim=0,
+                 stable_scale=10, reduction="batch-based", pose_flag=True,
+                 camera_weight_focal=0.0):
         super().__init__()
         self.beta = beta
         self.spatial_loss = TrimmedProcrustesLoss(alpha=alpha, scales=scales, trim=trim, reduction=reduction)
         self.stable_loss = TemporalGradientMatchingLoss(trim=trim, reduction=reduction, temp_grad_decay=0.5, temp_grad_scales=1)
-        self.camera_loss = Cameraloss()
+        self.camera_loss = Cameraloss(weight_focal=camera_weight_focal)
         self.stable_scale = stable_scale
         self.data_loss = TrimmedMAELoss(trim=trim, reduction=reduction)
         self.pose_flag = pose_flag
@@ -587,14 +594,20 @@ class VideoDepthLoss(nn.Module):
         #ssi, gm, tgm
         loss_dict['spatial_loss'],loss_dict['ssi'],loss_dict['gm'] = self.spatial_loss(prediction=prediction.flatten(0, 1), target=target_inverse.flatten(0, 1), mask=mask.flatten(0, 1).float())
         total += loss_dict['spatial_loss']
-        scale, shift = compute_scale_and_shift(prediction.flatten(1,2), target_inverse.flatten(1,2), mask.flatten(1,2))
-        prediction = scale.view(-1, 1, 1, 1) * prediction + shift.view(-1, 1, 1, 1)
-        loss_dict['stable_loss'] = self.stable_loss(prediction=prediction, target=target_inverse, mask=mask) * self.stable_scale
+        if self.stable_scale > 0:
+            scale, shift = compute_scale_and_shift(prediction.flatten(1,2), target_inverse.flatten(1,2), mask.flatten(1,2))
+            prediction = scale.view(-1, 1, 1, 1) * prediction + shift.view(-1, 1, 1, 1)
+            loss_dict['stable_loss'] = self.stable_loss(prediction=prediction, target=target_inverse, mask=mask) * self.stable_scale
+        else:
+            loss_dict['stable_loss'] = prediction.new_zeros(())
         total += loss_dict['stable_loss']
         #camera_loss
         if self.pose_flag:
             extrinsic_gt=torch.stack(extrinsic_gt,dim=1)
-            loss_dict['pose_loss'],loss_dict['trans'],loss_dict['quat']=self.camera_loss(prediction, target, mask, extrinsic_gt, intrinsic_gt, extrinsic_pred, pose_enc_list)
+            (loss_dict['pose_loss'], loss_dict['trans'], loss_dict['quat'],
+             loss_dict['focal']) = self.camera_loss(
+                prediction, target, mask, extrinsic_gt, intrinsic_gt,
+                extrinsic_pred, pose_enc_list)
             total += loss_dict['pose_loss'] * self.beta
         loss_dict['total_loss'] = total
         return loss_dict

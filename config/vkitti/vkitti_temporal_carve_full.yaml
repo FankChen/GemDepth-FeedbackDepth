@@ -1,0 +1,19 @@
+# @package _global_
+# Matched objective baseline for the CARVE loss matrix.
+# This makes the historical VideoDepthLoss terms explicit before removing any
+# component: per-frame SSI + spatial gradient + clip-level temporal gradient.
+defaults:
+  - vkitti_convnext_temporal_baseline
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_temporal_carve_full
+  log_dir: ./logs/vkitti_temporal_carve_full
+
+loss:
+  objective: video
+  kwargs:
+    alpha: 0.5
+    stable_scale: 10.0
+
+project_name: vkitti_temporal_carve_full

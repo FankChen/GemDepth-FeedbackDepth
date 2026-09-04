@@ -1,0 +1,18 @@
+# @package _global_
+# CARVE objective ablation L1: remove only spatial gradient matching.
+# Compare against vkitti_temporal_carve_full (alpha=0.5, stable=10).
+defaults:
+  - vkitti_temporal_carve_full
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_temporal_carve_no_sg
+  log_dir: ./logs/vkitti_temporal_carve_no_sg
+
+loss:
+  objective: video
+  kwargs:
+    alpha: 0.0
+    stable_scale: 10.0
+
+project_name: vkitti_temporal_carve_no_sg

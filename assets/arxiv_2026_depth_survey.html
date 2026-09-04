@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arXiv 2026 深度估计新工作 —— 对本仓库开放问题的映射</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --line:#e3e6ea; --text:#1f2328; --muted:#6b7280;
+    --good:#0f7b3f; --goodbg:#e8f5ee; --bad:#b42318; --badbg:#fdecea;
+    --warn:#8a5a00; --warnbg:#fff6e5; --info:#1f4d8f; --infobg:#eaf1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+       line-height:1.65;font-size:15px}
+  .wrap{max-width:1120px;margin:0 auto;padding:32px 24px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:18px;margin-bottom:28px}
+  h1{font-size:26px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:10px;border-left:4px solid #2f6feb}
+  h3{font-size:16px;margin:22px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:center;vertical-align:top}
+  th{background:#f0f2f5;font-weight:600}
+  td.l,th.l{text-align:left}
+  tbody tr:nth-child(even){background:#fafbfc}
+  .win{background:var(--goodbg);color:var(--good);font-weight:700}
+  .lose{background:var(--badbg);color:var(--bad)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+  code{background:#f0f2f5;border-radius:4px;padding:1px 5px;font-size:13px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  pre{background:#f6f8fa;border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+      overflow-x:auto;font-size:12.5px;line-height:1.5}
+  .box{border-radius:8px;padding:12px 16px;margin:12px 0;border:1px solid}
+  .box.good{background:var(--goodbg);border-color:#b7e0c8}
+  .box.bad{background:var(--badbg);border-color:#f5c2bd}
+  .box.warn{background:var(--warnbg);border-color:#f0dcae}
+  .box.info{background:var(--infobg);border-color:#c2d5f0}
+  .box b{display:block;margin-bottom:4px}
+  ul{margin:8px 0;padding-left:22px} li{margin:4px 0}
+  a{color:#1f4d8f}
+  .tag{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;
+       border:1px solid var(--line);background:#f0f2f5;color:var(--muted);margin-right:6px}
+  .tag.p0{background:#fdecea;border-color:#f5c2bd;color:var(--bad)}
+  .tag.p1{background:#fff6e5;border-color:#f0dcae;color:var(--warn)}
+  .tag.p2{background:#eaf1fb;border-color:#c2d5f0;color:var(--info)}
+  .tag.done{background:#e8f5ee;border-color:#b7e0c8;color:var(--good)}
+  .cost{font-size:12.5px;color:var(--muted)}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);
+         color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>arXiv 2026 深度估计新工作 —— 对本仓库开放问题的映射</h1>
+  <div class="sub">
+    PP-DPT · 分支 <span class="mono">feat/registry-mixdata</span> ·
+    检索日期 2026-08-24 · 整理 2026-08-26 ·
+    检索口径：arXiv API，<span class="mono">abs:"video depth"</span> / <span class="mono">abs:"depth estimation"</span> /
+    <span class="mono">abs:"coarse-to-fine" AND abs:"depth"</span>，按提交日期倒序
+  </div>
+</header>
+
+<!-- ============ 0 ============ -->
+<h2>0. 一句话结论</h2>
+<div class="box info">
+  <b>这批新工作里，真正对我们有杠杆的只有四条，其余是背景。</b>
+  ① CVPR'26 的 <b>CARVE</b> 用系统消融给出「<u>梯度匹配 loss 可能是负收益</u>」「<u>per-sequence + per-frame 双对齐才对</u>」——
+  我们的 <code>VideoDepthLoss</code> 两条都踩了，而且是<b>一行改动就能验</b>的；
+  ② ICLR'26 的 <b>PAGE-4D</b> 指出位姿头与几何头在动态区域<u>天然冲突</u>，这给了 Sintel 长尾崩溃一个可证伪的机理假设；
+  ③ <b>SelfEvo</b> 用<u>无标注真实视频自蒸馏</u>拿到 video depth +36.5%，正好绕开我们「Stage-2 拿不到 IRS / 野外立体视频」的死结；
+  ④ <b>PXDepth</b> 把多尺度解码头的天花板归到 <u>tokenization 粒度</u> 而非尺度数量——
+  这提示应检查真正的高分辨率图像特征流；我们现有 full-res arm 只插值已有特征，
+  <b>不能据此验证或否定 PXDepth 的机制</b>。
+</div>
+<div class="box bad">
+  <b>对多尺度解码头这条线，外部证据和我们自己的证据现在指向同一个方向：收线。</b>
+  见 <a href="vkitti_multiscale_dashboard.html">VKITTI 八 arm 看板</a>——八个 arm 无一赢过 temporal，差距是种子噪声带的 10–18 倍。
+  新论文里 DPNeXt（减参 78.6% 反而更好）、VDPP（精修该在低分辨率做）、PXDepth（插值补不回 tokenization 损失）
+  都是同方向的旁证。<u>继续在现有头上加模块，先验概率很低。</u>
+</div>
+
+<!-- ============ 1 ============ -->
+<h2>1. 对照矩阵：我们的开放问题 ↔ 外部工作 ↔ 可做的动作</h2>
+<div class="card">
+<table>
+  <thead><tr>
+    <th class="l" style="width:22%">我们的开放问题</th>
+    <th class="l" style="width:26%">最新工作说了什么</th>
+    <th class="l" style="width:34%">可做的动作</th>
+    <th style="width:18%">状态 / 成本</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td class="l">loss 里三项（SSI / L_gm / L_tgm）从没拆开验过，
+          只做过「video loss 整体 vs 纯 L2」的粗对照</td>
+      <td class="l"><b>CARVE</b>：gradient-based loss 与 confidence-aware loss
+          <b>可能反而有害</b></td>
+      <td class="l"><code>TrimmedProcrustesLoss</code> 的 <code>alpha</code> 从 0.5 打到 0，单变量消融</td>
+      <td><span class="tag p0">P0</span><br><span class="cost">1×20k 步</span></td>
+    </tr>
+    <tr>
+        <td class="l">当前 spatial SSI 把 B×T 展平成 batch，实际是<b>逐帧</b>仿射；
+          evaluator 则整段序列只拟合一组仿射，训练/评测 gauge 不一致</td>
+      <td class="l"><b>CARVE</b>：per-sequence + per-frame <b>联合</b>对齐更好；
+          local region 对齐反而更差</td>
+      <td class="l">保留逐帧项并加一路 per-sequence 仿射回归项；检验长协议劣化</td>
+      <td><span class="tag p0">P0</span><br><span class="cost">1×20k 步</span></td>
+    </tr>
+    <tr>
+      <td class="l"><code>L_cam</code> 孤立监督位姿，位姿与深度之间<b>没有任何一致性约束</b></td>
+      <td class="l"><b>CARVE</b>：consistency loss 强制 depth / camera / pointmap 三者对齐</td>
+        <td class="l">不能原样照搬：本模型没有独立 point-map 分支，同一 depth+camera 两侧会退化为恒等式；
+          先做 K/T/Z gauge 与 warp oracle，再决定是否增加独立对应分支</td>
+        <td><span class="tag p0">P0 诊断</span><br><span class="cost">零训练</span></td>
+    </tr>
+    <tr>
+      <td class="l">Sintel 长尾：23 条序列 AbsRel 0.054–1.53，
+          均值 0.32 但中位数 0.216，被最差 2–3 条拉爆</td>
+      <td class="l"><b>PAGE-4D</b>：位姿估计要<b>抑制</b>动态区域，几何重建要<b>建模</b>动态区域，
+          两者在共享 backbone 上打架</td>
+      <td class="l"><b>先做零训练诊断</b>：dump 崩溃序列的 <code>pose_enc_list</code>，
+          看 GEM 自估位姿误差是否同步爆</td>
+      <td><span class="tag p0">P0</span><br><span class="cost">零训练 ~1h</span></td>
+    </tr>
+    <tr>
+      <td class="l">Stage-2 严格复现不可行（IRS 只有 OneDrive 入口且被两边代理挡；
+          野外立体视频是作者自采）</td>
+      <td class="l"><b>SelfEvo</b>：无标注视频自蒸馏，
+          时空上下文不对称当监督信号，video depth 最高 +36.5%，跨 base model 通用</td>
+      <td class="l">Stage-1 ckpt 当 teacher（seq 32 全序列），
+          student 看短窗口 / 丢帧，在任意真实视频上自蒸馏</td>
+      <td><span class="tag p2">P2</span><br><span class="cost">需写 pipeline</span></td>
+    </tr>
+    <tr>
+      <td class="l">数据配比失衡：VKITTI2 1.4%、DynamicReplica 1.3%，
+          论文是均匀采样各 20%</td>
+      <td class="l"><b>CARVE</b>：数据多样性 / 质量的 scaling 在 SOTA 上仍有收益；
+          <b>DepthART</b>：bias-resistant sampling，同预算下减分布偏差</td>
+      <td class="l"><code>dataset/mix_policies.py</code> 的 <code>uniform</code> 策略</td>
+      <td><span class="tag done">✅ 已实现</span><br><span class="cost">待起 arm</span></td>
+    </tr>
+    <tr>
+      <td class="l">漏了多分辨率训练（论文 A.2 用 6 种分辨率，我们只有 518×518）</td>
+      <td class="l">—（这是已知的复现偏差，不是新方法）</td>
+      <td class="l">与 uniform 采样<b>合成一个 arm</b>：两者都是偏差修正，
+          不是新方法，不必拆开</td>
+      <td><span class="tag p1">P1</span><br><span class="cost">1×20k 步</span></td>
+    </tr>
+    <tr>
+      <td class="l">多尺度头八 arm 全输 temporal；
+          但现有 <code>finealone</code> vs <code>norm</code> 同时改变最细尺度权重</td>
+      <td class="l"><b>PXDepth</b>：大 patch ViT + 卷积解码器，
+          coarse tokenization 削弱的像素级线索<b>上采样补不回来</b></td>
+        <td class="l">现有结果只支持“不继续盲加头”；若再做结构，应使用 raw/high-resolution feature stream，
+          而不是把低分辨率特征插值到 full res</td>
+        <td><span class="tag p2">P2</span><br><span class="cost">先补纯对照</span></td>
+    </tr>
+    <tr>
+      <td class="l">深度反馈只在<b>空间轴</b>（上一尺度 → 下一尺度）试过，
+          是 E2a 那次最便宜的正杠杆</td>
+      <td class="l"><b>VeloDepth</b>：光流 warping + learned residual corrections，
+          把上一<b>帧</b>的 depth feature 与 prediction 一起传播</td>
+      <td class="l">同一个 idea 换到时间轴，有我们自己的正结果背书</td>
+      <td><span class="tag p1">P1</span><br><span class="cost">1×20k 步</span></td>
+    </tr>
+    <tr>
+      <td class="l">ASTT 的时序注意力是隐式的（论文原话 “latent point-level correspondences”）</td>
+      <td class="l"><b>Tracktention</b>：用 point tracks <b>显式</b>做时序对齐，
+          可插入 ViT，把 image-only 模型升级成 video 模型</td>
+      <td class="l">把 ASTT 的 latent 对应显式化——结构清晰的 “GemDepth++” 假设</td>
+      <td><span class="tag p2">P2</span><br><span class="cost">改结构</span></td>
+    </tr>
+    <tr>
+      <td class="l">评测协议一直在换（110 帧 vs 500 帧、视差对齐 vs 米制对齐），
+          历史数字难横比</td>
+      <td class="l"><b>E3D-Bench</b>：首个 3D 几何基础模型系统 benchmark，
+          16 个模型，标准化数据 / 协议 / 指标，含 video depth</td>
+      <td class="l">锁死 500 帧为主协议；考虑直接采 E3D-Bench 做外部可比</td>
+      <td><span class="tag p1">P1</span><br><span class="cost">基建</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============ 2 ============ -->
+<h2>2. loss 设计 —— 最高价值，而且是一行改动</h2>
+<div class="card">
+<h3>CARVE：Unlocking the Power of Critical Factors for 3D Visual Geometry Estimation</h3>
+<div class="sub" style="margin-bottom:10px">
+  <a href="https://arxiv.org/abs/2604.21713">arXiv:2604.21713</a> · CVPR 2026 ·
+  Guangkai Xu, Hua Geng, …, Hao Chen, Chunhua Shen（浙大 AIM 组）·
+  <a href="https://github.com/aim-uofa/CARVE">github.com/aim-uofa/CARVE</a>
+</div>
+
+<div class="box info">
+  <b>它的出发点和我们的困境几乎一模一样</b>
+  <i>“multi-frame models usually produce better cross-frame consistency,
+  yet they often underperform strong per-frame methods on single-frame accuracy.”</i>
+  ——这正是我们「多尺度 / GEM 一路加时序与几何模块，却始终追不上朴素 temporal」的处境。
+  它没有提新架构就发了 CVPR，靠的是把消融做干净。
+</div>
+
+<table>
+  <thead><tr>
+    <th class="l" style="width:30%">CARVE 的消融结论</th>
+    <th class="l" style="width:38%">我们代码里的现状</th>
+    <th class="l" style="width:32%">动作</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td class="l"><b>① gradient-based loss 可能反而有害</b></td>
+      <td class="l"><code>loss/videoloss.py</code> 的 <code>TrimmedProcrustesLoss.__alpha = 0.5</code>，
+          即 <code>total = ssi + 0.5·gm</code>，正是论文的 <code>L_ssi + 0.5·L_gm</code>。
+          <b>这个 0.5 从头到尾没动过、也没验过。</b></td>
+      <td class="l"><code>alpha=0</code> 的单变量消融。
+          GemDepth 论文本身也没做这个 ablation，
+          <b>拿到任一方向都是新信息</b>。</td>
+    </tr>
+    <tr>
+      <td class="l"><b>② per-sequence + per-frame 联合对齐更好；
+          local region 对齐反而更差</b></td>
+      <td class="l"><code>compute_scale_and_shift</code> 在 <code>flatten(1,2)</code> 之后对
+          dim(1,2) 求和 → <b>整段 clip 只有一组 (scale, shift)</b>，纯 per-sequence。</td>
+      <td class="l">加一路 per-frame 仿射对齐项。
+          注意 CARVE 说 local region 更差，
+          <b>不要顺手做成分块对齐</b>。</td>
+    </tr>
+    <tr>
+      <td class="l"><b>③ 数据多样性 / 质量 scaling
+          即使在 SOTA 上仍有收益</b></td>
+      <td class="l">我们的配比偏差已量化：PointOdyssey 36.2% / TartanAir 35.4% /
+          MVS-Synth 25.8% / VKITTI2 1.4% / DynamicReplica 1.3%。</td>
+      <td class="l"><code>mix_policies.uniform</code> 已实现，待起 arm（§4）。</td>
+    </tr>
+    <tr>
+      <td class="l"><b>④ 新增 consistency loss：
+          强制 depth / camera / pointmap 三者对齐</b></td>
+      <td class="l"><code>CameraLoss</code> 只把 <code>pose_enc_list</code> 与 GT pose 比 L1，
+          <b>位姿与深度之间没有任何一致性约束</b>。</td>
+      <td class="l">用 GEM 自估位姿把 t 帧深度 warp 到 t+1 帧比对。
+          <b>这条最像能写进论文的方法贡献</b>，
+          且复用已有的 <code>camera_head</code>，不加新模块。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <b>⚠ 落地时的代码组织约束</b>
+  <code>train.py:457</code> 是 <code>VideoDepthLoss(pose_flag=pose_flag)</code>，
+  <code>alpha</code> 一路硬编码到 <code>TrimmedProcrustesLoss</code> 默认值。
+  按仓库硬规则（核心代码不堆 if/else，走注册表），
+  正确做法是<b>照 <code>mix_registry</code> / <code>freeze_registry</code> 的样子加一个 loss policy 注册表</b>，
+  新 loss = 新模块 + <code>@register</code>，差异走 config，而不是给 <code>train.py</code> 再加分支。
+</div>
+</div>
+
+<!-- ============ 3 ============ -->
+<h2>3. Sintel 长尾崩溃 —— 一个可证伪的机理假设</h2>
+<div class="card">
+<div class="box info">
+  <b>已知事实</b>
+  Sintel 23 条序列 AbsRel 从 <b>0.054</b> 到 <b>1.53</b>，均值 0.3195 但中位数只有 0.2163，
+  被最差 2–3 条（RMSE 19.1 / 25.5）拉高。
+  <u>这是长尾问题，不是普遍差</u>——改进应该针对那几条崩溃序列。
+</div>
+
+<h3>PAGE-4D：Disentangled pose and geometry estimation</h3>
+<div class="sub" style="margin-bottom:10px">
+  <a href="https://arxiv.org/abs/2510.17568">arXiv:2510.17568</a> · ICLR 2026 ·
+  <a href="https://page4d.github.io/">page4d.github.io</a>
+</div>
+<p style="margin:6px 0">核心张力，原文：</p>
+<pre>accurate camera pose estimation requires SUPPRESSING dynamic regions,
+while geometry reconstruction requires MODELING them</pre>
+<p style="margin:6px 0">
+  它的解法是 dynamics-aware aggregator 预测一张 dynamics mask：对 pose 分支抑制运动线索、对 geometry 分支放大。
+</p>
+
+<div class="box warn">
+  <b>为什么这可能就是我们 Sintel 崩溃的机理</b>
+  GemDepth 的 <code>L_cam</code> 梯度路径是
+  <code>camera_head → global/frame_blocks → camera_token/register_token → feats[3]</code>，
+  与 depth head <b>共享同一个 backbone</b>。
+  而 Sintel 恰好是<b>合成非刚体 + 大幅镜头运动</b>——正是这个张力最尖锐的场景。
+  KITTI（刚体为主）只有 1 条 0.1733 的轻微离群，也与该假设一致。
+</div>
+
+<div class="box good">
+  <b>✅ 建议先做这个：零训练、~1 小时、二值结论</b>
+  对那 2–3 条崩溃序列，推理时把 <code>pose_enc_list</code> dump 出来，
+  看 GEM 自估位姿的误差是否<b>在同样的序列上同步爆炸</b>。
+  <ul style="margin:6px 0 0">
+    <li><b>位姿也爆</b> → 坐实 pose / geometry 打架，PAGE-4D / TrajVG 路线有据可依，可以立项</li>
+    <li><b>位姿正常</b> → 干净排除该假设，省掉一整条错误方向</li>
+  </ul>
+  不用训练、不用重跑评测，只要改推理脚本 dump 一个张量。
+</div>
+
+<h3>同族的三篇（落地难度递增）</h3>
+<table>
+  <thead><tr><th class="l" style="width:26%">论文</th><th class="l">做法</th><th class="l" style="width:30%">对我们的可移植性</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="l"><b>TrajVG</b><br><a href="https://arxiv.org/abs/2602.04439">2602.04439</a></td>
+      <td class="l">pose consistency 由 <b>static track anchors</b> 驱动，
+          显式<b>切断动态区域回传到位姿的梯度</b></td>
+      <td class="l"><b>最容易落地</b>：只需在 <code>CameraLoss</code> 上加一个静态掩码，
+          不改结构</td>
+    </tr>
+    <tr>
+      <td class="l"><b>4DVGGT-D</b><br><a href="https://arxiv.org/abs/2605.12027">2605.12027</a></td>
+      <td class="l"><b>training-free</b> 渐进解耦：先稳位姿、再几何精修，
+          dynamic-mask-guided pose decoupling</td>
+      <td class="l">推理期方法，可当零成本对照</td>
+    </tr>
+    <tr>
+      <td class="l"><b>StereoDiff</b><br><a href="https://arxiv.org/abs/2506.20756">2506.20756</a> · ICCV'25</td>
+      <td class="l">静态区域交给跨帧 stereo matching（强 3D 线索），
+          动态区域交给视频扩散；附频域分析证明两者互补</td>
+      <td class="l">思想可借（静态 / 动态分治），
+          但引入扩散分支不符合我们的预算</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============ 4 ============ -->
+<h2>4. Stage-2 数据缺口 —— 有替代路线了</h2>
+<div class="card">
+<div class="box info">
+  <b>已验证的前提</b>
+  Stage-2-lite 是<b>干净的 null result</b>（kitti +0.9% / sintel +0.9% / bonn −0.4%，全在 ±1% 内）。
+  → 机制 B（消除移动靶）与 C（释放容量）均不成立，
+  <u>论文 Stage-2 的收益几乎全部来自「引入真实数据」，而非「冻结 GEM」这个训练技巧</u>。
+  而真实数据我们拿不到：IRS 唯一入口是 OneDrive（Bosch / 阿里云代理都挡，HF 无镜像），
+  野外立体视频是作者自采。
+</div>
+
+<h3>SelfEvo：Self-Improving 4D Perception via Self-Distillation</h3>
+<div class="sub" style="margin-bottom:10px">
+  <a href="https://arxiv.org/abs/2604.08532">arXiv:2604.08532</a> ·
+  Nan Huang, …, James M. Rehg, Angjoo Kanazawa, Haiwen Feng, Qianqian Wang ·
+  <a href="https://self-evo.github.io/">self-evo.github.io</a>
+</div>
+<p style="margin:6px 0">
+  用<b>无标注视频</b>做自蒸馏，机制是 <b>spatiotemporal context asymmetry</b>：
+  teacher 拿到更长 / 更全的时空上下文，student 只看受限上下文，两者的差就是监督信号。
+  八个 benchmark 一致提升，跨 base model 通用（VGGT 与 π³ 都涨），
+  <b>video depth 最高 +36.5%、camera +20.1%，零标注</b>。
+</p>
+<div class="box good">
+  <b>为什么这条对我们特别合适</b>
+  <ul style="margin:6px 0 0">
+    <li>无标注真实视频<b>不受任何代理墙限制</b>——本地已有的 KITTI raw、任意公开视频都行，
+        绕开了 IRS / 野外立体视频这个死结</li>
+    <li>我们已有<b>训练充分的 Stage-1 ckpt</b> 可以直接当 teacher，起点比论文强</li>
+    <li>直接对准我们自己已验证的诊断（差距大头是真实数据蒸馏，不是头的结构）</li>
+    <li>asymmetry 的实现方式与 GemDepth 结构天然契合：
+        teacher 吃 <code>seq_len=32</code> 全序列，student 吃短窗口 / 丢帧——
+        <b>而丢帧机制我们代码里已经有了</b>（<code>_pose_input_mask</code> 那套的训练分支）</li>
+  </ul>
+</div>
+
+<h3>另外两条提数据质量的路</h3>
+<table>
+  <thead><tr><th class="l" style="width:26%">论文</th><th class="l">做法</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="l"><b>ViGeo</b><br><a href="https://arxiv.org/abs/2605.30060">2605.30060</a></td>
+      <td class="l">completion-based data refinement：训一个 <b>depth completion teacher</b>，
+          条件在稀疏噪声标注上，用 video / multi-view context 产出 dense 且时序一致的训练目标。
+          另外它的 <b>dynamic chunking attention</b>（训练时同时暴露双向与因果上下文，
+          测试时不重训即可切换）对我们固定的 alternating ASTT 也是个思路</td>
+    </tr>
+    <tr>
+      <td class="l"><b>Buffer Anytime</b><br><a href="https://arxiv.org/abs/2411.17249">2411.17249</a></td>
+      <td class="l">完全不用配对 video-depth 数据：单图先验 + 光流平滑 hybrid loss + 轻量 temporal attention，
+          效果接近用大规模配对数据训的视频模型。是 SelfEvo 的更省版本</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============ 5 ============ -->
+<h2>5. 多尺度 / 解码头 —— 外部证据继续负面</h2>
+<div class="card">
+<div class="box bad">
+  <b>先摆我们自己的账（<a href="vkitti_multiscale_dashboard.html">八 arm 看板</a>）</b>
+  KITTI zero-shot：temporal <b>0.0981</b> → nofp32 0.0991 → depth_concat 0.1004 → finealone 0.1016 →
+  grad 0.1066 → errmap 0.1076 → gem 0.1082 → norm 0.1094。
+  <b>八个 arm 无一赢过朴素 temporal</b>，差距 0.006–0.011 = 种子噪声带（0.0006）的 10–18 倍。
+  唯一较纯的 <code>ms</code> vs <code>finealone</code> 是 0.1004 vs 0.1016，
+  <b>粗尺度辅助监督可能微正，但差值小且只有单 seed</b>；<code>norm</code> 对比还混入了最细尺度权重变化。
+  更早的 mixdata 同配方对照里，多尺度头四集也输 temporal 三集。
+</div>
+
+<div class="box info">
+  <b>PXDepth 给了这个现象一个解释</b>
+  <a href="https://arxiv.org/abs/2608.16984">arXiv:2608.16984</a>（2026-08-17，Zhiyuan Yuan, Guanying Chen 等）原文诊断：
+  <i>“large-patch ViT encoders + convolutional decoders … coarse tokenization can weaken
+  pixel-level cues that <b>upsampling cannot fully recover</b>.”</i>
+  它的解法是 Context-Modulated Pixel Transformer —— 大 patch ViT 只负责全局上下文，
+  <b>像素级预测器全程保持高分辨率</b>，而不是先在低分辨率卷完再插值。
+  <br><br>
+  <b>这提出了一个与我们旧 arm 不同的机制</b>：瓶颈可能在高分辨率图像线索，而非尺度数量。
+  我们的 <code>fullres_mode</code> 系列（E1/E2b 在 448² 上四层全卷，5–7.4 s/it）
+  试的正是「插值到 full res 再卷」——按 PXDepth 的说法，<b>这条路先天补不回来</b>，
+  这也解释了为什么 E1/E2a/E3/E4 四者互相在噪声带内不可分。
+</div>
+
+<table>
+  <thead><tr>
+    <th class="l" style="width:24%">论文</th><th class="l" style="width:40%">说了什么</th><th class="l" style="width:36%">对我们的含义</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td class="l"><b>DPNeXt</b><br><a href="https://arxiv.org/abs/2607.16012">2607.16012</a> · IROS'26</td>
+      <td class="l">DPT decoder 就是瓶颈；换成 dual depthwise separable inverted bottleneck，
+          <b>可训练参数 −78.6%</b> 反而更好</td>
+        <td class="l">它支持“效率也值得优化”，但不能佐证旧的 4× 容量归因：
+          我们实测 head 仅从 71.8M 增到 73.2M（约 2%）</td>
+    </tr>
+    <tr>
+      <td class="l"><b>VDPP</b><br><a href="https://arxiv.org/abs/2604.06665">2604.06665</a> · CVPR'26 W</td>
+      <td class="l">把精修从「昂贵的场景重建」改成「<b>纯低分辨率几何精修</b>」，
+          RGB-free，Jetson Orin Nano 上 43.5 FPS</td>
+      <td class="l">我们在 full-res 上卷了 E1/E2b 半天没收益，正好反向印证</td>
+    </tr>
+    <tr>
+      <td class="l"><b>PixelUp</b><br><a href="https://arxiv.org/abs/2608.02792">2608.02792</a></td>
+      <td class="l">zero-shot、VFM-agnostic 上采样器，
+          coarse-to-fine windowed cross-attention + 多尺度语义引导，NYUv2 δ1 +0.25</td>
+      <td class="l"><b>最便宜的可试项</b>：即插即用替换 DPT refinenet 的上采样，
+          不改训练配方、不改 loss</td>
+    </tr>
+    <tr>
+      <td class="l"><b>Pixel-Perfect Depth</b><br><a href="https://arxiv.org/abs/2601.05246">2601.05246</a></td>
+      <td class="l">pixel-space DiT + Semantics-Prompted DiT +
+          <b>Cascade DiT（逐级增加 token 数）</b>；视频版 PPVD 用
+          reference-guided token propagation 保时序</td>
+      <td class="l">它的 coarse-to-fine 是在 <b>token 数</b> 上做，
+          不是在空间分辨率上做——与我们 28/56/112/224 的做法是不同的轴</td>
+    </tr>
+    <tr>
+      <td class="l"><b>DegBins</b><br><a href="https://arxiv.org/abs/2605.09628">2605.09628</a></td>
+      <td class="l">多阶段 c2f，但把残差建模成 <b>classification-regression 混合</b>
+          （深度 bins 的概率加权），每阶段更细的 bin 划分</td>
+      <td class="l">⚠ 注意它是 <b>depth super-resolution</b> 不是 MDE，不可直接照搬。
+          但「换建模方式而非加层数」这个思路对我们的纯残差回归
+          <code>delta_i</code> 有参考价值</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <b>建议（诚实版）</b>
+  两条路选一：
+  <ul style="margin:6px 0 0">
+    <li><b>①收线</b>：把它写成一个干净的负结果——
+        「在 DINOv3-ConvNeXt / DINOv2-ViT + DPT 范式、匹配配方下，
+        coarse-to-fine 残差精修头不优于单尺度 temporal 头；
+      现有单 seed 结果不足以把差异归因到粗尺度深监督、容量或 loss 标度」。
+      <u>这是当前证据能支持的边界，后续结论需匹配 objective 与多 seed。</u></li>
+    <li><b>②换范式</b>：PixelUp 当上采样器（最便宜，不动训练）
+        或 PXDepth 式 context-modulated pixel-space 预测器（要改结构）。
+        <u>不要再在现有头上 +层 +参数。</u></li>
+  </ul>
+</div>
+</div>
+
+<!-- ============ 6 ============ -->
+<h2>6. 两个便宜且我们没试过的正杠杆</h2>
+<div class="card">
+<h3>a) 时间轴深度反馈</h3>
+<div class="sub" style="margin-bottom:8px">
+  <b>VeloDepth / Video Depth Propagation</b> ·
+  <a href="https://arxiv.org/abs/2512.10725">arXiv:2512.10725</a> ·
+  Luigi Piccinelli, …, Luc Van Gool（ETH）·
+  <a href="https://github.com/lpiccinelli-eth/velodepth">github</a>
+</div>
+<p style="margin:6px 0">
+  Propagation Module = 光流 warping + <b>learned residual corrections</b>，
+  把上一帧的 depth <b>feature 与 prediction 一起</b>传播过来，结构性地强制时序一致。
+</p>
+<div class="box good">
+  <b>为什么值得试</b>
+  我们的 <code>depth_feedback</code> 是把<b>上一尺度</b>的深度喂回去（空间轴），
+  实测是 E2a 那次的正杠杆、而且是最便宜的一个（~5.5h）。
+  <b>同一个 idea 换到时间轴我们从没试过</b>，
+  有自己的正结果背书，成本一次 20k 步。
+</div>
+
+<h3>b) 显式点对应，替代隐式时序注意力</h3>
+<div class="sub" style="margin-bottom:8px">
+  <b>Tracktention</b> · <a href="https://arxiv.org/abs/2503.19904">arXiv:2503.19904</a> ·
+  CVPR 2025 · Zihang Lai, Andrea Vedaldi（VGG）
+</div>
+<p style="margin:6px 0">
+  用 point tracks <b>显式</b>做时序对齐，作为一个 layer 插进 ViT，
+  能把 image-only 模型升级成 video 模型，有时反超原生视频模型。
+</p>
+<div class="box info">
+  <b>与 ASTT 的关系</b>
+  GemDepth 论文对 ASTT 的原话是
+  <i>“captures <b>latent</b> point-level correspondences”</i>。
+  Tracktention 就是把这个 latent 的东西<b>显式化</b>——
+  这是一个结构清晰、好写、且直接站在原论文自己叙述上的 “GemDepth++” 假设。
+</div>
+
+<div class="box warn">
+  <b>⚠ 一条我先前提过、现在要打折的</b>
+  <b>Rethinking the State Update Gate</b>(<a href="https://arxiv.org/abs/2605.16981">2605.16981</a>)
+  的帧级标量门是闭式解、<b>零参数零训练</b>，Bonn video depth AbsRel −12.8%，很诱人。
+  但它针对的是 <b>recurrent / 常数显存的流式模型</b>（TTT3R / CUT3R 那一族的 state token）。
+  GemDepth 不是 recurrent、也没有压缩状态，<b>不能直接套</b>。
+  只有「按帧间特征变化调制该帧对时序聚合的贡献」这个抽象思想可借。
+</div>
+</div>
+
+<!-- ============ 7 ============ -->
+<h2>7. 论文速查表（本次检索到的全部相关工作）</h2>
+<div class="card">
+<h3>与我们直接相关（上文详述）</h3>
+<table>
+  <thead><tr><th class="l" style="width:22%">论文</th><th style="width:10%">arXiv</th><th style="width:12%">出处</th><th class="l">一句话</th></tr></thead>
+  <tbody>
+    <tr><td class="l"><b>CARVE</b></td><td class="mono"><a href="https://arxiv.org/abs/2604.21713">2604.21713</a></td><td>CVPR'26</td>
+        <td class="l">系统消融：梯度 loss / confidence loss 可能有害；per-seq + per-frame 双对齐更好；提 depth-camera-pointmap 一致性 loss</td></tr>
+    <tr><td class="l"><b>PAGE-4D</b></td><td class="mono"><a href="https://arxiv.org/abs/2510.17568">2510.17568</a></td><td>ICLR'26</td>
+        <td class="l">位姿要抑制动态区域、几何要建模动态区域；dynamics-aware aggregator 解耦</td></tr>
+    <tr><td class="l"><b>SelfEvo</b></td><td class="mono"><a href="https://arxiv.org/abs/2604.08532">2604.08532</a></td><td>—</td>
+        <td class="l">无标注视频自蒸馏（时空上下文不对称），video depth +36.5%，跨 VGGT / π³ 通用</td></tr>
+    <tr><td class="l"><b>PXDepth</b></td><td class="mono"><a href="https://arxiv.org/abs/2608.16984">2608.16984</a></td><td>—</td>
+        <td class="l">coarse tokenization 的损失上采样补不回来；像素级预测器全程保持高分辨率</td></tr>
+    <tr><td class="l"><b>VeloDepth</b></td><td class="mono"><a href="https://arxiv.org/abs/2512.10725">2512.10725</a></td><td>—</td>
+        <td class="l">光流 warping + 学习残差修正，把上一帧 depth feature 与 prediction 一起传播</td></tr>
+    <tr><td class="l"><b>Tracktention</b></td><td class="mono"><a href="https://arxiv.org/abs/2503.19904">2503.19904</a></td><td>CVPR'25</td>
+        <td class="l">用 point tracks 显式做时序对齐，可插入 ViT</td></tr>
+    <tr><td class="l"><b>DPNeXt</b></td><td class="mono"><a href="https://arxiv.org/abs/2607.16012">2607.16012</a></td><td>IROS'26</td>
+        <td class="l">DPT decoder 是瓶颈，减参 78.6% 反而更好</td></tr>
+    <tr><td class="l"><b>DepthART</b></td><td class="mono"><a href="https://arxiv.org/abs/2607.17099">2607.17099</a></td><td>ACM MM'26</td>
+        <td class="l">bias-resistant data sampling，同预算下减少分布偏差</td></tr>
+    <tr><td class="l"><b>E3D-Bench</b></td><td class="mono"><a href="https://arxiv.org/abs/2506.01933">2506.01933</a></td><td>—</td>
+        <td class="l">首个 3D 几何基础模型系统 benchmark，16 模型、标准化协议，含 video depth</td></tr>
+  </tbody>
+</table>
+
+<h3>视频深度主线（了解领域走向）</h3>
+<table>
+  <thead><tr><th class="l" style="width:22%">论文</th><th style="width:10%">arXiv</th><th style="width:12%">出处</th><th class="l">一句话</th></tr></thead>
+  <tbody>
+    <tr><td class="l">GemDepth（我们复现的对象）</td><td class="mono"><a href="https://arxiv.org/abs/2605.10525">2605.10525</a></td><td>v4</td>
+        <td class="l">GEM 预测帧间位姿产生几何嵌入 + ASTT 交替时空注意力</td></tr>
+    <tr><td class="l">ViGeo</td><td class="mono"><a href="https://arxiv.org/abs/2605.30060">2605.30060</a></td><td>—</td>
+        <td class="l">dynamic chunking attention（同一模型支持流式 / 全序列 / 长视频）+ completion teacher 提升监督质量</td></tr>
+    <tr><td class="l">ICDepth</td><td class="mono"><a href="https://arxiv.org/abs/2607.01677">2607.01677</a></td><td>ECCV'26</td>
+        <td class="l">文生视频 DiT 做视频深度（in-context conditioning），
+            只用 0.8M 帧（比同类生成式少 6–13×），注入 DINOv2 语义先验补几何精度</td></tr>
+    <tr><td class="l">DVD</td><td class="mono"><a href="https://arxiv.org/abs/2603.12250">2603.12250</a></td><td>—</td>
+        <td class="l">把视频扩散确定性地改造成单次前向回归器；global affine coherence 支持长视频免对齐拼接；数据少 163×</td></tr>
+    <tr><td class="l">oVDA</td><td class="mono"><a href="https://arxiv.org/abs/2510.09182">2510.09182</a></td><td>—</td>
+        <td class="l">VDA 的在线版：LLM 式 KV 缓存 + 训练期丢帧，A100 42 FPS / Jetson 20 FPS</td></tr>
+    <tr><td class="l">VDPP</td><td class="mono"><a href="https://arxiv.org/abs/2604.06665">2604.06665</a></td><td>CVPR'26 W</td>
+        <td class="l">RGB-free 后处理器，纯低分辨率几何精修，可接任意图像深度模型</td></tr>
+    <tr><td class="l">Video Depth Anything</td><td class="mono"><a href="https://arxiv.org/abs/2501.12375">2501.12375</a></td><td>—</td>
+        <td class="l">我们 Stage-1 的初始化来源；时序深度梯度约束，超长视频</td></tr>
+  </tbody>
+</table>
+
+<h3>前馈几何基础模型（GemDepth 的上位领域）</h3>
+<table>
+  <thead><tr><th class="l" style="width:22%">论文</th><th style="width:10%">arXiv</th><th style="width:12%">出处</th><th class="l">一句话</th></tr></thead>
+  <tbody>
+    <tr><td class="l">π³</td><td class="mono"><a href="https://arxiv.org/abs/2507.13347">2507.13347</a></td><td>—</td>
+        <td class="l">完全置换等变，取消固定参考视角这个归纳偏置</td></tr>
+    <tr><td class="l">TrajVG</td><td class="mono"><a href="https://arxiv.org/abs/2602.04439">2602.04439</a></td><td>—</td>
+        <td class="l">静态 track anchors 驱动位姿一致性，抑制动态区域梯度</td></tr>
+    <tr><td class="l">4DVGGT-D</td><td class="mono"><a href="https://arxiv.org/abs/2605.12027">2605.12027</a></td><td>—</td>
+        <td class="l">training-free 渐进解耦：先稳位姿再几何精修</td></tr>
+    <tr><td class="l">OmniX</td><td class="mono"><a href="https://arxiv.org/abs/2607.10840">2607.10840</a></td><td>ECCV'26</td>
+        <td class="l">前馈 4D：逐像素 3D 点轨迹场；自建 UE5 数据引擎 80K 场景 / 1.28M 视频</td></tr>
+    <tr><td class="l">GeoWeaver</td><td class="mono"><a href="https://arxiv.org/abs/2608.17389">2608.17389</a></td><td>—</td>
+        <td class="l">长序列分块 + 测试时自适应，coarse-to-fine 修正位姿 / 仿射深度 / 内参</td></tr>
+    <tr><td class="l">Mem3R / FrameVGGT / Evict3R</td>
+        <td class="mono"><a href="https://arxiv.org/abs/2604.07279">2604.07279</a></td><td>—</td>
+        <td class="l">流式几何的有界显存三种做法（混合记忆 / 帧级 KV 原型 / 训练free token 驱逐）</td></tr>
+  </tbody>
+</table>
+
+<h3>单目深度 / 训练技巧（旁支但有可借的模式）</h3>
+<table>
+  <thead><tr><th class="l" style="width:22%">论文</th><th style="width:10%">arXiv</th><th class="l">可借的模式</th></tr></thead>
+  <tbody>
+    <tr><td class="l">JEPADepth</td><td class="mono"><a href="https://arxiv.org/abs/2607.26600">2607.26600</a></td>
+        <td class="l"><b>辅助目标 + 推理期丢弃</b>：在 DINOv3 表示空间加掩码预测 loss，predictor 训完扔掉，推理零开销</td></tr>
+    <tr><td class="l">ID-Constraint</td><td class="mono"><a href="https://arxiv.org/abs/2608.00678">2608.00678</a></td>
+        <td class="l">同上模式：训练期用几何 / 空间推理辅助任务正则化 backbone，辅助头训完丢弃，推理结构不变</td></tr>
+    <tr><td class="l">PixelUp</td><td class="mono"><a href="https://arxiv.org/abs/2608.02792">2608.02792</a></td>
+        <td class="l">与 backbone 解耦的 zero-shot 上采样器，可直接挂到我们的 DPT 上</td></tr>
+    <tr><td class="l">Geometric Collapse</td><td class="mono"><a href="https://arxiv.org/abs/2607.06871">2607.06871</a></td>
+        <td class="l">ICML'26：注入「物理上不成立的边缘线索」，
+            CNN/ViT/SSL 深度模型误差最高放大 3.2×，且错误<b>全局传播</b>——
+            即使给出被污染区域的 oracle mask，输出级修复也只能恢复 47%。
+            对我们理解 Sintel 崩溃序列的失效模式有参考</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ============ 8 ============ -->
+<h2>8. 建议的执行顺序</h2>
+<div class="card">
+<table>
+  <thead><tr>
+    <th style="width:6%">#</th><th class="l" style="width:38%">动作</th>
+    <th style="width:16%">成本</th><th class="l" style="width:40%">拿到什么</th>
+  </tr></thead>
+  <tbody>
+    <tr><td><b>1</b></td>
+        <td class="l">Sintel 崩溃序列 dump <code>pose_enc_list</code>，
+            看位姿误差是否与深度误差同步爆</td>
+        <td><b>零训练 ~1h</b></td>
+        <td class="l">证实 / 证伪 pose-geometry 打架假设，
+            决定要不要走 PAGE-4D 路线。<b>二值结论，没有中间态</b></td></tr>
+    <tr><td><b>2</b></td>
+        <td class="l"><code>alpha=0</code>（去掉 L_gm）单变量消融</td>
+        <td>1×20k 步</td>
+        <td class="l">直接检验 CARVE 结论①。
+            GemDepth 论文没做过这个 ablation，<b>任一方向都是新信息</b></td></tr>
+    <tr><td><b>3</b></td>
+        <td class="l">per-frame + per-sequence 双对齐 SSI</td>
+        <td>1×20k 步</td>
+        <td class="l">CARVE 结论②；顺带可能解释 500 帧协议的系统性劣化</td></tr>
+    <tr><td><b>4</b></td>
+        <td class="l">「<code>mix=uniform</code> + 6 分辨率训练」<b>合成一个 arm</b></td>
+        <td>1×20k 步</td>
+        <td class="l">补齐两处已知复现偏差，得到可辩护的新 Stage-1 baseline。
+            <b>uniform 已实现，只差多分辨率</b></td></tr>
+    <tr><td><b>5</b></td>
+        <td class="l">depth↔pose 一致性 loss（GEM 位姿 warp 深度）</td>
+        <td>1×20k 步</td>
+        <td class="l">最像方法贡献的一条，复用已有 <code>camera_head</code>，不加新模块</td></tr>
+    <tr><td><b>6</b></td>
+        <td class="l">SelfEvo 式自蒸馏（无标注真实视频）</td>
+        <td>需写 pipeline</td>
+        <td class="l">补 Stage-2 数据缺口，是我们已验证诊断的直接后继动作</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <b>⚠ 三条前置条件（按仓库自己的实验对照硬规则）</b>
+  <ul style="margin:6px 0 0">
+    <li><b>GEM 模型至今没有实测的种子噪声带。</b>
+        现有的 ±0.0006 那条量自 <code>E2a_feedback</code>（<code>use_gem=false</code>）。
+        上面 2–5 号的预期增益量级可能就在 1–3%，
+        <u>不先测出 GEM 系的噪声带，结果读不了</u>。
+        建议在起 method arm 之前，先跑 2–3 个种子的 <code>stage1_repro</code>。</li>
+    <li><b>评测协议锁死 500 帧。</b>
+        已证实短协议系统性偏乐观（kitti +10.8% / bonn +35.5% / scannet +13.8%），
+        且 sintel 未切 500 的那次只差 +0.2%，反证流程本身无偏差。</li>
+    <li><b>新增 loss 走注册表，不给 <code>train.py</code> 加分支。</b>
+        照 <code>dataset/mix_registry.py</code> 与 <code>model/freeze_registry.py</code> 的样子来。</li>
+  </ul>
+</div>
+
+<div class="box info">
+  <b>已经不需要做的（相对两天前的判断）</b>
+  <ul style="margin:6px 0 0">
+    <li><b>位姿 dropout P0 不再是拦路虎。</b>
+        实测 <code>stage1_repro</code> KITTI 500 帧 0.086233 → 0.086110，
+        逐序列最大差 0.00054。当初「会淹没 1–3% 方法增益」的判断<b>说大了两个数量级</b>。</li>
+    <li><b>数据配比修正已落地一半</b>：<code>mix_policies.uniform</code> 已实现并有单测，
+        五个源都落在 19.6%–20.4%。</li>
+  </ul>
+</div>
+</div>
+
+<!-- ============ 9 ============ -->
+<h2>9. 这份看板的可信度边界</h2>
+<div class="box bad">
+  <b>必须标注的三条</b>
+  <ul style="margin:6px 0 0">
+    <li><b>我只读了摘要，没读全文、没看代码、没复现任何一篇。</b>
+        表格里的「说了什么」是摘要转述，
+        <u>CARVE 的三条消融结论在下任何赌注之前应该去读原文的消融表</u>——
+        它是本页唯一一条会直接改我们 loss 的依据。</li>
+    <li><b>检索不完备。</b>
+        只用了三个 arXiv 关键词查询、按提交日期倒序取前 60 条，
+        没有做引文追溯、没有查 OpenReview / CVF。
+        「最新」只覆盖到 2026-08-18 提交。</li>
+    <li><b>所有「对我们的含义」是推断，不是实验结论。</b>
+        本页没有任何一个数字来自我们自己的新实验；
+        引用的我方数字全部来自
+        <a href="gemdepth_stage1_repro_dashboard.html">Stage-1 复现看板</a> 与
+        <a href="vkitti_multiscale_dashboard.html">VKITTI 八 arm 看板</a>。</li>
+  </ul>
+</div>
+
+<footer>
+  PP-DPT · <span class="mono">assets/arxiv_2026_depth_survey.html</span> ·
+  整理 2026-08-26 ·
+  相关看板：<a href="gemdepth_stage1_repro_dashboard.html">Stage-1 复现</a> ·
+  <a href="vkitti_multiscale_dashboard.html">VKITTI 八 arm</a> ·
+  <a href="mixdata_dashboard.html">mixdata 对照</a> ·
+  <a href="gemdepth_paper_study.html">GemDepth 论文精读</a>
+</footer>
+
+</div>
+</body>
+</html>

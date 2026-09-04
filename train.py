@@ -14,9 +14,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 from accelerate import DataLoaderConfiguration
 from accelerate.utils import DistributedDataParallelKwargs
-from loss.videoloss import VideoDepthLoss, compute_scale_and_shift
-from loss.multiscale_videoloss import MultiScaleVideoDepthLoss
-from loss.multiscale_video_l1_loss import MultiScaleVideoL1Loss
+from loss.objective_registry import build_objective
 from torch.utils.tensorboard import SummaryWriter
 import glob
 import re
@@ -452,47 +450,34 @@ def main(cfg):
                 f"resume=true to continue that run, or training.allow_overwrite_final=true to "
                 f"overwrite intentionally.")
 
-    # Camera (pose) loss only makes sense when GEM predicts poses; disable it otherwise.
+    # One registered objective owns tensor/list routing and every loss term.
+    # Existing configs stay bit-compatible: with no `loss.objective`, the old
+    # `multiscale_loss` value selects `l2` or `video` from the same registry.
+    # New objective = new loss/objective_*.py + @register + config; this block
+    # never grows another experiment branch.
     pose_flag = bool(cfg.pose_flag) and use_gem
-    invariant_loss_func = VideoDepthLoss(pose_flag = pose_flag)
-    # Multi-scale loss selectable by config so the L2-vs-native-video-loss ablation runs from one
-    # codebase without editing source between runs. multiscale_loss: 'l2' (default) or 'video'.
-    multiscale_loss_name = str(OmegaConf.select(cfg, 'multiscale_loss', default='l2')).lower()
-    # IGEV/RAFT-style per-scale weighting. multiscale_gamma unset/<=0 -> uniform (unchanged).
-    # Set (e.g. 0.8) -> weights (coarse->fine) = [g^(N-1), ..., g^1, g^0], so the finest scale
-    # (the one used at eval) gets weight 1 and coarser scales get exponentially less. The loss
-    # normalizes these to sum 1, so only the ratios matter.
-    multiscale_gamma = OmegaConf.select(cfg, 'multiscale_gamma', default=None)
-    multiscale_scale_weights = None
-    if multiscale_gamma is not None and float(multiscale_gamma) > 0:
-        g = float(multiscale_gamma)
-        n_ms_scales = int(OmegaConf.select(cfg, 'multiscale_scales', default=4))
-        multiscale_scale_weights = [g ** (n_ms_scales - 1 - i) for i in range(n_ms_scales)]
-        print(f"[loss] multiscale_gamma={g} -> scale_weights(coarse->fine)="
-              f"{[round(w, 4) for w in multiscale_scale_weights]}")
-    # Explicit per-scale weights (coarse->fine) override gamma. Lets the coarse-heavy /
-    # fine-heavy / ends-heavy weighting ablation run from config without touching source. The loss
-    # normalizes them to sum 1, so only the ratios matter.
-    # 【实验对应】config 顶层 multiscale_scale_weights: [w0,w1,w2,w3]（粗->细）。
-    #   E2a_wcoarse -> [0.4, 0.3, 0.2, 0.1]  粗多细少：偏重残差链的"地基"
-    #   E2a_wfine   -> [0.1, 0.2, 0.3, 0.4]  细多粗少：偏重评测实际用到的最细层
-    #   E2a_wends   -> [0.4, 0.1, 0.1, 0.4]  两头多中间少：U 型，粗细都重、中间两层陪跑
-    #   其余实验（C/E1/E2a/E2b/E3/E4/...）都不设这个 key -> None -> 均匀 1/4 各占 25%（原始行为）。
-    explicit_scale_weights = OmegaConf.select(cfg, 'multiscale_scale_weights', default=None)
-    if explicit_scale_weights is not None:
-        multiscale_scale_weights = [float(w) for w in explicit_scale_weights]
-        print(f"[loss] multiscale_scale_weights(coarse->fine)={multiscale_scale_weights}")
-    normalize_scale_weights = bool(OmegaConf.select(
-        cfg, 'multiscale_normalize_scale_weights', default=True))
-    if multiscale_loss_name in ('video', 'videoloss', 'video_loss', 'multiscale_video'):
-        multiscale_loss_func = MultiScaleVideoDepthLoss(pose_flag=pose_flag,
-                                                        scale_weights=multiscale_scale_weights,
-                                                        normalize_scale_weights=normalize_scale_weights)
-        print(f"[loss] multiscale_loss=video -> MultiScaleVideoDepthLoss("
-              f"pose_flag={pose_flag}, normalize_scale_weights={normalize_scale_weights})")
-    else:
-        multiscale_loss_func = MultiScaleVideoL1Loss(scale_weights=multiscale_scale_weights)
-        print("[loss] multiscale_loss=l2 -> MultiScaleVideoL1Loss()")
+    legacy_objective = OmegaConf.select(
+        cfg, 'multiscale_loss', default='l2')
+    objective_name = str(OmegaConf.select(
+        cfg, 'loss.objective', default=legacy_objective)).lower()
+    objective_kwargs = OmegaConf.select(cfg, 'loss.kwargs', default={})
+    objective_kwargs = OmegaConf.to_container(
+        objective_kwargs, resolve=True) if objective_kwargs else {}
+    loss_objective = build_objective(
+        objective_name,
+        objective_kwargs=objective_kwargs,
+        pose_flag=pose_flag,
+        scale_weights=OmegaConf.select(
+            cfg, 'multiscale_scale_weights', default=None),
+        scale_gamma=OmegaConf.select(
+            cfg, 'multiscale_gamma', default=None),
+        num_scales=int(OmegaConf.select(
+            cfg, 'multiscale_scales', default=4)),
+        normalize_scale_weights=bool(OmegaConf.select(
+            cfg, 'multiscale_normalize_scale_weights', default=True)),
+    ).to(accelerator.device)
+    if accelerator.is_main_process:
+        print(f"[loss] objective={objective_name} {loss_objective.description}")
     total_step = start_step
     should_keep_training = True
     writer = SummaryWriter(log_dir=cfg.training.log_dir if hasattr(cfg.training, 'log_dir') else "./logs/train") \
@@ -518,15 +503,9 @@ def main(cfg):
             with accelerator.accumulate(model):
                 with accelerator.autocast():
                     depth_pred,pose_enc_list,extrinsic_pred,intrinsic_pred= model(image)
-                # The multi-scale refinement head returns a list of per-scale depth
-                # predictions -> route to the multi-scale video depth loss. A single
-                # tensor -> the standard video depth loss.
-                if isinstance(depth_pred, (list, tuple)):
-                    preds = [d.squeeze(2) for d in depth_pred]
-                    loss_dict = multiscale_loss_func(preds, depth_gt.squeeze(2), mask.squeeze(2),
-                                                     intrinsic_gt, extrinsic_gt, pose_enc_list, extrinsic_pred)
-                else:
-                    loss_dict=invariant_loss_func(depth_pred.squeeze(2), depth_gt.squeeze(2),mask.squeeze(2),intrinsic_gt,extrinsic_gt,pose_enc_list,extrinsic_pred)
+                loss_dict = loss_objective(
+                    depth_pred, depth_gt, mask, intrinsic_gt, extrinsic_gt,
+                    pose_enc_list, extrinsic_pred)
                 loss=loss_dict['total_loss']
                 if total_step % 200 == 0 and accelerator.is_main_process:
                     if isinstance(depth_pred, (list, tuple)):
@@ -539,7 +518,8 @@ def main(cfg):
                             key: value
                             for key, value in loss_dict.items()
                             if key.startswith('scale_')
-                            or key in ('total_loss', 'pose_loss', 'trans', 'quat')
+                            or key in ('total_loss', 'pose_loss', 'trans', 'quat',
+                                       'focal', 'sequence_loss')
                         }
                     else:
                         log_items = loss_dict

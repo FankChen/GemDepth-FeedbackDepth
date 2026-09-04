@@ -1,0 +1,18 @@
+# @package _global_
+# CARVE objective ablation L3: per-frame affine-invariant regression only.
+# It removes both gradient terms; compare jointly with no_sg/no_tg, not alone.
+defaults:
+  - vkitti_temporal_carve_full
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_temporal_carve_simple
+  log_dir: ./logs/vkitti_temporal_carve_simple
+
+loss:
+  objective: video
+  kwargs:
+    alpha: 0.0
+    stable_scale: 0.0
+
+project_name: vkitti_temporal_carve_simple

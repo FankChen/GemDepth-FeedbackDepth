@@ -1,0 +1,21 @@
+# @package _global_
+# CARVE objective ablation L4: simple per-frame SSI + one affine regression
+# aligned over the whole clip. The only delta against `carve_simple` is the
+# explicit sequence term; no local-region alignment is introduced (CARVE finds
+# that harmful).
+defaults:
+  - vkitti_temporal_carve_simple
+  - _self_
+
+training:
+  checkpoint_dir: ./checkpoint/vkitti_temporal_carve_joint
+  log_dir: ./logs/vkitti_temporal_carve_joint
+
+loss:
+  objective: joint_align
+  kwargs:
+    alpha: 0.0
+    stable_scale: 0.0
+    sequence_weight: 1.0
+
+project_name: vkitti_temporal_carve_joint

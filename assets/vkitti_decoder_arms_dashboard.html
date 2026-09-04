@@ -52,7 +52,8 @@
   <b>一句话结论</b>
   这一轮设计的<b>五条 arm 在 zero-shot 上无一超过 temporal 基线</b>，最好的
   <code>finealone</code> 仍落后 3.6%，最差的 <code>costvol</code> 落后一个量级。
-  <b>「给解码头加结构」这个方向，在这份数据和预算下已被逐条证伪。</b>
+  <b>在当前单 seed、10k 步协议下，没有证据支持继续盲目增加解码头结构；
+  但未匹配的 loss 强度与相机 gauge 使部分旧 arm 不能用于结构归因。</b>
 </div>
 
 <!-- ============ 1 ============ -->
@@ -118,22 +119,22 @@
 <div class="card">
 <div class="box warn">
   <b>⚠ 先修正一个我中途说错的判断</b>
-  拿到域内数据时我说「一半领先来自等效学习率 ×4」。补上 KITTI 后这个说法要改：
+  拿到域内数据时我说「一半领先来自等效学习率 ×4」。这个说法不成立：
   <code>ms</code>(求和) 在<b>两个协议上都优于</b> <code>ms_norm</code>(平均)
   ——域内 0.1123 vs 0.1155，KITTI 0.1004 vs <b>0.1094</b>。
-  所以求和带来的高等效学习率<b>是真实有益的设置，不是虚假增益</b>。
+  但 AdamW、全局梯度裁剪和 weight decay 下，loss ×4 <b>不等价于学习率 ×4</b>；
+  这个对比只说明 loss 标度会改变优化轨迹。
 </div>
 <p style="margin:8px 0">但它仍然是相对 temporal 的<b>混淆变量</b>：temporal 用单尺度 loss，
-ms 用四尺度求和，两者的有效学习率本就不同。正确的表述是——</p>
+ms 用四尺度求和，两者的 loss 标度与监督位置都不同。正确的表述是——</p>
 <div class="box">
-  <b>那部分增益属于「更大的有效学习率」，不属于「多尺度结构」。</b>
-  要把它算进方法贡献，必须先给 temporal 也做学习率扫描，否则就是拿调参当创新。
-  <b>这个对照我们从来没做过。</b>
+  <b>现有结果不能把差异唯一归因于结构、深监督或学习率。</b>
+  要做方法归因，必须匹配 objective、监督权重、训练预算并补多 seed。
 </div>
 
-<h3>四尺度深监督本身是负贡献</h3>
-<p style="margin:6px 0"><code>finealone</code>（只监督最细尺度，<b>保留全部 4 倍头参数</b>）
-vs <code>norm</code>（均匀监督四尺度）：</p>
+<h3>现有结果不能证明四尺度深监督有害</h3>
+<p style="margin:6px 0"><code>finealone</code>（只监督最细尺度）
+vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 改成 0.25，因而不是纯深监督对照：</p>
 <table>
   <thead><tr><th class="l">对比</th><th>域内</th><th>KITTI</th><th class="l">含义</th></tr></thead>
   <tbody>
@@ -141,13 +142,14 @@ vs <code>norm</code>（均匀监督四尺度）：</p>
     <tr><td class="l">norm</td><td>0.1155</td><td>0.1094</td><td class="l">—</td></tr>
     <tr><td class="l"><b>差值</b></td>
       <td class="pos">−0.0024</td><td class="pos">−0.0078</td>
-      <td class="l"><b>去掉深监督反而更好，zero-shot 上差 13 倍噪声带</b></td></tr>
+      <td class="l"><b>差异混合了粗尺度监督与最细尺度权重，不能作因果结论</b></td></tr>
   </tbody>
 </table>
 <div class="box bad">
-  <b>多尺度头的核心主张被否定</b>
-  「每个尺度都给监督」不但没有正贡献，在 zero-shot 上明确有害。
-  剩下的那点优势来自<b>头部参数量翻 4 倍</b>——而容量优势正是在域内放大、在 zero-shot 反噬的典型模式。
+  <b>可识别的纯对照只有 <code>ms</code> vs <code>finealone</code></b>
+  两者分别为 KITTI 0.1004 与 0.1016：粗尺度辅助监督可能微正，但差值仅 0.0012、且只有单 seed。
+  参数量也不是 4 倍：temporal/head 为 122.3M/71.8M，multiscale/head 为 123.7M/73.2M，
+  总量只增加约 1.4M（约 1.1%）。
 </div>
 </div>
 
@@ -162,7 +164,8 @@ vs <code>norm</code>（均匀监督四尺度）：</p>
       <td class="l">用 GEM 位姿 warp 邻帧，把光度残差注入每一步 —— 单目视频版的 cost-volume lookup</td>
       <td class="l"><code>ms_gem</code><br><span class="sub">同 GEM 同 pose loss</span></td>
       <td class="l"><span class="tag t-neg">负</span> 域内 0.1184 vs 0.1134、KITTI 0.1076 vs 0.1082（打平）。
-        <b>几何证据没有带来信息增益。</b></td></tr>
+        但该 arm 把 scene-normalised translation 与 metric depth 混用，且 FoV 未进入 camera total；
+        <b>旧结果不能判定几何证据本身无效。</b></td></tr>
     <tr><td class="l"><b>D grad</b></td>
       <td class="l">头里两处 <code>depth_prev.detach()</code> 切断跨尺度梯度，实质是 4 个独立头共享 backbone</td>
       <td class="l"><code>ms_norm</code></td>
@@ -178,8 +181,9 @@ vs <code>norm</code>（均匀监督四尺度）：</p>
 <div class="box">
   <b>GEM 的性价比</b>
   <code>ms_gem</code> vs <code>ms_norm</code>：域内 −1.8%、RMSE 最好（6.754），
-  但 <b>KITTI 反而差 1.1%</b>，代价是 <b>+151.7M 参数</b>（275.4M vs 123.7M）。
-  位姿本身学得很好（<code>quat</code> 收敛到 0.0003），但<b>学好的位姿没能转化成更好的深度</b>。
+  KITTI 也从 0.1094 改善到 0.1082，是<b>小而一致的正信号</b>，代价是
+  <b>+151.7M 参数</b>（275.4M vs 123.7M）。由于 <code>use_astt=false</code>，
+  这不是“位姿注入深度”的实验，而是共享 backbone/LoRA 上的训练期相机辅助监督。
 </div>
 </div>
 
@@ -187,8 +191,8 @@ vs <code>norm</code>（均匀监督四尺度）：</p>
 <h2>4. cost volume 为什么是量级失败</h2>
 <div class="card">
 <p style="margin:6px 0">IGEV-MVS 的直接移植（sweep → correlate → 3D 正则 → softargmin → ConvGRU ×8 → convex 上采样），
-实现本身经过几何正确性单测（已知基线下真值深度的匹配得分最高）与 ckpt 一致性验证，
-<b>不是实现 bug</b>。</p>
+基础 warp 经过合成几何单测，但训练 arm 使用了 metric depth hypotheses 与 scene-normalised translation，
+<b>K/T/Z 不在同一 gauge，因此该结果不能作为 cost-volume 架构的有效否定</b>。</p>
 
 <h3>诊断链</h3>
 <table>
@@ -198,7 +202,7 @@ vs <code>norm</code>（均匀监督四尺度）：</p>
         训练 10k 步从 2.8742 只降到 2.7081（<b>5.8%</b>），
         而 <code>scale_8</code>（8 次 GRU 后）降到 0.5220（81%）</td>
       <td class="l">cost volume 几乎没学到东西，<b>全部改善来自 GRU</b>。
-        与 IGEV「GEV 提供好初值」的核心主张相反。</td></tr>
+        这与 gauge 错配一致，但尚不能区分相机、特征与架构因素。</td></tr>
     <tr><td class="l">把假设覆盖率从 <b>6/32</b> 修到 <b>32/32</b>（<code>depth_min</code> 0.5→3.0）后，
         <code>scale_0</code> 2.7081→2.7281、AbsRel 0.4297→0.4171</td>
       <td class="l"><b>「深度采样错配」这个诊断被否定。</b>
@@ -217,10 +221,9 @@ vs <code>norm</code>（均匀监督四尺度）：</p>
   <span class="sub">待实测 VKITTI 真实帧间平移分布来确认。</span>
 </div>
 <div class="box">
-  <b>若要继续这条路，必须先改变视差量</b>
-  ① <code>warp_offsets</code> <code>(-1,1)</code>→<code>(-3,3)</code>：视差 ×3，零成本；
-  ② <code>volume_level: 0</code>（stride 4）：视差 ×2，显存 21GB→约 84GB（跑得起）；
-  ③ 两者叠加 ×6 → 间隔约 1.8px，才进入 cost volume 能工作的区间。
+  <b>继续训练前先跑 zero-training oracle</b>
+  用同一批 matcher 特征分别代入 GT K/T、GT-normalised gauge、预测 K/T 与修正尺度后的预测 T，
+  检查真值 depth bin 的 top-k 与 margin。只有 GT-camera 下存在可识别信号，才值得继续调 offset、stride 或 GRU。
 </div>
 </div>
 
@@ -318,17 +321,17 @@ vs <code>norm</code>（均匀监督四尺度）：</p>
 <h2>6. 这份看板的可信度边界</h2>
 <div class="card">
 <ul>
-  <li><b>域内数字系统性偏乐观</b>：VKITTI train split 的 <code>end_idx=round(seq_num)</code> 是
-    <b>0–100%</b>，而 val 取后 10% —— <b>那 268 帧训练时全部见过</b>。
-    在这种设置下「域内更好」与「参数更多、更会背」无法区分，
-    而 ms 头恰好是 temporal 的 4 倍参数。<b>域内只可用于归因拆解，不能作为最终判据。</b></li>
+  <li><b>当前 scene-level split 无帧泄漏</b>：训练场景为 Scene01/02/18，测试为 Scene06/20，
+    dense evaluator 使用相同测试场景。旧的 90/10 帧切分泄漏说明只适用于历史
+    <code>scene_split=false</code> 运行，不能套到本表协议。</li>
   <li><b>单 seed</b>。历史实测噪声带 AbsRel 0.0006；本表多数对比在其 3.5 倍以上，
     但 <code>ms</code> vs <code>finealone</code>（0.0012）处于边缘，不应据此排序。</li>
   <li><b>域内仅 1 个序列 268 帧</b>，样本量小。</li>
   <li>KITTI 用 110 帧短协议（<code>kitti_video.json</code>），非论文的 500 帧口径；
     短协议对视频方法<b>系统性偏乐观</b>（漂移积累少、全局仿射对齐在短序列更易拟合）。</li>
   <li><code>ms_iter4</code> 因中断只有 6600 步，<b>训练预算不匹配，不得与其它 arm 同表比较</b>。</li>
-  <li>cost volume 的「亚像素视差」解释<b>尚未实测确认</b>，仅有内参与基线的估算推导。</li>
+  <li>cost volume 的「亚像素视差」解释与 matcher 可辨识性<b>尚未实测确认</b>；
+    必须先跑相机/gauge 与 true-bin oracle。</li>
 </ul>
 </div>
 
