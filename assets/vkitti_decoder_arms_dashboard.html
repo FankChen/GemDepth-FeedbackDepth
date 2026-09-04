@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>VKITTI 解码头对照 —— 五条路径的结论 (2026-09-04)</title>
+<style>
+  :root{--ink:#1a1c1e;--sub:#5b6168;--line:#e3e6ea;--bg:#f6f7f9;--card:#fff;
+        --good:#0f7b3f;--bad:#b3261e;--warn:#8a6100;--accent:#1a56b0;}
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 20px 60px;background:var(--bg);color:var(--ink);
+       font:15px/1.62 -apple-system,"Segoe UI","Noto Sans CJK SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:25px;margin:0 0 4px}
+  h2{font-size:19px;margin:34px 0 12px;padding-bottom:7px;border-bottom:2px solid var(--line)}
+  h3{font-size:16px;margin:18px 0 8px}
+  .sub{color:var(--sub);font-size:13.5px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:16px 18px;margin:12px 0}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:right}
+  th{background:#eef1f5;font-weight:600;text-align:center}
+  td.l,th.l{text-align:left}
+  tr.base td{background:#fffbe6}
+  tr.best td{background:#eaf6ee}
+  tr.dead td{background:#fdecea}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  code{background:#eef1f5;padding:1px 5px;border-radius:4px;
+       font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+  .box{border-left:4px solid var(--accent);background:#f2f6fd;padding:10px 13px;
+       border-radius:0 7px 7px 0;margin:10px 0;font-size:14px}
+  .box.good{border-color:var(--good);background:#eff8f2}
+  .box.bad{border-color:var(--bad);background:#fdf1f0}
+  .box.warn{border-color:var(--warn);background:#fdf7ea}
+  .box b{display:block;margin-bottom:3px}
+  .pos{color:var(--good);font-weight:600}
+  .neg{color:var(--bad);font-weight:600}
+  .tag{display:inline-block;padding:1px 8px;border-radius:11px;font-size:11.5px;
+       font-weight:600;vertical-align:1px}
+  .t-neg{background:#fdecea;color:var(--bad)}
+  .t-null{background:#eef1f5;color:var(--sub)}
+  .t-pos{background:#eaf6ee;color:var(--good)}
+  ul{margin:6px 0;padding-left:20px} li{margin:4px 0}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>VKITTI 解码头对照 —— 五条路径的结论</h1>
+<div class="sub">2026-09-04 · 全部 10000 步 / crop 448 / seq_len 4 / 有效 batch 32 / seed 0 ·
+域内 = VKITTI held-out dense (268 帧) · zero-shot = KITTI <span class="mono">kitti_video.json</span> (110 帧)</div>
+
+<div class="box bad" style="margin-top:18px">
+  <b>一句话结论</b>
+  这一轮设计的<b>五条 arm 在 zero-shot 上无一超过 temporal 基线</b>，最好的
+  <code>finealone</code> 仍落后 3.6%，最差的 <code>costvol</code> 落后一个量级。
+  <b>「给解码头加结构」这个方向，在这份数据和预算下已被逐条证伪。</b>
+</div>
+
+<!-- ============ 1 ============ -->
+<h2>1. 完整结果</h2>
+<div class="card">
+<table>
+  <thead><tr>
+    <th class="l" style="width:15%">arm</th><th class="l" style="width:22%">变量</th>
+    <th>域内 AbsRel</th><th>域内 RMSE</th><th>域内 δ1</th>
+    <th>KITTI AbsRel</th><th>KITTI RMSE</th><th>KITTI δ1</th><th class="l">判定</th>
+  </tr></thead>
+  <tbody>
+    <tr class="base"><td class="l"><b>temporal</b></td><td class="l">基线</td>
+      <td>0.1192</td><td>7.257</td><td>0.8579</td>
+      <td><b>0.0981</b></td><td><b>3.577</b></td><td><b>0.9027</b></td>
+      <td class="l">zero-shot 仍是最好</td></tr>
+    <tr><td class="l">ms_nofp32</td><td class="l">四尺度求和, fp32 off</td>
+      <td>0.1155</td><td>7.199</td><td>0.8661</td>
+      <td>0.0991</td><td>3.739</td><td>0.8966</td><td class="l">历史 arm</td></tr>
+    <tr><td class="l">ms</td><td class="l">四尺度求和 (原始)</td>
+      <td>0.1123</td><td>6.777</td><td>0.8727</td>
+      <td>0.1004</td><td>3.828</td><td>0.8943</td><td class="l">历史 arm</td></tr>
+    <tr class="best"><td class="l"><b>ms_finealone</b></td><td class="l">只监督最细尺度</td>
+      <td>0.1131</td><td>7.106</td><td>0.8662</td>
+      <td><b>0.1016</b></td><td>3.735</td><td>0.8954</td>
+      <td class="l">新 arm 里最好，仍输基线</td></tr>
+    <tr><td class="l">ms_grad</td><td class="l">打通跨尺度梯度</td>
+      <td>0.1201</td><td>7.127</td><td>0.8688</td>
+      <td>0.1066</td><td>3.882</td><td>0.8868</td>
+      <td class="l"><span class="tag t-neg">负</span></td></tr>
+    <tr><td class="l">ms_errmap</td><td class="l">GEM + 光度误差图</td>
+      <td>0.1184</td><td>7.000</td><td>0.8567</td>
+      <td>0.1076</td><td>3.895</td><td>0.8844</td>
+      <td class="l"><span class="tag t-neg">负</span></td></tr>
+    <tr><td class="l">ms_gem</td><td class="l">+GEM (errmap 的对照)</td>
+      <td>0.1134</td><td><b>6.754</b></td><td>0.8657</td>
+      <td>0.1082</td><td>3.903</td><td>0.8821</td>
+      <td class="l"><span class="tag t-null">域内微正 / zero-shot 负</span></td></tr>
+    <tr><td class="l">ms_norm</td><td class="l">四尺度<b>平均</b>(消等效 lr)</td>
+      <td>0.1155</td><td>7.001</td><td>0.8654</td>
+      <td>0.1094</td><td>3.998</td><td>0.8795</td>
+      <td class="l"><span class="tag t-neg">zero-shot 最差</span></td></tr>
+    <tr class="dead"><td class="l">costvol</td><td class="l">IGEV-MVS 端口, d∈[0.5,80]</td>
+      <td>0.4297</td><td>17.88</td><td>0.5207</td>
+      <td colspan="3" style="text-align:center;color:var(--sub)">未评（域内已判定失败）</td>
+      <td class="l"><span class="tag t-neg">量级失败</span></td></tr>
+    <tr class="dead"><td class="l">costvol_d3</td><td class="l">同上, d∈[3,80]</td>
+      <td>0.4171</td><td>17.40</td><td>0.5233</td>
+      <td colspan="3" style="text-align:center;color:var(--sub)">—</td>
+      <td class="l"><span class="tag t-neg">量级失败</span></td></tr>
+    <tr><td class="l">ms_iter4</td><td class="l">ConvGRU 4 轮</td>
+      <td colspan="6" style="text-align:center;color:var(--sub)">
+        仅 6600 步（被 SIGTERM 中断），训练预算不匹配 → <b>无有效结果</b></td>
+      <td class="l"><span class="tag t-null">未完成</span></td></tr>
+  </tbody>
+</table>
+<div class="sub">种子噪声带（历史实测，E2a 三种子）：AbsRel 跨度 <b>0.0006</b>。
+上表除 <code>ms</code> vs <code>finealone</code>（0.0012）外，各对比差距均在噪声带 3.5 倍以上。</div>
+</div>
+
+<!-- ============ 2 ============ -->
+<h2>2. 归因拆解：域内那 5.8% 领先是什么</h2>
+<div class="card">
+<div class="box warn">
+  <b>⚠ 先修正一个我中途说错的判断</b>
+  拿到域内数据时我说「一半领先来自等效学习率 ×4」。补上 KITTI 后这个说法要改：
+  <code>ms</code>(求和) 在<b>两个协议上都优于</b> <code>ms_norm</code>(平均)
+  ——域内 0.1123 vs 0.1155，KITTI 0.1004 vs <b>0.1094</b>。
+  所以求和带来的高等效学习率<b>是真实有益的设置，不是虚假增益</b>。
+</div>
+<p style="margin:8px 0">但它仍然是相对 temporal 的<b>混淆变量</b>：temporal 用单尺度 loss，
+ms 用四尺度求和，两者的有效学习率本就不同。正确的表述是——</p>
+<div class="box">
+  <b>那部分增益属于「更大的有效学习率」，不属于「多尺度结构」。</b>
+  要把它算进方法贡献，必须先给 temporal 也做学习率扫描，否则就是拿调参当创新。
+  <b>这个对照我们从来没做过。</b>
+</div>
+
+<h3>四尺度深监督本身是负贡献</h3>
+<p style="margin:6px 0"><code>finealone</code>（只监督最细尺度，<b>保留全部 4 倍头参数</b>）
+vs <code>norm</code>（均匀监督四尺度）：</p>
+<table>
+  <thead><tr><th class="l">对比</th><th>域内</th><th>KITTI</th><th class="l">含义</th></tr></thead>
+  <tbody>
+    <tr><td class="l">finealone</td><td>0.1131</td><td>0.1016</td><td class="l">—</td></tr>
+    <tr><td class="l">norm</td><td>0.1155</td><td>0.1094</td><td class="l">—</td></tr>
+    <tr><td class="l"><b>差值</b></td>
+      <td class="pos">−0.0024</td><td class="pos">−0.0078</td>
+      <td class="l"><b>去掉深监督反而更好，zero-shot 上差 13 倍噪声带</b></td></tr>
+  </tbody>
+</table>
+<div class="box bad">
+  <b>多尺度头的核心主张被否定</b>
+  「每个尺度都给监督」不但没有正贡献，在 zero-shot 上明确有害。
+  剩下的那点优势来自<b>头部参数量翻 4 倍</b>——而容量优势正是在域内放大、在 zero-shot 反噬的典型模式。
+</div>
+</div>
+
+<!-- ============ 3 ============ -->
+<h2>3. 三条新路径逐条判定</h2>
+<div class="card">
+<table>
+  <thead><tr><th class="l" style="width:14%">路径</th><th class="l" style="width:26%">假设</th>
+    <th class="l" style="width:22%">对照</th><th class="l">结果</th></tr></thead>
+  <tbody>
+    <tr><td class="l"><b>A errmap</b></td>
+      <td class="l">用 GEM 位姿 warp 邻帧，把光度残差注入每一步 —— 单目视频版的 cost-volume lookup</td>
+      <td class="l"><code>ms_gem</code><br><span class="sub">同 GEM 同 pose loss</span></td>
+      <td class="l"><span class="tag t-neg">负</span> 域内 0.1184 vs 0.1134、KITTI 0.1076 vs 0.1082（打平）。
+        <b>几何证据没有带来信息增益。</b></td></tr>
+    <tr><td class="l"><b>D grad</b></td>
+      <td class="l">头里两处 <code>depth_prev.detach()</code> 切断跨尺度梯度，实质是 4 个独立头共享 backbone</td>
+      <td class="l"><code>ms_norm</code></td>
+      <td class="l"><span class="tag t-neg">负</span> 域内 0.1201（<b>输给 temporal</b>）、KITTI 0.1066 vs 0.1094。
+        KITTI 略好但域内更差，<b>无一致收益</b>。</td></tr>
+    <tr><td class="l"><b>C iter4</b></td>
+      <td class="l">把 4 层当一个模块反复迭代（ConvGRU 权重跨轮共享）</td>
+      <td class="l"><code>ms_norm</code></td>
+      <td class="l"><span class="tag t-null">未完成</span> 6600/10000 步被中断。
+        需从 <code>checkpoint_6000.pth</code> 续训才有结论。</td></tr>
+  </tbody>
+</table>
+<div class="box">
+  <b>GEM 的性价比</b>
+  <code>ms_gem</code> vs <code>ms_norm</code>：域内 −1.8%、RMSE 最好（6.754），
+  但 <b>KITTI 反而差 1.1%</b>，代价是 <b>+151.7M 参数</b>（275.4M vs 123.7M）。
+  位姿本身学得很好（<code>quat</code> 收敛到 0.0003），但<b>学好的位姿没能转化成更好的深度</b>。
+</div>
+</div>
+
+<!-- ============ 4 ============ -->
+<h2>4. cost volume 为什么是量级失败</h2>
+<div class="card">
+<p style="margin:6px 0">IGEV-MVS 的直接移植（sweep → correlate → 3D 正则 → softargmin → ConvGRU ×8 → convex 上采样），
+实现本身经过几何正确性单测（已知基线下真值深度的匹配得分最高）与 ckpt 一致性验证，
+<b>不是实现 bug</b>。</p>
+
+<h3>诊断链</h3>
+<table>
+  <thead><tr><th class="l" style="width:34%">观察</th><th class="l">推论</th></tr></thead>
+  <tbody>
+    <tr><td class="l"><code>scale_0</code>（volume 的 softargmin 初值）
+        训练 10k 步从 2.8742 只降到 2.7081（<b>5.8%</b>），
+        而 <code>scale_8</code>（8 次 GRU 后）降到 0.5220（81%）</td>
+      <td class="l">cost volume 几乎没学到东西，<b>全部改善来自 GRU</b>。
+        与 IGEV「GEV 提供好初值」的核心主张相反。</td></tr>
+    <tr><td class="l">把假设覆盖率从 <b>6/32</b> 修到 <b>32/32</b>（<code>depth_min</code> 0.5→3.0）后，
+        <code>scale_0</code> 2.7081→2.7281、AbsRel 0.4297→0.4171</td>
+      <td class="l"><b>「深度采样错配」这个诊断被否定。</b>
+        两版参数量完全相同（207.8M / head 5.6M），是干净对照。</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <b>当前假设（未验证）：视差落在亚像素</b>
+  VKITTI fx=725@1242 宽 → crop448 后 ≈863 → volume 所在的 stride 8 那层 ≈<b>108</b>。
+  相邻帧基线约 1m 时 <span class="mono">disp = 108/Z</span>：
+  Z=10m→10.8px，40m→2.7px，80m→<b>1.35px</b>。
+  <b>32 个假设全挤在约 9px 跨度内，平均间隔 0.3px</b> —— 相邻假设 warp 出来几乎是同一个东西。
+  对比 IGEV-Stereo：KITTI 视差 192px@全分辨率 → 1/4 上 48px，48 个假设 ≈ 1px 间隔。
+  <b>差距在几何条件，不在算法。</b>
+  <span class="sub">待实测 VKITTI 真实帧间平移分布来确认。</span>
+</div>
+<div class="box">
+  <b>若要继续这条路，必须先改变视差量</b>
+  ① <code>warp_offsets</code> <code>(-1,1)</code>→<code>(-3,3)</code>：视差 ×3，零成本；
+  ② <code>volume_level: 0</code>（stride 4）：视差 ×2，显存 21GB→约 84GB（跑得起）；
+  ③ 两者叠加 ×6 → 间隔约 1.8px，才进入 cost volume 能工作的区间。
+</div>
+</div>
+
+<!-- ============ 5 ============ -->
+<h2>5. 哪些 trick 还可能提点</h2>
+<div class="card">
+<div class="box good">
+  <b>这批负结果本身就是最强的方向信号</b>
+  五条 arm 全是「给解码头加结构」，全部无正收益。而 CVPR'26 的 <b>CARVE</b>
+  （<a href="https://arxiv.org/abs/2604.21713">2604.21713</a>）
+  出发点与我们完全相同——<i>“multi-frame models … often underperform strong per-frame methods”</i>
+  ——但它<b>没提新架构</b>，靠把 loss 与对齐的消融做干净就发了 CVPR。
+  两件事互相印证：<b>剩余空间在 loss / 对齐 / 数据，不在头的结构。</b>
+</div>
+
+<table>
+  <thead><tr>
+    <th class="l" style="width:6%">序</th><th class="l" style="width:24%">动作</th>
+    <th class="l" style="width:14%">成本</th><th class="l" style="width:20%">证据来源</th>
+    <th class="l">为什么现在该做</th>
+  </tr></thead>
+  <tbody>
+    <tr class="best">
+      <td class="l"><b>1</b></td>
+      <td class="l"><b>梯度匹配 loss 消融</b><br>
+        <code>alpha: 0.5 → 0</code></td>
+      <td class="l"><b>一行 config</b><br>一次 10k 步</td>
+      <td class="l">CARVE 消融①：<br>gradient-based loss <b>可能反而有害</b></td>
+      <td class="l"><code>TrimmedProcrustesLoss</code> 的
+        <code>total = ssi + 0.5·gm</code> 里这个 <b>0.5 从项目开始就没动过、没验过</b>。
+        GemDepth 原论文也没做这个消融，<b>拿到任一方向都是新信息</b>。
+        目前投入产出比最高的一个。</td></tr>
+    <tr class="best">
+      <td class="l"><b>2</b></td>
+      <td class="l"><b>per-frame + per-sequence 联合对齐</b></td>
+      <td class="l">小改 loss</td>
+      <td class="l">CARVE 消融②：<br>联合对齐更好；<b>local region 反而更差</b></td>
+      <td class="l">我们的 <code>compute_scale_and_shift</code> 在
+        <code>flatten(1,2)</code> 后对 dim(1,2) 求和 →
+        <b>整段 clip 只有一组 (scale, shift)</b>，是纯 per-sequence。
+        加一路 per-frame 项即可。<b>切勿顺手做成分块对齐</b>，CARVE 明确说那更差。</td></tr>
+    <tr>
+      <td class="l"><b>3</b></td>
+      <td class="l"><b>时间轴深度反馈</b></td>
+      <td class="l">中<br>一次 20k 步</td>
+      <td class="l"><b>我们自己的正结果</b> + VeloDepth
+        (<a href="https://arxiv.org/abs/2512.10725">2512.10725</a>)</td>
+      <td class="l">现有 <code>depth_feedback</code> 是把<b>上一尺度</b>深度喂回（空间轴），
+        实测是 E2a 那次<b>最便宜的正杠杆</b>。
+        同一个 idea 换到<b>时间轴</b>从没试过，且有自家正结果背书——
+        这是唯一一条被我们自己的数据支持的结构性改动。</td></tr>
+    <tr>
+      <td class="l"><b>4</b></td>
+      <td class="l"><b>depth ↔ camera 一致性 loss</b></td>
+      <td class="l">中</td>
+      <td class="l">CARVE 消融④</td>
+      <td class="l"><code>CameraLoss</code> 只把 <code>pose_enc_list</code> 与 GT 位姿比 L1，
+        <b>位姿与深度之间没有任何一致性约束</b>。这解释了本轮的核心怪象：
+        <code>quat</code> 收敛到 0.0003，<b>位姿学得很好却没转化成更好的深度</b>。
+        复用已有 <code>camera_head</code>，不加新模块，<b>最像能写进论文的方法贡献</b>。</td></tr>
+    <tr>
+      <td class="l"><b>5</b></td>
+      <td class="l">temporal 的学习率扫描</td>
+      <td class="l">低</td>
+      <td class="l">本看板 §2</td>
+      <td class="l">既然「求和 vs 平均」的差异被证明是<b>有效学习率</b>而非结构，
+        那基线也该在同一个学习率尺度上被调过，否则整张对照表都建立在一个未控变量上。</td></tr>
+    <tr>
+      <td class="l"><b>6</b></td>
+      <td class="l">数据配比 uniform</td>
+      <td class="l">中</td>
+      <td class="l">CARVE 消融③</td>
+      <td class="l">已量化的偏差：PointOdyssey 36.2% / TartanAir 35.4% / MVS-Synth 25.8% /
+        <b>VKITTI2 1.4% / DynamicReplica 1.3%</b>（论文口径是各 20% 均匀）。
+        属于 mixdata 主线而非本轮 VKITTI 对照。</td></tr>
+  </tbody>
+</table>
+
+<div class="box warn">
+  <b>暂不建议做的</b>
+  <ul style="margin:4px 0">
+    <li><b>继续加解码头结构</b> —— 本轮五条全负，先把 loss / 对齐吃透再回来。</li>
+    <li><b>Rethinking the State Update Gate</b>
+      (<a href="https://arxiv.org/abs/2605.16981">2605.16981</a>) 的帧级标量门虽是零参数零训练、
+      Bonn −12.8% 很诱人，但它针对 <b>recurrent / 常数显存的流式模型</b>（TTT3R / CUT3R 那族的 state token）。
+      GemDepth 不是 recurrent、也没有压缩状态，<b>不能直接套</b>。</li>
+    <li><b>Tracktention 式显式点对应</b>（<a href="https://arxiv.org/abs/2503.19904">2503.19904</a>）
+      思路很正（把 ASTT 论文自称的 <i>latent</i> 点对应显式化），但属于新模块，
+      在本轮结论下应排在 loss 系动作之后。</li>
+  </ul>
+</div>
+</div>
+
+<!-- ============ 6 ============ -->
+<h2>6. 这份看板的可信度边界</h2>
+<div class="card">
+<ul>
+  <li><b>域内数字系统性偏乐观</b>：VKITTI train split 的 <code>end_idx=round(seq_num)</code> 是
+    <b>0–100%</b>，而 val 取后 10% —— <b>那 268 帧训练时全部见过</b>。
+    在这种设置下「域内更好」与「参数更多、更会背」无法区分，
+    而 ms 头恰好是 temporal 的 4 倍参数。<b>域内只可用于归因拆解，不能作为最终判据。</b></li>
+  <li><b>单 seed</b>。历史实测噪声带 AbsRel 0.0006；本表多数对比在其 3.5 倍以上，
+    但 <code>ms</code> vs <code>finealone</code>（0.0012）处于边缘，不应据此排序。</li>
+  <li><b>域内仅 1 个序列 268 帧</b>，样本量小。</li>
+  <li>KITTI 用 110 帧短协议（<code>kitti_video.json</code>），非论文的 500 帧口径；
+    短协议对视频方法<b>系统性偏乐观</b>（漂移积累少、全局仿射对齐在短序列更易拟合）。</li>
+  <li><code>ms_iter4</code> 因中断只有 6600 步，<b>训练预算不匹配，不得与其它 arm 同表比较</b>。</li>
+  <li>cost volume 的「亚像素视差」解释<b>尚未实测确认</b>，仅有内参与基线的估算推导。</li>
+</ul>
+</div>
+
+<!-- ============ 7 ============ -->
+<h2>7. 复现</h2>
+<div class="card">
+<p style="margin:4px 0 8px" class="sub">阿里云 <code>/mnt/data/PROJECT_CHEN/code/PP-DPT</code>，
+分支 <code>feat/registry-mixdata</code>。⚠ <code>(base)</code> 提示符下必须显式指定
+<code>/usr/local/bin/python</code>，conda 的解释器缺 accelerate/numpy。</p>
+<pre class="mono" style="background:#eef1f5;padding:12px;border-radius:7px;overflow-x:auto;font-size:12px">
+# 训练（多 arm 并行时 MAIN_PROCESS_PORT 必须逐个错开）
+export VKITTI_ROOT=/mnt/data/PROJECT_CHEN/data/train/vkitti2/vkitti PYTHON=/usr/local/bin/python
+CONFIG_NAME=vkitti/vkitti_ms_norm NUM_PROCESSES=8 MAIN_PROCESS_PORT=29531 \
+  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 setsid nohup bash scripts/vkitti.sh train \
+  &gt; runlogs/vk_ms_norm.log 2&gt;&amp;1 &lt; /dev/null &amp;
+
+# 域内 dense 评测
+/usr/local/bin/python evaluation/inference/eval_vkitti_dense.py \
+  --config config/vkitti/vkitti_ms_norm.yaml \
+  --ckpt checkpoint/vkitti_ms_norm/final_model.pth --vkitti_root $VKITTI_ROOT
+
+# KITTI zero-shot
+CONFIG=config/vkitti/vkitti_ms_norm.yaml CKPT=checkpoint/vkitti_ms_norm/final_model.pth \
+  BENCH=/mnt/data/PROJECT_CHEN/data/eval OUT=output_eval/ms_norm \
+  DATASETS=kitti GPU=0 PY=/usr/local/bin/python bash scripts/eval_gemdepth_4bench.sh
+
+# ckpt 与 config 一致性校验（全 OK 无 DIFF）
+/usr/local/bin/python scripts/inspect_checkpoints.py
+</pre>
+</div>
+
+<div class="sub" style="margin-top:24px;text-align:center">
+  数据全部来自实测，未做任何美化。负结果按原样记录。
+</div>
+
+</div></body></html>
