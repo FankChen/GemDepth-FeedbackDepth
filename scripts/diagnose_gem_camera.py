@@ -1,7 +1,8 @@
 """Audit the camera gauge produced by GEM on held-out VKITTI clips.
 
-The camera loss supervises translation in a scene-normalised coordinate system,
-not metres, and currently omits the focal/FoV term from its total. This script
+The camera loss applies scene normalisation AND a second maximum-baseline
+normalisation. Its final translation unit is not the mean scene depth. The
+legacy objective also omits the focal/FoV term from its total. This script
 measures the resulting K/R/T quality and compares adjacent-frame warps under a
 consistent gauge versus the metric-depth/normalised-translation gauge used by
 the first errmap and cost-volume experiments.
@@ -15,13 +16,12 @@ Example:
 
 import argparse
 import json
-import math
 import os
+import random
 import sys
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INFERENCE_ROOT = os.path.join(ROOT, "evaluation", "inference")
@@ -36,7 +36,13 @@ from protocol import load_experiment_config  # noqa: E402
 
 
 def normalize_ground_truth_camera(depth, mask, intrinsic, extrinsic):
-    """Reproduce CameraLoss's relative-pose / average-scene-depth gauge."""
+    """Reproduce BOTH normalisations in Cameraloss -> compute_camera_loss.
+
+    With scene scale A and maximum first-camera-relative translation L,
+    the final target is t / (L + 1e-6 * A), not t / A. Return that effective
+    metric unit, so scaling depth and translation together preserves projection.
+    This uses GT solely for a diagnostic oracle, never for RGB-only inference.
+    """
     batch, frames, _, height, width = depth.shape
     yy, xx = torch.meshgrid(
         torch.arange(height, device=depth.device, dtype=depth.dtype),
@@ -55,14 +61,41 @@ def normalize_ground_truth_camera(depth, mask, intrinsic, extrinsic):
     radial = camera_zero.norm(dim=2).reshape(batch, frames, height, width)
     valid = mask.squeeze(2)
     average_scale = ((radial * valid).sum(dim=(1, 2, 3))
-                     / valid.sum(dim=(1, 2, 3)).clamp_min(1.0))
+                     / (valid.sum(dim=(1, 2, 3)) + 1e-3))
     average_scale = average_scale.clamp(min=1e-6, max=1e6)
 
     first_inverse = torch.inverse(extrinsic[:, 0])
     relative = torch.matmul(extrinsic, first_inverse[:, None])
     relative = relative.clone()
     relative[:, :, :3, 3] /= average_scale[:, None, None]
-    return relative, depth / average_scale[:, None, None, None, None], average_scale
+    second_scale = relative[:, :, :3, 3].norm(dim=-1).amax(dim=1) + 1e-6
+    relative[:, :, :3, 3] /= second_scale[:, None, None]
+    metric_unit = average_scale * second_scale
+    return relative, depth / metric_unit[:, None, None, None, None], metric_unit
+
+
+def diagnostic_batches(dataset, max_batches, seed=0):
+    """Deterministic, spread-out clips without the dataset's random retry loop.
+
+    Consecutive first-N windows almost duplicate one another and can cover only
+    one scene. Record the selected indices/paths; these clips are diagnostics,
+    not a substitute for a complete benchmark. Explicitly seed Albumentations'
+    independent RNG where supported as well as Python/NumPy/Torch.
+    """
+    if max_batches <= 0 or len(dataset) == 0:
+        raise ValueError("Diagnostics require positive max_batches and a nonempty dataset")
+    indices = np.linspace(0, len(dataset) - 1,
+                          min(max_batches, len(dataset)), dtype=int)
+    for index in indices:
+        sample_seed = int(seed) + int(index)
+        random.seed(sample_seed)
+        np.random.seed(sample_seed)
+        torch.manual_seed(sample_seed)
+        for transform in dataset.transform.values():
+            if hasattr(transform, "set_random_seed"):
+                transform.set_random_seed(sample_seed)
+        # Corrupt data must fail this audit, not silently substitute another clip.
+        yield int(index), safe_collate([dataset._getitem_inner(int(index))])
 
 
 def rotation_error_degrees(prediction, target):
@@ -145,26 +178,24 @@ def main():
     dataset_kwargs["data_dirs"] = [args.vkitti_root]
     dataset_kwargs["mode"] = "val"
     dataset = DepthVideoDataset(**dataset_kwargs)
-    loader = DataLoader(
-        dataset, batch_size=1, shuffle=False, num_workers=0,
-        collate_fn=safe_collate)
 
     values = {key: [] for key in (
         "focal_relative_error", "principal_point_error_pixels",
         "rotation_error_degrees", "translation_direction_cosine",
-        "translation_magnitude_ratio", "scene_scale_metres",
+        "translation_magnitude_ratio", "translation_unit_metres",
         "gt_warp_valid", "gt_warp_residual",
         "pred_consistent_warp_valid", "pred_consistent_warp_residual",
         "pred_mismatched_warp_valid", "pred_mismatched_warp_residual")}
     nonfinite_intrinsics = nonfinite_extrinsics = frames_seen = 0
+    clips = []
 
     with torch.no_grad():
-        for batch_index, batch in enumerate(loader):
-            if batch_index >= args.max_batches:
-                break
+        for sample_index, batch in diagnostic_batches(dataset, args.max_batches):
+            clips.append({"sample_index": sample_index, "paths": batch["path"]})
             images = batch["image"].to(device)
             depth = batch["depth"].to(device).float()
-            mask = ((depth > 1e-3) & (depth <= args.max_depth)).float()
+            mask = ((depth > 1e-3) & (depth <= args.max_depth)
+                    & torch.isfinite(depth) & batch["mask"].to(device).bool()).float()
             intrinsic_gt = batch["IntM"].to(device).float()
             if isinstance(batch["poses"], (list, tuple)):
                 extrinsic_gt = torch.stack(batch["poses"], dim=1)
@@ -184,7 +215,7 @@ def main():
             nonfinite_extrinsics += int((~torch.isfinite(
                 extrinsic_pred).flatten(2).all(2)).sum())
 
-            gt_relative, depth_normalized, scene_scale = (
+            gt_relative, depth_normalized, metric_unit = (
                 normalize_ground_truth_camera(
                     depth, mask, intrinsic_gt, extrinsic_gt))
             intrinsic_gt_frames = intrinsic_gt[:, None].expand(
@@ -222,8 +253,8 @@ def main():
                 centre_error.flatten().cpu().tolist())
             values["rotation_error_degrees"].extend(
                 rotation_error.flatten().cpu().tolist())
-            values["scene_scale_metres"].extend(
-                scene_scale.flatten().cpu().tolist())
+            values["translation_unit_metres"].extend(
+                metric_unit.flatten().cpu().tolist())
 
             gt_stats = _warp_stats(
                 images.float(), depth, intrinsic_gt_frames, extrinsic_gt)
@@ -241,15 +272,24 @@ def main():
 
     summary = {key: _mean(items) for key, items in values.items()}
     summary.update({
+        "diagnostic_version": 2,
+        "config": os.path.abspath(args.config),
+        "checkpoint": os.path.abspath(args.ckpt),
+        "clips": clips,
         "frames": frames_seen,
-        "batches": min(args.max_batches, len(loader)),
+        "batches": len(clips),
         "nonfinite_intrinsics_fraction": (
             nonfinite_intrinsics / max(frames_seen, 1)),
         "nonfinite_extrinsics_fraction": (
             nonfinite_extrinsics / max(frames_seen, 1)),
         "camera_translation_gauge": (
-            "scene-normalised; multiply predicted T by scene_scale_metres "
-            "before combining with metric depth"),
+            "two-stage normalisation; multiply predicted T by translation_unit_metres "
+            "(approximately the maximum first-frame-relative GT baseline, NOT mean "
+            "scene depth) for this GT-assisted diagnostic only"),
+        "warp_residual_caveat": (
+            "RGB residuals use each camera mode's own in-bounds mask, not shared "
+            "visibility or a dynamic-object mask; do not rank camera quality by "
+            "residual alone when coverage differs"),
     })
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "w") as handle:
