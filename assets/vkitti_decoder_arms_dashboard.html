@@ -244,8 +244,9 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
   先完成 C0，暂不开 GRU；同一回传表的重复粘贴只算一轮证据。
   <br><b>C0/C1 入口现已实现：</b>v1 的 32 train 配额在准备阶段被拒绝：Scene02 仅有 15 个合格 spaced clips，C0 未训练。
   已显式修订为 <a href="../config/stereogru/matched_c0_c1_30train.yaml">v2：30 train（15+15）/16 dev</a>，仍 1000 steps、gap8、motion .5–5m，同 initial/manifest/order/cache。
-  <b>v2 C0 现已完成：</b>final1000 的 Scene18 AbsRel/RMSE/δ1 为 0.237924/9.810474/0.625427（30 train、16 dev、共享缓存 46 clips）。
-  保留最后一步，不挑 step750 较低的 AbsRel；下一步同一实验运行 C1，不续用 C0 最终权重、不重建清单。尚无完整体/GRU 增益结论。
+  <b>v2 seed0 C0/C1 均完成：</b>final1000 的 Scene18 AbsRel/RMSE/δ1：C0=0.237924/9.810474/0.625427，C1=0.251950/8.805196/0.639850。
+  <b>AbsRel 恶化 5.89%，RMSE 改善 10.25%，δ1 +1.44pp——指标取舍，不是全面提升。</b>
+  保留最后一步，不挑 C1 较好的750步；下一步固定 paired seeds1/2，只改 seed，逐 seed C0 完成后才 C1，不改配方或启动 GRU。
   历史深度指标仍仅 268 帧、1 条序列、逐帧 affine，不是四集长序列主协议；本次诊断量不作新榜单。
 </div>
 </div>

@@ -1,0 +1,73 @@
+{
+  "evidence_source": "User-returned Aliyun stdout, 2026-09-10; no independent local checkpoint execution",
+  "source_snapshot": "d4f33889cc7626c60813fa6bb2653283745368fd",
+  "protocol": "vkitti_calibrated_depth_axis_control_v2_30train",
+  "experiment": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_matched30_cJPdMuhW/experiment",
+  "log": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_C1_V46OwrhV.log",
+  "seed": 0,
+  "arm": "C1",
+  "decoder": "DPTHeadCalibratedVolumeOnlyConvNeXt",
+  "status": "COMPLETED_C1_and_comparison_reported",
+  "steps": 1000,
+  "gpu": 4,
+  "next_arm_launched": false,
+  "initial": {
+    "train": {"valid_pixels": 5884702, "index_l1": 0.3050410285454688, "absrel": 0.584484710551808, "rmse": 24.09087848179752, "delta1": 0.09836402930853592},
+    "dev": {"valid_pixels": 3591702, "index_l1": 0.31348034064660496, "absrel": 0.60111484824518, "rmse": 23.372599323655326, "delta1": 0.10258367759908812}
+  },
+  "evaluations": [
+    {
+      "step": 250,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.020321332518913566, "absrel": 0.15158118183704256, "rmse": 8.730376107165231, "delta1": 0.7950300626947635},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.04405273452217862, "absrel": 0.26301074524246154, "rmse": 9.106763670853985, "delta1": 0.6179727605463927}
+    },
+    {
+      "step": 500,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.01864051760422279, "absrel": 0.12712264952612057, "rmse": 7.849564545113902, "delta1": 0.828264710770401},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.04203690511436564, "absrel": 0.24138152037946628, "rmse": 8.53379669122276, "delta1": 0.66329779029552}
+    },
+    {
+      "step": 750,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.016259653211059173, "absrel": 0.10902285418407874, "rmse": 7.347889540950515, "delta1": 0.8530154967915112},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.03885889688062813, "absrel": 0.21769017713240155, "rmse": 8.28166245107752, "delta1": 0.6838846875381087}
+    },
+    {
+      "step": 1000,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.01649684075546028, "absrel": 0.10892977269444527, "rmse": 6.478943694469448, "delta1": 0.8760025571388321},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.04244676738801035, "absrel": 0.25194988315371547, "rmse": 8.805195505599173, "delta1": 0.6398501323328049}
+    }
+  ],
+  "comparison_checkpoint_step": 1000,
+  "reported_last_training_step": {
+    "step": 1000,
+    "clip_id": "Scene02/15-deg-left/Camera_0/00112",
+    "loss": 0.010806431993842125,
+    "grad_norm_before_clip": 0.33483555912971497,
+    "loop_elapsed_seconds": 22.733115727081895,
+    "raw_zero_fraction": 0.038330078125,
+    "raw_depth_std": 0.0006627170369029045,
+    "logit_depth_std": 1.4253365993499756
+  },
+  "reported_final_scene_table": {
+    "precision": "Terminal table: index_L1, AbsRel and delta1 to 6 decimals; RMSE to 4 decimals",
+    "C0": {
+      "Scene01_train": {"index_l1": 0.018948, "absrel": 0.120133, "rmse": 7.5284, "delta1": 0.844868},
+      "Scene02_train": {"index_l1": 0.014230, "absrel": 0.097927, "rmse": 7.3841, "delta1": 0.882317},
+      "Scene18_dev": {"index_l1": 0.041139, "absrel": 0.237924, "rmse": 9.8105, "delta1": 0.625427}
+    },
+    "C1": {
+      "Scene01_train": {"index_l1": 0.017018, "absrel": 0.111419, "rmse": 6.3686, "delta1": 0.864577},
+      "Scene02_train": {"index_l1": 0.015858, "absrel": 0.105882, "rmse": 6.6115, "delta1": 0.889994},
+      "Scene18_dev": {"index_l1": 0.042447, "absrel": 0.251950, "rmse": 8.8052, "delta1": 0.639850}
+    }
+  },
+  "limits": [
+    "The completed runner verified the baseline gate and final comparison artifacts. Their full files were not independently supplied to the local workspace.",
+    "This is one paired seed on a fixed GT-camera development subset. Dev is Scene18 only; not zero-shot RGB-only/SOTA or statistically established multi-scene improvement.",
+    "Final1000 is prespecified. C1 has lower dev AbsRel/RMSE and higher delta1 at step750 than at step1000; do not retrospectively replace the primary comparison checkpoint.",
+    "Final dev C1 has worse AbsRel and index-L1 but better RMSE and delta1 than C0: a metric tradeoff, not an overall winner.",
+    "Different near/far-depth effects, a few difficult clips, BN or optimization variability are hypotheses only; aggregate metrics do not identify the cause.",
+    "The trained full-volume head is still volume-only. No GRU benefit has been tested.",
+    "The loop time excludes shared-cache setup and final evaluation/save/verification; it is not total training wall time or benchmark inference latency."
+  ]
+}
