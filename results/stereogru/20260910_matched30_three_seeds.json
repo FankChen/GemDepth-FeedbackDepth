@@ -1,0 +1,111 @@
+{
+  "evidence_source": "User-returned Aliyun training stdout and three-seed summary, 2026-09-10; no independent local checkpoint execution",
+  "protocol": "vkitti_calibrated_depth_axis_control_v2_30train",
+  "repetition_source_snapshot": "97bf1706e0f141f601d248e2c82d5ec7d1547905",
+  "seed0_experiment": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_matched30_cJPdMuhW/experiment",
+  "repetition_root": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_seed_repeats_FCEyWuB3/runs",
+  "remote_summary": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_seed_repeats_FCEyWuB3/runs/seed_summary.json",
+  "status": "all_six_prespecified_runs_completed_and_summary_reported",
+  "seeds": [0, 1, 2],
+  "steps_per_arm": 1000,
+  "comparison_step": 1000,
+  "gpu_by_seed": {"0": 4, "1": 5, "2": 5},
+  "model": {"C0": "DPTHeadCalibratedFlatVolumeConvNeXt", "C1": "DPTHeadCalibratedVolumeOnlyConvNeXt"},
+  "train_scenes": ["Scene01", "Scene02"],
+  "dev_scene": "Scene18",
+  "clips": {"train": 30, "dev": 16},
+  "valid_pixels_each_evaluation": {"train": 5884702, "dev": 3591702},
+  "gru_launched": false,
+  "additional_training_after_summary": false,
+  "final_metrics": {
+    "0": {
+      "C0": {
+        "train": {"index_l1": 0.016826939887598702, "absrel": 0.11015100741922988, "rmse": 7.463854187752141, "delta1": 0.861702257820362},
+        "dev": {"index_l1": 0.041138623570499716, "absrel": 0.23792444849085378, "rmse": 9.810473607664624, "delta1": 0.6254266083322058}
+      },
+      "C1": {
+        "train": {"index_l1": 0.01649684075546028, "absrel": 0.10892977269444527, "rmse": 6.478943694469448, "delta1": 0.8760025571388321},
+        "dev": {"index_l1": 0.04244676738801035, "absrel": 0.25194988315371547, "rmse": 8.805195505599173, "delta1": 0.6398501323328049}
+      }
+    },
+    "1": {
+      "C0": {
+        "train": {"index_l1": 0.014097407436522364, "absrel": 0.09270253535641279, "rmse": 6.597857286846569, "delta1": 0.8875139301871191},
+        "dev": {"index_l1": 0.04170072176648347, "absrel": 0.28047571612192357, "rmse": 9.726032031370568, "delta1": 0.6329898749951972}
+      },
+      "C1": {
+        "train": {"index_l1": 0.016036188428579724, "absrel": 0.09942452376734068, "rmse": 7.05571617295152, "delta1": 0.864493903004774},
+        "dev": {"index_l1": 0.04366842513234443, "absrel": 0.22659208750037246, "rmse": 10.103989218571787, "delta1": 0.6332538167141929}
+      }
+    },
+    "2": {
+      "C0": {
+        "train": {"index_l1": 0.015225339646218763, "absrel": 0.1048314272819029, "rmse": 6.949372469978065, "delta1": 0.8680206746237957},
+        "dev": {"index_l1": 0.042572457454273994, "absrel": 0.2502428008943112, "rmse": 9.538649986873688, "delta1": 0.6216974570830208}
+      },
+      "C1": {
+        "train": {"index_l1": 0.015613876865911643, "absrel": 0.10083143224286592, "rmse": 6.738303504210566, "delta1": 0.8726569331803038},
+        "dev": {"index_l1": 0.042994729866594285, "absrel": 0.22203584091048575, "rmse": 9.292144629924708, "delta1": 0.6376041219455288}
+      }
+    }
+  },
+  "reported_scene_summary": {
+    "precision": "Means and sample SDs printed to 6 decimals; paired arrays printed at full Python float precision. No per-seed per-training-scene absolute values are inferred from rounded means.",
+    "train_Scene01": {
+      "index_l1": {"C0": [0.017476, 0.001494], "C1": [0.017460, 0.000781], "paired_mean_sd": [-0.000016, 0.002208], "paired_values": [-0.0019296721357339557, 0.0024002146148117444, -0.0005178469524069092]},
+      "absrel": {"C0": [0.112118, 0.011174], "C1": [0.109729, 0.001619], "paired_mean_sd": [-0.002389, 0.010922], "paired_values": [-0.008714236677393447, 0.010222599015906941, -0.00867473839993517]},
+      "rmse": {"C0": [7.040528, 0.429228], "C1": [6.690969, 0.407108], "paired_mean_sd": [-0.349560, 0.794181], "paired_values": [-1.1597400265895006, 0.42759075247330625, -0.3165303344059547]},
+      "delta1": {"C0": [0.855592, 0.013946], "C1": [0.854764, 0.013995], "paired_mean_sd": [-0.000828, 0.027921], "paired_values": [0.01970848008268289, -0.03261995321925548, 0.010426111027246998]}
+    },
+    "train_Scene02": {
+      "index_l1": {"C0": [0.012821, 0.001257], "C1": [0.014321, 0.001380], "paired_mean_sd": [0.001500, 0.000127], "paired_values": [0.001628671307877026, 0.0013737286072966395, 0.0014984575044289846]},
+      "absrel": {"C0": [0.090859, 0.006718], "C1": [0.094897, 0.009814], "paired_mean_sd": [0.004038, 0.003410], "paired_values": [0.007954383204973464, 0.002435286547602722, 0.001724500866684922]},
+      "rmse": {"C0": [6.956885, 0.475850], "C1": [6.835744, 0.194339], "paired_mean_sd": [-0.121141, 0.635173], "paired_values": [-0.7725592197039397, 0.496433947737307, -0.08729755196135436]},
+      "delta1": {"C0": [0.893010, 0.012873], "C1": [0.890996, 0.004619], "paired_mean_sd": [-0.002013, 0.009479], "paired_values": [0.007677666533728256, -0.011264357822355131, -0.0024537534943588346]}
+    },
+    "dev_Scene18": {
+      "index_l1": {"C0": [0.041804, 0.000722], "C1": [0.043037, 0.000612], "paired_mean_sd": [0.001233, 0.000775], "paired_values": [0.0013081438175106333, 0.001967703365860961, 0.00042227241232029034]},
+      "absrel": {"C0": [0.256214, 0.021895], "C1": [0.233526, 0.016117], "paired_mean_sd": [-0.022688, 0.034289], "paired_values": [0.014025434662861685, -0.053883628621551105, -0.02820695998382547]},
+      "rmse": {"C0": [9.691719, 0.139123], "C1": [9.400443, 0.656135], "paired_mean_sd": [-0.291275, 0.692704], "paired_values": [-1.0052781020654518, 0.3779571872012184, -0.24650535694897968]},
+      "delta1": {"C0": [0.626705, 0.005754], "C1": [0.636903, 0.003354], "paired_mean_sd": [0.010198, 0.008635], "paired_values": [0.014423524000599097, 0.0002639417189956861, 0.015906664862508024]}
+    }
+  },
+  "repetition_development_checkpoints": {
+    "precision": "Columns are [step, index_L1, AbsRel, RMSE, delta1]; retained for traceability, not checkpoint selection.",
+    "seed1_C0": [
+      [250, 0.047082347657355667, 0.32512547143813486, 10.85250791818318, 0.5660825981665517],
+      [500, 0.04429760104576655, 0.32657623162784416, 10.767410214697597, 0.5882634472459018],
+      [750, 0.04764415269557436, 0.38365711832474386, 12.076372347404803, 0.5610206526042528],
+      [1000, 0.04170072176648347, 0.28047571612192357, 9.726032031370568, 0.6329898749951972]
+    ],
+    "seed1_C1": [
+      [250, 0.04219821611225985, 0.2359341194155596, 9.324663018833606, 0.6429300092268234],
+      [500, 0.04388614569723963, 0.26622008409304787, 9.551912669911784, 0.6048480636756612],
+      [750, 0.0438061553430082, 0.26900234816565216, 9.331173840543574, 0.6270428337317517],
+      [1000, 0.04366842513234443, 0.22659208750037246, 10.103989218571787, 0.6332538167141929]
+    ],
+    "seed2_C0": [
+      [250, 0.04328791107641026, 0.2753399133452023, 9.643397015765506, 0.6269690525550282],
+      [500, 0.04138807271699883, 0.22083898339521627, 9.881350646575456, 0.6319410686075849],
+      [750, 0.04447913592593981, 0.3192951608964066, 10.237570302184848, 0.5980652069687296],
+      [1000, 0.042572457454273994, 0.2502428008943112, 9.538649986873688, 0.6216974570830208]
+    ],
+    "seed2_C1": [
+      [250, 0.045219065498480975, 0.2833096549318129, 9.520336623861617, 0.6071096655568864],
+      [500, 0.04078878990864156, 0.2194717266147595, 9.140342707397709, 0.6626646642733723],
+      [750, 0.04211247235413415, 0.26060458279013826, 8.79662391562456, 0.6410002834310864],
+      [1000, 0.042994729866594285, 0.22203584091048575, 9.292144629924708, 0.6376041219455288]
+    ]
+  },
+  "limits": [
+    "All three prespecified seeds are included at step1000; no best-checkpoint or seed selection.",
+    "Mean improvement of standard dev depth metrics is a preliminary signal. AbsRel and RMSE each improve in 2/3 pairs, while their paired sample SD exceeds the magnitude of their mean difference.",
+    "Dev delta1 increases in 3/3 pairs, but seed1 improves by only 0.00026394 (0.0264 percentage points). Dev index-L1 is worse in 3/3 pairs.",
+    "Scene02 training index-L1 and AbsRel are worse in every seed; the result is not a uniform optimization or scene-wise dominance.",
+    "These seeds share one fixed development scene. Seed variability does not measure independent-scene uncertainty or prove statistical significance, broad generalization or SOTA.",
+    "GT cameras are still supplied. No corrected GRU or RGB-only camera path has been evaluated.",
+    "Within each pair the registered arms share initialization, data, crop, order, cache and budget. GPU4 was used for seed0, GPU5 for seed1/2; all reported devices are H20-3e, not identical concurrent load conditions.",
+    "The remote runner reported successful hash/completion checks. Full checkpoint/certificate files were not independently copied into this local record.",
+    "The four repeated loops took about 24 seconds each in their step logs; this excludes preparation/caching and final artifact verification and is not end-to-end training or inference throughput."
+  ]
+}

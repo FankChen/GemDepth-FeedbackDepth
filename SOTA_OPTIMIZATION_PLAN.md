@@ -1,6 +1,6 @@
 # PP-DPT：面向标准视频深度 benchmark 的优化方案
 
-审阅日期：2026-09-09，实测更新至 2026-09-10。初审代码依据：`feat/registry-mixdata@eb2c9ac`。状态：**SOTA 方法仍为研究设计；校准 volume-only 小样本 pilot 已完成，不代表泛化或方法增益**。
+审阅日期：2026-09-09，实测更新至 2026-09-10。初审代码依据：`feat/registry-mixdata@eb2c9ac`。状态：**校准 volume-only pilot 和三种子 C0/C1 控制均完成，标准开发指标均值有初步正信号但不稳定；新 GRU/RGB-only/SOTA 尚未验证**。
 
 本次核对了当前实现、已有实验记录、跨会话记忆、DenseGRU / DA3-Metric-Repro 的本地结果，以及下列论文原文和官方资源。历史文档有相互矛盾的版本，以下不继承其中未经验证的因果结论。已有综述的工作区修改保持不动。
 
@@ -12,9 +12,9 @@
 
 **pilot 已回传完成：**官方基座恢复通过完整指纹；同一 374807 个训练像素、eval 模式下 index-L1 `.30010→.01291`，AbsRel `.57223→.09102`，δ1 `.09822→.95532`，matcher 梯度非零。已通过可学习性检查，不再怀疑“volume 一定学不动”。随后[零训练 raw-volume 检查](scripts/diagnose_stereogru_pilot.py)也已回传，不能把 overfit 与旧 held-out 分数横比。
 
-**readout 更新：**原 pilot 分数复现、模型状态不变；清空 raw 明显退化，但拉平 depth 的影响小，反转 depth 在未拟合 training scene 降低 AbsRel 却增加 RMSE。停止重复类似诊断；[C0 平体训练 → C1 完整体训练的匹配对照](STEREOGRU_MATCHED_CONTROL_PLAN.md)的 seed0 两臂现均完成 1000 步。首轮有指标取舍，**尚未证明正确 depth 轴信息有稳定统一收益**；只追加固定 paired seeds 1/2，不改模型/预算/评测点，GRU 仍不在执行清单。
+**readout 与匹配训练均完成：**原 pilot 分数复现、模型状态不变；只读干预提示 depth 轴收益尚待验证，随后[三种子 C0 平体 → C1 完整体匹配对照](STEREOGRU_MATCHED_CONTROL_PLAN.md)全部完成 final1000。开发集标准 depth 指标均值更好，但 AbsRel/RMSE 的逐种子方向翻转、index-L1 三组更差，**尚未证明稳定统一收益**。本轮收束，不再追加种子、改评测点或重复探针。
 
-**执行版本更新：**v1 配额检查发现 Scene02 仅容纳 15 个合格 spaced clips，当时 C0 尚未开始。显式采用 [v2：30 train / 16 dev](config/stereogru/matched_c0_c1_30train.yaml)，保持原间隔/运动阈值/1000 步预算和 C0→C1 依赖。final1000 开发集 C0 AbsRel/RMSE/δ1 为 **.237924 / 9.810474 / .625427**，C1 为 **.251950 / 8.805196 / .639850**：AbsRel 恶化 5.89%，RMSE 改善 10.25%，δ1 +1.44pp。它是单 seed 的取舍，不挑 C1 较好的750步，不宣称整体提升；配对重复待执行。
+**当前统计：**[v2：30 train / 16 dev](config/stereogru/matched_c0_c1_30train.yaml)的三个 seed 均保留1000步。开发 C0→C1 的跨 seed 均值为 **AbsRel .256214→.233526（−8.86%），RMSE 9.691719→9.400443（−3.01%），δ1 .626705→.636903（+1.02pp）**；index-L1 .041804→.043037（+2.95%，更差）。先前 seed0 的取舍仍计入，不选择性丢弃。下一阶段是修正后 registered GRU 的合成/小样本验证，再与 C1 匹配比较；尚未实现/运行，不把此开发子集的平均正信号等同于正式准确率/SOTA 提点。
 
 ## 0. 决策摘要
 
