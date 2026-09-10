@@ -10,7 +10,9 @@
 
 精确回传已确认首 clip 四帧 **fy=inf、GEV 全部严格 0**，六个执行源码 hash 与诊断快照吻合，取证结束。已新增[隔离的校准 volume-only pilot](config/stereogru/calibrated_volume_only.yaml)：clean frozen backbone、GT 相机、训练场景 2×4 帧、绝对 index 监督、200 步，无 GRU/no auto method。它是实现 gate，不是正式 baseline 完成或修复提点结果；详见 [入口与验收](STEREOGRU_IMPLEMENTATION_AUDIT.md)。
 
-**pilot 已回传完成：**官方基座恢复通过完整指纹；同一 374807 个训练像素、eval 模式下 index-L1 `.30010→.01291`，AbsRel `.57223→.09102`，δ1 `.09822→.95532`，matcher 梯度非零。已通过可学习性检查，不再怀疑“volume 一定学不动”。下一步是[零训练 raw-volume 依赖与未拟合 training clips 检查](scripts/diagnose_stereogru_pilot.py)，不是立即开 GRU 或拿 overfit 与旧 held-out 分数横比。
+**pilot 已回传完成：**官方基座恢复通过完整指纹；同一 374807 个训练像素、eval 模式下 index-L1 `.30010→.01291`，AbsRel `.57223→.09102`，δ1 `.09822→.95532`，matcher 梯度非零。已通过可学习性检查，不再怀疑“volume 一定学不动”。随后[零训练 raw-volume 检查](scripts/diagnose_stereogru_pilot.py)也已回传，不能把 overfit 与旧 held-out 分数横比。
+
+**readout 更新：**原 pilot 分数复现、模型状态不变；清空 raw 明显退化，但拉平 depth 的影响小，反转 depth 在未拟合 training scene 降低 AbsRel 却增加 RMSE。当前只证明可学习及 raw 输入依赖，**尚未证明正确 depth 轴信息有稳定迁移收益**，也不能反过来否定 StereoGRU。停止重复类似诊断；下一步已固化为 [C0 平体训练 → C1 完整体训练的匹配对照](STEREOGRU_MATCHED_CONTROL_PLAN.md)，尚未实现/启动。C0 先完成，GRU 不在当前执行清单。
 
 ## 0. 决策摘要
 
@@ -264,7 +266,7 @@ SelfEvo 的 36.5% 是其 KITTI scale-only AbsRel `.074→.047`，不是四集平
 
 ### 第一轮顺序
 
-1. 核实 full 的完成/评测状态（当前没有新证据）；StereoGRU 首轮取证已确认非有限 K/空体，接下来是校准索引小样本与 volume-only → GRU 匹配验证，不重复错误配置或先转向 RGB/flow。
+1. 核实 full 的完成/评测状态（当前没有新证据）；StereoGRU 的非有限 K/空体取证、校准 pilot 和只读 readout 均已完成。下一步先固定新开发 manifest，做 C0 平体 baseline → C1 完整体的匹配训练，确认 depth 轴收益，再决定后续完整 baseline/GRU；不重复错误配置或先转向 RGB/flow。
 2. 固定开发/测试清单；复跑官方 VDA、GemDepth，确认可用的强起点和本地预测一致性。
 3. 把相机标签、split/mask 等必要修正冻结为新协议；**新协议的 baseline 先完整跑完**。旧结果保留但不冒充新对照。
 4. 主线先做 B0/B1。RGB 分支不优于 B0，停止扩展像素支路，不搬用 PXDepth 结论硬解释。

@@ -1,0 +1,54 @@
+{
+  "evidence_source": "User-returned Aliyun stdout, 2026-09-10; not a new local checkpoint execution",
+  "run_id": "stereogru_readout_JyCpLkpw",
+  "pilot_run_id": "stereogru_calibrated_WuYmJxow",
+  "source_snapshot": "c194933a766f5f51bee6371e4dede7d6c3ede20f",
+  "gpu": 4,
+  "unique_runs_reported": 1,
+  "duplicate_paste_note": "The same run ID and table appeared twice in the user message; this is not evidence of two independent executions or seeds.",
+  "pilot_replayed": true,
+  "training_steps": 0,
+  "head_state_unchanged": true,
+  "precision": "Terminal-rounded values: index_L1/AbsRel/delta1/mean_abs_delta_q to 6 decimals, RMSE to 4 decimals. The full readout JSON and per-clip manifests were not supplied here.",
+  "group_sizes": {
+    "fitted": 2,
+    "unfitted_training_scene": 2,
+    "unfitted_same_scene": 4
+  },
+  "results": {
+    "fitted": {
+      "normal": {"index_l1": 0.012909, "absrel": 0.091015, "rmse": 4.7432, "delta1": 0.955318, "mean_abs_delta_q": 0.000000},
+      "zero_raw": {"index_l1": 0.132689, "absrel": 0.415644, "rmse": 17.9249, "delta1": 0.220932, "mean_abs_delta_q": 0.142498},
+      "flat_depth_raw": {"index_l1": 0.014670, "absrel": 0.095759, "rmse": 5.1679, "delta1": 0.927405, "mean_abs_delta_q": 0.004808},
+      "reverse_depth_raw": {"index_l1": 0.023153, "absrel": 0.120664, "rmse": 7.1805, "delta1": 0.884759, "mean_abs_delta_q": 0.014494}
+    },
+    "unfitted_training_scene": {
+      "normal": {"index_l1": 0.039610, "absrel": 0.253740, "rmse": 13.4298, "delta1": 0.617821, "mean_abs_delta_q": 0.000000},
+      "zero_raw": {"index_l1": 0.125043, "absrel": 0.382535, "rmse": 22.6037, "delta1": 0.342008, "mean_abs_delta_q": 0.156606},
+      "flat_depth_raw": {"index_l1": 0.038504, "absrel": 0.244938, "rmse": 13.7521, "delta1": 0.621244, "mean_abs_delta_q": 0.003841},
+      "reverse_depth_raw": {"index_l1": 0.038362, "absrel": 0.236112, "rmse": 14.2513, "delta1": 0.628529, "mean_abs_delta_q": 0.009458}
+    },
+    "unfitted_same_scene": {
+      "normal": {"index_l1": 0.027378, "absrel": 0.151359, "rmse": 8.2713, "delta1": 0.768801, "mean_abs_delta_q": 0.000000},
+      "zero_raw": {"index_l1": 0.146538, "absrel": 0.428079, "rmse": 16.1022, "delta1": 0.222342, "mean_abs_delta_q": 0.152019},
+      "flat_depth_raw": {"index_l1": 0.027185, "absrel": 0.149185, "rmse": 8.6437, "delta1": 0.762085, "mean_abs_delta_q": 0.005232},
+      "reverse_depth_raw": {"index_l1": 0.031139, "absrel": 0.158266, "rmse": 9.1794, "delta1": 0.735296, "mean_abs_delta_q": 0.015064}
+    }
+  },
+  "verified_by_the_reported_runner": [
+    "Saved fitted-pilot final metrics and valid-pixel count replayed within the predeclared tolerance before interventions.",
+    "Same model parameters/BN buffers and same per-group GT support across all raw-volume interventions.",
+    "Zero training steps; no optimizer or checkpoint updates.",
+    "Added training-pool clips have no fitted-frame overlap; exact scene IDs and temporal gaps remain in the full remote report."
+  ],
+  "limits": [
+    "zero_raw removes signal magnitude and spatial/group means as well as depth variation; damage is not proof of correct geometric depth discrimination.",
+    "flat_depth_raw preserves each pixel/group's depth-mean of a geometrically constructed volume plus all image guides. It is not an RGB-only or geometry-free model.",
+    "Reversing depth improves AbsRel but worsens RMSE in unfitted_training_scene; do not call it an overall improvement or choose reversal as a fix.",
+    "These are fixed-weight inference interventions, not models retrained with flat or reversed volume inputs.",
+    "Two clips in an unfitted training scene do not establish cross-dataset zero-shot generalization or statistical significance; same-scene clips may be temporally adjacent.",
+    "The original pilot did not independently record a historical final-head file hash. Current-state checks and numerical replay are not an independent historical byte-identity attestation.",
+    "mean_abs_delta_q is computed on all output pixels, unlike GT-masked index_L1. It cannot be read as a matching accuracy or contribution percentage."
+  ],
+  "decision": "Learnability and broad raw-input dependence confirmed for this pilot; stable benefit from correct depth-bin discrimination is not yet established. Stop repetitive readouts; next design is a matched TRAINED flat-depth control followed by the full-volume control, before attributing any gain to GRU. No further job launched in response to this record."
+}

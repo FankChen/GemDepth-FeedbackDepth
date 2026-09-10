@@ -238,7 +238,10 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
   <a href="../config/stereogru/calibrated_volume_only.yaml">隔离 pilot</a>已实现：clean frozen backbone、GT 相机、2×4 training frames、200 steps、绝对 index L1；
   <b>现已实测完成</b>，不自动开 method。同一 374807 个训练像素：index-L1 0.30010→0.01291，AbsRel 0.57223→0.09102，δ1 0.09822→0.95532；
   matcher 梯度非零，说明校准下 volume-only 能学习，但不是正式训练、泛化结果或 GRU 提点。
-  下一步只读检查 zero/flat/reverse raw 体干预及未拟合 training clip，先区分匹配依赖与小样本记忆。
+  <br><b>只读检查也已回传：</b>fitted 的 normal/zero/flat/reverse AbsRel 为 0.091015/0.415644/0.095759/0.120664；
+  对清空体敏感，不等于已学会正确逐 bin 判别。未拟合场景反转体的 AbsRel 0.253740→0.236112，但 RMSE 13.4298→14.2513，不能只挑前者称改善。
+  flat 仍保留几何 sweep 的空间/group 均值与 guides，并非无几何模型。现转入<a href="../STEREOGRU_MATCHED_CONTROL_PLAN.md">训练时即 flat 的 C0 → 完整体 C1 匹配方案</a>，
+  先完成 C0，暂不开 GRU；同一回传表的重复粘贴只算一轮证据。
   历史深度指标仍仅 268 帧、1 条序列、逐帧 affine，不是四集长序列主协议；本次诊断量不作新榜单。
 </div>
 </div>

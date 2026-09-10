@@ -356,4 +356,46 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 
 解读顺序：若原指标不能复现，先排 artifact/环境；若 zero/flat/reverse 都基本不影响输出，不能把 overfit 当匹配证据；若干预有影响但新 clip 明显差，先处理覆盖/过拟合。只有实现 gate 与有意义的新样本检查成立，才固定完整 calibrated baseline 的协议和预算，**先跑完 baseline，再启动同协议 raw+GEV GRU**。当前 readout 没有 optimizer 或自动下一组开关。
 
-本地最终回归 **94 passed（12.61s）**，含已保存合成 pilot 的完整回放、相同支持域、原始/有效 raw 区分、hook 异常清理、源码或指标不一致拒绝，以及原恢复/校准/各注册表测试。原 pilot 的 9 个 provenance-covered 源码文件仍与 `25dd7f0` 逐字节相同。真实阿里云 readout 尚待执行；本次没有新训练或 GRU 结果。
+本地最终回归 **94 passed（12.61s）**，含已保存合成 pilot 的完整回放、相同支持域、原始/有效 raw 区分、hook 异常清理、源码或指标不一致拒绝，以及原恢复/校准/各注册表测试。原 pilot 的 9 个 provenance-covered 源码文件仍与 `25dd7f0` 逐字节相同。随后用户已完成真实阿里云 readout，见第 11 节；没有新训练或 GRU 结果。
+
+## 11. 只读 readout 回传：依赖 raw 输入，但 depth 轴增益尚未建立
+
+运行标识 `stereogru_readout_JyCpLkpw`，源快照 `c194933`，GPU 4；[终端数值归档](results/stereogru/20260910_pilot_readout.json)。用户粘贴中同一运行 ID 和表格重复出现，**只计一轮、一个 checkpoint 的证据，不冒充重复运行或 paired seeds**。回传明确 `PILOT_REPLAYED=true`、`training_steps=0`、`head_state_unchanged=true`；原 fitted normal 行也与 pilot 最终指标在打印精度上相同。
+
+### 11.1 核心数值与判断
+
+下表为同一 group、相同 GT 支持域上的 AbsRel。各 group 各自的场景/支持不同，不能把跨 group 差值当作受控方法提升。
+
+| group | clips | normal | zero raw | flat depth raw | reverse depth raw |
+|---|---:|---:|---:|---:|---:|
+| fitted | 2 | .091015 | .415644 | .095759 | .120664 |
+| unfitted training scene | 2 | .253740 | .382535 | .244938 | .236112 |
+| unfitted same scene | 4 | .151359 | .428079 | .149185 | .158266 |
+
+**A. 对清空 raw 体高度敏感，但不能把这个效应全归因于正确几何。** fitted AbsRel 从 `.091015` 到 `.415644`，另外两组也显著退化。全零操作同时删除逐像素/group 的幅值、空间均值、depth 变化，并改变 aggregation/BN 所见的输入分布；它证明当前固定模型需要非零 raw 输入，不能证明它依赖正确的逐 bin 匹配峰。
+
+**B. 拉平 depth 后大部分预测仍被保留，说明不能从 overfit 成功推出深度轴判别已充分学会。** fitted AbsRel 仅从 `.091015` 到 `.095759`（约 +5.21%）；两组未拟合 clip 的 AbsRel 反而小幅降低。mean absolute delta-q 只有 `.003841–.005232`，但这是所有输出像素统计，不能直接与 GT-masked index-L1 混算或换成“几何贡献百分比”。
+
+这里的 flat 仍保留来自真实 GT-camera sweep 的逐像素/group 均值、view weighting/有效性影响，以及全部图像 guides。它**不是纯单帧或完全没有几何信息**；因此“模型肯定只走单目捷径”“几何贡献只占 5%”都不是本实验能给出的结论。
+
+**C. depth 顺序不是完全无影响，但收益没有稳定迁移。** fitted 反转后 AbsRel `.120664`（约 +32.58%）、δ1 `.955318→.884759`，有明确敏感性；不能说 depth 轴完全未使用。未拟合 training scene 却是 AbsRel `.253740→.236112`（约 −6.95%），而 RMSE **`13.4298→14.2513`（约 +6.12%）**。这不是一致改善，更不能把“反转 depth”当作修复方向。
+
+同样地，flat 在未拟合 training scene 的 RMSE 从 `13.4298→13.7521`，在未拟合同场景从 `8.2713→8.6437`，后者 δ1 也略降。不能只挑 AbsRel 变化就宣称平体胜出。
+
+**D. 原 fitted 分数与新 clip 存在明显差距，但不能立即宣布跨域泛化失败。** normal 为 `.0910 / .1514 / .2537`，与小样本记忆/覆盖差异的解释相容；只有 2/4/2 clips，未提供的完整 manifest 才含具体 scene ID 和帧间隙。同场景样本可能相邻，`unfitted_training_scene` 仍是 training pool 中未拟合的场景，不是完整 held-out benchmark，更不是 zero-shot 四集。
+
+### 11.2 当前检查到哪一层
+
+| 检查层级 | 状态 |
+|---|---|
+| 历史相机 K 失效、真实 raw/GEV 空体 | 已定位；旧负结果不能否定 StereoGRU |
+| 新校准 volume-only 有梯度、能拟合两 clip | 已通过 |
+| 已保存 pilot 分数可重复回放，readout 不改状态 | 已通过本轮数值回放 |
+| 固定模型依赖非零 raw 输入 | 本次干预支持，但有输入分布变化的限制 |
+| 正确 depth-bin 信息带来稳定未拟合收益 | **尚未建立** |
+| 完整同协议 baseline 与 GRU 增益 | **未运行** |
+| RGB-only/SOTA | **尚不能讨论为实测结论** |
+
+本轮至此结束只读诊断，不再要求重复 zero/flat/reverse。下一步改成**训练时即使用平体的 C0 baseline → 同初始化/同预算的完整体 C1**，以排除“仅在推理时改输入”的混淆。预登记问题、矩阵、数据 split、预算及验收见 [匹配训练对照方案](STEREOGRU_MATCHED_CONTROL_PLAN.md)。
+
+方案暂定 Scene01/02 固定 32 个 training clips、Scene18 固定 16 个开发 clips，每臂 1000 updates；具体清单/间隔满足性先核验，不满足就停止而非静默换数据。它是新开发协议，旧 full-volume 两 clip pilot 不能充作 C1；C0 完成后才能启动 C1，**G1/GRU 暂不启动**。此处仅固化方案，尚未实现/启动新训练，也没有新的方法结论。
