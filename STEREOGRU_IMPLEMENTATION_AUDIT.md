@@ -297,3 +297,19 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 相对于历史 costvol，此 pilot 改变了几何输入、输出监督、clean/frozen backbone、crop、优化预算等，**不能拿它与 `.4297/.4171` 当单变量提点实验**。后续 baseline/method 必须共同遵循新协议与共享初始化，不把 overfit 和测试结果混表。
 
 本地验证：**73 passed（11.03s）**，含新校准合约、train-only 文件夹/标定 fixture、无 GPU 的三步独立运行，以及原诊断、decoder/backbone/objective/freeze/mix 注册表回归。另用本地真实干净 backbone 权重验证 strict loading 和有限四级特征输出。**未在本机执行真实 VKITTI 200 步，未启动阿里云作业；真实学习结果仍待该 pilot 回传。**
+
+### 9.1 部署阻塞：独立权重文件未找到，但可验证恢复冻结基座
+
+阿里云两次尝试都没有启动训练：首次默认权重路径不存在；随后在已知 weights/checkpoint 目录按文件名查找，没有任何候选哈希输出。这只说明限定目录/命名下未找到，不证明整台机器没有文件；不再继续让用户猜路径。
+
+新增 [verified recovery](scripts/recover_verified_convnext_backbone.py) 与[拒错测试](test/test_verified_backbone_recovery.py)。利用现成完整 PP-DPT checkpoint 中的 `pretrained.model` 参数：仅去除 DDP 前缀及已知 fc1/fc2 LoRA wrapper 的 `.base` 层级，丢弃 adapter、GEM、decoder；**不合并或反算 LoRA**。不能只因旧代码写了 freeze 就相信参数没变，必须核对全部基座张量。
+
+官方原文件 SHA256 为 `296db49dcbd622625befd3fc23318cbbcd98049f4c4b0cc026463de6bcd24952`。本机按已有严格加载路径提取 342 个 native tensors（仅排除原导出多余、特征不使用的两个 norm 键），以排序后的名称/dtype/shape/连续原始字节构造可重复指纹：`eb323d607420145dc0baa072355d232ffd9e953554e9765f3fc625324b63246c`。
+
+恢复程序要求数量和完整规范指纹同时一致；哪怕一个 tensor 的数值、形状、dtype 或名字变化，也拒绝导出。CLI 没有跳过校验的选项。只有验证通过才以独占写入方式产生新权重和来源报告，原 checkpoint 始终只读；CPU 恢复本身不占训练 GPU。**新序列化文件的文件 SHA256 不会等于官方原文件 SHA256；相等的是全部 native tensor 状态，二者明确分开记录。**
+
+因此这不是拿 finetuned backbone 替换 clean 初始化：通过时恰好恢复官方相同参数，不改变 pilot 协议；不通过就停止，不能用“冻结过”“形状兼容”或只看几个 tensor 来放行。
+
+本地全尺寸验证：真实官方 ConvNeXt-S 加入 72 处非零 LoRA，再包装成模拟 PP-DPT/DDP 完整 state dict；恢复时排除 144 个 adapter tensors，342 个基座张量指纹通过，重新走 pilot 严格加载后四级特征最大差均为 **0**。临时模拟导出已清理，未用阿里云历史权重冒充该测试，实际阿里云 checkpoint 是否通过仍以运行校验为准。
+
+相关回归合计 **83 passed（11.73s）**；新增用例覆盖六种指纹变化、重复键/未知 wrapper、导出重读、源文件不变及失败时不写出。部署指令重新创建代码快照和独立权重目录，不依赖之前终端里的 `$D`；只在 `VERIFIED_OFFICIAL_BASE` 通过后继续相同 200 步 pilot，不改变任何训练协议。
