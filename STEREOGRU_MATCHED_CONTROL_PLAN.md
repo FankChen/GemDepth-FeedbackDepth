@@ -1,6 +1,6 @@
 # StereoGRU：depth 轴信息的匹配训练对照
 
-日期：2026-09-10。状态：**方案已固定，尚未实现/启动此训练对照；不是新结果。** 本轮只归档只读检查，不继续堆同类诊断或自动开启 GRU。
+日期：2026-09-10。状态：**用户要求开始落实后，C0/C1 入口已实现，107 项相关测试通过；真实 C0/C1 训练尚待阿里云执行。** 这不是新方法结果，不继续堆同类诊断或自动开启 GRU。
 
 ## 1. 这一步只回答一个问题
 
@@ -47,7 +47,7 @@ C0 不是纯单帧、不是无相机/无几何 baseline：均值来自带 GT 相
 | 初始化 | C0/C1 加载同一个独立保存的全新 head 初值，公共 state keys、数值/BN buffers、参数量和哈希完全相同；优化器均重新初始化 |
 | seed | 首轮 seed=0；若有开发信号，再按相同预算补 paired seeds 1/2。每个 seed 的 C0 完成后才启动对应 C1 |
 | checkpoint | 主比较固定最后第 1000 步，不从 train/dev 曲线挑最优。中间每 250 步的结果只记录，不混表 |
-| 成本 | 单 H20 顺序运行，每 arm 预设最多 1 GPUh 的安全上限（提议，不是已授权作业）；超限停止，不能以半程结果对比另一组全程 |
+| 成本 | 单 H20 顺序运行，每 arm 内部检查 3600 秒预算，shell 同时限制训练进程 3600 秒、TERM 后 30 秒仍未退出则强制结束；超限不产生完成证据，不能以半程结果对比另一组全程 |
 
 训练 scene 覆盖、间隔和数量需要在生成 manifest 时计数验证；**目前没有宣称数据已满足这些数量**。1000 步/32 clips 仍是定额开发机制实验，不叫完整多域训练，不从先前 9.68s 的缓存两 clip pilot 推断真实吞吐。
 
@@ -55,7 +55,7 @@ C0 不是纯单帧、不是无相机/无几何 baseline：均值来自带 GT 相
 
 ## 4. 实现边界与验收
 
-- C0 应是新增注册类，例如 `DPTHeadCalibratedFlatVolumeConvNeXt`，只实现体到 depth-mean 体的转换；C1 复用 [calibrated head](model/dpt_calibrated_volume_only_convnext.py)。差异通过新 config/注册模块表达，**不修改旧 head、旧 pilot 或核心训练文件来堆实验分支**。
+- C0 已实现为新增注册类 [DPTHeadCalibratedFlatVolumeConvNeXt](model/dpt_calibrated_flat_volume_convnext.py)，只实现体到 depth-mean 体的转换；C1 复用 [calibrated head](model/dpt_calibrated_volume_only_convnext.py)。差异通过新 config/注册模块表达，**不修改旧 head、旧 pilot 或核心训练文件来堆实验分支**。
 - 训练和 eval 都一致使用各自 raw/full 或 flat 输入，不在评测时才突然切成 flat。两臂各自学习的 BN 统计是训练结果，不手工搬用另一臂的统计。
 - 首先验证 C0/C1 参数/state keys/初值相同、flat 保留逐像素/group 均值且 depth std 为零、matcher 梯度正常、共享 K/T/mask 不变。非法相机直接报错，不通过数值填充隐藏。
 - 保存 manifest、clean backbone 指纹、共同 initial head 哈希、各自最终 head 哈希、完整训练配置/源码、已完成步数及输入文件 hash。不能再次遗漏最终 head 的独立文件指纹。
@@ -71,4 +71,33 @@ C0 不是纯单帧、不是无相机/无几何 baseline：均值来自带 GT 相
 | C0 不输，或 AbsRel 与 RMSE/δ1 持续冲突 | 如实判定当前配方没有证实 depth 轴增益；检查特征/监督契约，不预设胜者 | “平体更好，所以 StereoGRU 无效”或“加 GRU 必然救回来” |
 | 两臂都无法正常学习 | 回到新实现/数据契约排错，暂停方法组 | 扩预算、换评测器或跳过失败样本来形成正结果 |
 
-**本轮 readout 到此收束。** 已获得足够信息决定有意义的下一种实验，不再要求用户反复运行同类 zero/flat/reverse 诊断；本文件只是这一步的可执行规格，尚无新训练任务、结果或自动启动指令。
+**本轮 readout 到此收束。** 已获得足够信息决定有意义的下一种实验，不再要求用户反复运行同类 zero/flat/reverse 诊断。下面是已实现的执行边界，尚无新的真实训练结果。
+
+## 6. 实现与运行契约
+
+入口：[scripts/run_stereogru_matched_controls.sh](scripts/run_stereogru_matched_controls.sh)；训练/验证：[scripts/stereogru_matched_controls.py](scripts/stereogru_matched_controls.py)；固定配置：[config/stereogru/matched_c0_c1.yaml](config/stereogru/matched_c0_c1.yaml)；数据清单：[dataset/stereogru_matched.py](dataset/stereogru_matched.py)。
+
+### 6.1 准备一次，两个 arm 共享
+
+- 默认新建独立实验目录，先在 CPU 检查三场景 quota、输入文件、相机、有效深度 mask；不依赖旧 checkpoint 软链布局，不扫描测试场景。
+- 候选按起始帧排序，先贪心取最大间隔集合，再按时间均匀抽取固定配额；这样不会因随机抽取失误而把可行配额误判为不足。每场景打印原始帧、连续窗口、运动有效窗口、满足间隔的数量与最终选择。配额不够保存失败报告并终止。
+- 保存共同 config、manifest（含每 clip RGB/depth/标定路径、完整变换与相机、有效像素及 mask SHA256）、训练 clip 顺序和**独立全新 initial head**。共同初值与各 arm 的 state keys/参数数量逐项验证。
+- 验证 clean backbone 的全部 342 个 native tensor 指纹，不采用旧 LoRA 或 pilot 最终 head。阿里云可直接复用此前已验证恢复的权重，不再下载/搜索/重复恢复。
+- C0 首次运行构建共享 CPU 特征缓存；C1 只能加载相同缓存，不能重新生成、换样本或覆盖。缓存生成成本单列，不能用 C0/C1 的含缓存总耗时直接宣称速度差异。
+
+### 6.2 每次只启动一个 arm
+
+- 默认 `ARM=C0`；无旧实验路径时先准备新目录，只运行 C0。完成后打印 `COMPLETED C0` 和实验绝对路径，不自动启动 C1/GRU。
+- 后续 `ARM=C1` 必须提供同一个 `MATCHED_RUN`。C1 的初值仍来自共同 initial head，优化器为空状态，绝不加载 C0 的最终权重或 BN 统计。
+- 准备好的 config、源码、runtime、原输入、共同初值与顺序必须与指纹一致；此协议显式要求 C0=flat、C1=full 的有序配置，不能把 full 改名为第一组来绕过 baseline。
+- C0 完成记录须匹配整个预算、相同 initial/manifest/order/cache、独立最终 head 文件/状态指纹以及逐 clip 指标/支持域；最终记录在 artifact 校验后才写出。缺失、部分训练、篡改或短预算都会在 C1 创建目录之前被拒绝。
+- 每 100 步打印 loss/梯度/有效 raw 统计与粗略剩余时间，每 250 步分别评测固定 train/dev；主比较只用最后第 1000 步。场景和每 clip 的 AbsRel/δ1/RMSE 全部保存，不挑 best-dev checkpoint。
+- 所有失败/超时保留证据，但不恢复覆盖原目录、不自动调整训练预算。共享 manifest/实验不满足要求时，先看失败原因，不用旧 pilot 充作已完成的对照。
+
+### 6.3 安全与验证
+
+GPU 在准备前和真正起训前各检查一次（降低竞态，但不是调度器锁）；内部时限也覆盖逐 clip 读取/缓存，shell 进程时限处理阻塞 I/O 或 CUDA。所有输出在新目录；旧 train/model/loss/config、旧 pilot 和 checkpoint 都保持不动。
+
+本地相关回归 **107 passed（15.62s）**。包含合成完整 C0→C1、共同初值/顺序/缓存、开发隔离、配额失败、篡改/短跑/跳过 baseline、缓存中超时、最终指标聚合，以及旧 pilot/readout/恢复/注册表回归。另以真实官方 backbone 和合成 RGB/GT 完成两头前后向：C0 的 raw depth-std=0、两头 matcher 均有有限非零梯度；**未做真实数据优化，不构成方法分数**。
+
+真实数据配额只能由阿里云准备阶段核验，本地不声称已经满足。交付首先只运行 C0；拿到完成记录后再继续同一实验的 C1。

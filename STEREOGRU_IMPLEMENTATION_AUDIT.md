@@ -398,4 +398,6 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 
 本轮至此结束只读诊断，不再要求重复 zero/flat/reverse。下一步改成**训练时即使用平体的 C0 baseline → 同初始化/同预算的完整体 C1**，以排除“仅在推理时改输入”的混淆。预登记问题、矩阵、数据 split、预算及验收见 [匹配训练对照方案](STEREOGRU_MATCHED_CONTROL_PLAN.md)。
 
-方案暂定 Scene01/02 固定 32 个 training clips、Scene18 固定 16 个开发 clips，每臂 1000 updates；具体清单/间隔满足性先核验，不满足就停止而非静默换数据。它是新开发协议，旧 full-volume 两 clip pilot 不能充作 C1；C0 完成后才能启动 C1，**G1/GRU 暂不启动**。此处仅固化方案，尚未实现/启动新训练，也没有新的方法结论。
+协议固定 Scene01/02 共 32 个 training clips、Scene18 共 16 个开发 clips，每臂 1000 updates；具体清单/间隔满足性先核验，不满足就停止而非静默换数据。它是新开发协议，旧 full-volume 两 clip pilot 不能充作 C1；C0 完成后才能启动 C1，**G1/GRU 暂不启动**。
+
+2026-09-10 用户要求开始落实后，已新增 [C0 注册头](model/dpt_calibrated_flat_volume_convnext.py)、[固定 manifest](dataset/stereogru_matched.py)、[顺序训练/证据校验](scripts/stereogru_matched_controls.py)与[单 arm 启动入口](scripts/run_stereogru_matched_controls.sh)，详见[执行契约](STEREOGRU_MATCHED_CONTROL_PLAN.md)。相关回归 **107 passed（15.62s）**，原有实验代码保持不变；真实 C0/C1 配额和训练结果尚待阿里云运行，不把代码完成当成 baseline 已跑完。
