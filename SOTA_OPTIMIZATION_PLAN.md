@@ -6,13 +6,15 @@
 
 **2026-09-09 师兄反馈后的优先级修订：先完成 [StereoGRU 实现审计](STEREOGRU_IMPLEMENTATION_AUDIT.md)，再决定结构路线。** 已证实双体 lookup 接线偏离、相机双归一化/无 focal 监督、裁剪主点表示不兼容，以及 SSI 与物理 index 的契约冲突。旧负结果不是对 StereoGRU 方法的有效否定。下文 RGB 旁路是候选设计，不因旧 costvol 失败而自动优先。
 
+**2026-09-10 实测更新：两版 costvol 各 8×4 抽查帧均出现非有限 K、预测相机支持为 0、实际 raw 体为零；GT K 恢复约 95% 支持。** 当前执行优先级是校准几何/索引修复 → 小样本 → 完成 volume-only 基线 → GRU 对照，再决定 SOTA 结构路线。不是继续等待“方法是否不适合”的抽象解释，也不是先启动下文 RGB/flow arm。死 ReLU 还使“仅打开 focal loss”不成为充分修复，详见 [实测与修复顺序](STEREOGRU_IMPLEMENTATION_AUDIT.md)。
+
 ## 0. 决策摘要
 
 **不再把“ConvNeXt-S + VKITTI 10k + 不断换 decoder”当作冲击准确率 SOTA 的主线。** 它仍适合便宜筛选，但不能替代强预训练模型、多域训练和长视频验证。
 
-建议只保留一条主线、一条有门槛的扩展：
+当前先完成上述 StereoGRU 修复验证。之后依据对照证据选择 SOTA 主线；下列先验/RGB 与蒸馏仍是候选设计，不是已经用旧负结果决定的转向：
 
-1. **主线：完整预训练 GemDepth 的先验保持型残差增强。** 保留原 backbone、GEM、ASTT、DPT 及长视频拼接，增加小型 RGB 细节旁路；先验证空间旁路，再验证可靠的二维对应关系是否带来额外收益。不要再用随机匹配头替换完整深度先验。
+1. **候选主线：完整预训练 GemDepth 的先验保持型残差增强。** 保留原 backbone、GEM、ASTT、DPT 及长视频拼接，增加小型 RGB 细节旁路；先验证空间旁路，再验证可靠的二维对应关系是否带来额外收益。保留强先验是一条待测假设，不用坏相机下的随机匹配头失败来证明其优越。
 2. **扩展：有监督回放约束下的真实视频蒸馏。** 先验证长上下文教师确实优于短上下文学生，再做固定教师蒸馏；EMA、更多数据和动态区域处理均不在第一版同时加入。
 3. **保留但限额：当前注册式 loss 矩阵。** 完成已经运行的 `full` baseline，按依赖关系筛选；其胜者还必须在主线的强底座、较长训练 clip 上复验。
 4. **StereoGRU 先排错、不盲重跑：**冻结旧 checkpoint/配置，按官方 IGEV-MVS 核对 camera、raw/GEV lookup、index supervision，再做校准 oracle 和匹配对照。不将“暂停重复错误实现”误写成“放弃纯匹配/GRU 方法”。继续堆迭代数、未经校准的 warp 和完整重训 ViGeo/PXDepth 级模型仍不优先。
@@ -74,7 +76,7 @@ TAE 是已有论文指标，可以使用，但不能自写相似量后仍沿用�
 |---|---|---|
 | 同配方混训 temporal vs multiscale | temporal 在四集中的三集 AbsRel 更好；足以降低继续堆 decoder 的优先级 | 所有多尺度结构都无效，或差距纯由 backbone 决定 |
 | PR#8 后的 coarse supervision | `[1,1,1,1]` vs `[0,0,0,1]` 的 KITTI .1004 vs .1016，只是单 seed 微小信号 | “粗尺度无贡献”；loss ×4 等于 AdamW LR ×4；head 参数 ×4 |
-| errmap / cost-volume 失败 | [代码审计](STEREOGRU_IMPLEMENTATION_AUDIT.md)已发现相机/双体查表/index 监督偏差；先校准复核 | 初值 loss 高证明 volume 没学到；采样已被排除；单次失败否定几何或 ConvGRU |
+| errmap / cost-volume 失败 | [实测审计](STEREOGRU_IMPLEMENTATION_AUDIT.md)确认 costvol 两版抽查帧 K 非有限、空体；相机/双体查表/index 契约需重建。errmap 未包含在这次实测中 | 把该失败当有效 StereoGRU 对照；泛化为历史所有训练步/errmap 都为空体；只打开 focal 权重就能解决 |
 | Stage-2-lite | 该次继续训练方案没有显示可靠的明显收益，且不是论文 Stage-2 数据配方 | 严格证明 Stage-2 收益全部来自真实数据，或冻结 GEM 永远无效 |
 | DenseGRU 原始结果 | 同一 652 样本文件记录 calibrated D0 .2757 → final .0804；尺度约定和强初值非常重要 | 这是 RGB-only zero-shot SOTA，或已隔离出“时序/GRU”的因果贡献 |
 | DA3-Metric-Repro | KITTI-only 适配曾伴随 NYU 大幅退化；跨域回归必须监测，实际输入焦距必须同步 | KITTI 定域 fine-tune 超过零样本论文数字，就等于全面超过基础模型 |
@@ -258,7 +260,7 @@ SelfEvo 的 36.5% 是其 KITTI scale-only AbsRel `.074→.047`，不是四集平
 
 ### 第一轮顺序
 
-1. 完成正在跑的 full；当前先执行 StereoGRU 实现审计与阿里云零训练取证，不用未排除实现问题的负结果选择新 method。
+1. 核实 full 的完成/评测状态（当前没有新证据）；StereoGRU 首轮取证已确认非有限 K/空体，接下来是校准索引小样本与 volume-only → GRU 匹配验证，不重复错误配置或先转向 RGB/flow。
 2. 固定开发/测试清单；复跑官方 VDA、GemDepth，确认可用的强起点和本地预测一致性。
 3. 把相机标签、split/mask 等必要修正冻结为新协议；**新协议的 baseline 先完整跑完**。旧结果保留但不冒充新对照。
 4. 主线先做 B0/B1。RGB 分支不优于 B0，停止扩展像素支路，不搬用 PXDepth 结论硬解释。

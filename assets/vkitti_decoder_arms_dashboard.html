@@ -193,6 +193,13 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
 <p style="margin:6px 0"><b>2026-09-09 实现审计修订：</b>当前代码是 IGEV-MVS 风格的改造，不是等价直接移植。
 已定位 raw/GEV 双体 lookup 接线偏离、相机双归一化与米制 bins 错配、无 FoV 有效监督、非中心 crop 主点无法表达、SSI 不锚定物理 index。
 <b>先修实现契约，旧负结果不能否定 StereoGRU。</b>详见 <a href="../STEREOGRU_IMPLEMENTATION_AUDIT.md">完整审计与取证方案</a>。</p>
+<div class="box warn">
+  <b>2026-09-10 阿里云实测：预测 K 失效 → 几何体为空，已确认。</b>
+  两版各 8 clips × 4 frames，32/32 帧 K 含非有限项；pred_raw / pred_rescaled / predK_gtT 支持均为 0，
+  换 GT K 后支持恢复约 95%。真实 forward 的 raw-zero=1.0000、GEV entropy=1.0000；
+  末次 lookup 前越界为 20.82% / 27.84%。<b>这是失效输入下的负结果，不是有效 StereoGRU 对照。</b>
+  各 clip 的 GRU 均值相同到四位小数，不能单凭均值断言整图完全相同，更不能推定历史每一步训练都为空体。
+</div>
 
 <h3>诊断链</h3>
 <table>
@@ -201,8 +208,8 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
     <tr><td class="l"><code>scale_0</code>（volume 的 softargmin 初值）
         训练 10k 步从 2.8742 只降到 2.7081（<b>5.8%</b>），
         而 <code>scale_8</code>（8 次 GRU 后）降到 0.5220（81%）</td>
-      <td class="l">初值读出很差，但 raw volume 仍经 aggregation、hidden seed 和 lookup 影响最终输出。
-        <b>不能推出 volume 没学到或全部改善来自独立 GRU</b>；需分别追踪 raw/logits/index/update。</td></tr>
+      <td class="l">初值读出很差不能单独归因。现已实测抽查推理的 raw 体为零；合成空体测试还能得到非零 GRU 梯度，
+        <b>loss 下降不等于利用匹配证据</b>。有效相机下的非零 matcher 梯度，也不能套到坏 K 上。</td></tr>
     <tr><td class="l">把假设覆盖率从 <b>6/32</b> 修到 <b>32/32</b>（<code>depth_min</code> 0.5→3.0）后，
         <code>scale_0</code> 2.7081→2.7281、AbsRel 0.4297→0.4171</td>
       <td class="l">两版参数量相同（207.8M / head 5.6M），只改近端范围未消除退化。
@@ -218,13 +225,15 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
   这些只是在特定平移方向/大小下的示例；<b>不能据此断言 32 个假设都挤在 9px 或亚像素导致失败</b>。
   对比 IGEV-Stereo：KITTI 视差 192px@全分辨率 → 1/4 上 48px，48 个假设 ≈ 1px 间隔。
   <b>实际匹配条件与实现问题都仍需分离验证。</b>
-  <span class="sub">待实测 VKITTI 真实帧间平移分布来确认。</span>
+  <span class="sub">本次 8 个 clip 的单位中，前 5 个仅 0.00066–0.00264m，后 3 个为 0.242/1.982/2.830m；
+  这是最大第一帧相对位移加小量，不是逐对基线。近零段还需区分静止与 pose 数值残差，不能代表整个数据集。</span>
 </div>
 <div class="box">
-  <b>继续训练前先跑 zero-training oracle</b>
-  用同一批 matcher/前置 backbone 特征代入 GT K/T、GT-normalised gauge、预测 K/T 与正确双归一化还原的预测 T，
-  检查共享支持域的 tie-aware top-k/chance/margin，并跟踪 GRU index。旧 oracle 会把平体误报 top1=100%，已修。
-  原始用户输出仅 268 帧、1 条序列，且是逐帧 affine 评测，不是四集长序列主协议。
+  <b>取证已完成，下一步是校准合同和匹配基线，而非重复 10k。</b>
+  d3 的 GT-camera top1/chance 为 0.1364/0.0331，前置 backbone 为 0.1440/0.0331；没有显示绕过 matcher 就恢复强匹配。
+  与 0.5m 版的 0.3778 不能直接横比：bin 宽度/候选数不同。只开 focal loss 也可能被死 ReLU 挡住，已有回归。
+  先做 training-scene 小样本和 volume-only baseline，再加 raw+GEV GRU，最后接回预测 K/T。
+  历史深度指标仍仅 268 帧、1 条序列、逐帧 affine，不是四集长序列主协议；本次诊断量不作新榜单。
 </div>
 </div>
 

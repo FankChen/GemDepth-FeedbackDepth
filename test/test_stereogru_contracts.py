@@ -105,6 +105,64 @@ def test_legacy_focal_rows_have_no_supervised_gradient():
     assert torch.equal(grad[7:], torch.zeros_like(grad[7:]))
 
 
+def test_focal_supervision_alone_does_not_revive_dead_relu():
+    """A positive focal weight is necessary but not sufficient for this failure."""
+    torch.manual_seed(8)
+    camera = CameraHead(dim_in=32, trunk_depth=0, num_heads=4)
+    with torch.no_grad():
+        camera.pose_branch.fc2.weight[7:].zero_()
+        camera.pose_branch.fc2.bias[7:].fill_(-1.)
+    predictions = camera(torch.randn(1, 3, 1, 32))
+    extrinsic = torch.eye(4).repeat(1, 3, 1, 1)
+    extrinsic[0, :, 0, 3] = torch.tensor([0., .5, 1.])
+    intrinsic = torch.tensor([[[30., 0., 8.], [0., 30., 6.], [0., 0., 1.]]])
+    images = torch.ones(1, 3, 12, 16)
+    losses = compute_camera_loss(weight_focal=1.)(
+        predictions, intrinsic, extrinsic, images, images)
+    losses["loss_camera"].backward()
+    assert losses["loss_FL"] > 0
+    assert all(torch.count_nonzero(p[..., 7:]) == 0 for p in predictions)
+    assert camera.pose_branch.fc2.weight.grad[:7].norm() > 0
+    assert torch.count_nonzero(camera.pose_branch.fc2.weight.grad[7:]) == 0
+    assert torch.count_nonzero(camera.pose_branch.fc2.bias.grad[7:]) == 0
+
+
+def test_nonfinite_camera_can_train_gru_on_zero_image_evidence():
+    """Reproduce a failure mode, not a claim about all trained BN parameters.
+
+    With default BN affine/running stats, zero volume annihilates multiplicative
+    feature guidance. A trained BN may inject nonzero signals, so real-checkpoint
+    output equality cannot be inferred merely from its rounded trace means.
+    """
+    torch.manual_seed(0)
+    frames, size, dims = 3, 64, [8, 16, 32, 64]
+    head = costvol.DPTHeadCostVolumeConvNeXt(
+        dims, patch_size=4, num_sample=8, num_groups=2,
+        match_dim=8, hidden_dim=16, iters=2).eval()
+    features = [torch.randn(frames, dim, size // (4 * 2 ** i), size // (4 * 2 ** i),
+                            requires_grad=True) for i, dim in enumerate(dims)]
+    images = torch.randn(1, frames, 3, size, size)
+    intrinsic = torch.tensor([[64., 0., 32.], [0., 64., 32.], [0., 0., 1.]]).repeat(1, frames, 1, 1)
+    intrinsic[..., 1, 1] = float("inf")  # Even ONE failed focal axis is sufficient.
+    extrinsic = torch.eye(4).repeat(1, frames, 1, 1)
+    extrinsic[0, :, 0, 3] = torch.arange(frames) * .3
+    trace = trace_decoder(head, features, images, extrinsic, intrinsic)
+    assert trace["raw_volume"]["zero_pixel_fraction"] == 1.
+    assert trace["geometry_logits"]["std"] == 0.
+    assert abs(trace["geometry_logits"]["normalized_entropy"] - 1.) < 1e-6
+    output = head(features, size // 4, size // 4, frames,
+                  images=images, extrinsics=extrinsic, intrinsics=intrinsic)
+    with torch.no_grad():
+        changed = head([torch.randn_like(f) * 3 + 1 for f in features],
+                       size // 4, size // 4, frames,
+                       images=images, extrinsics=extrinsic, intrinsics=intrinsic)
+    assert torch.equal(output, changed)
+    output.square().mean().backward()
+    assert all(p.grad is None or torch.count_nonzero(p.grad) == 0
+               for p in head.matcher.parameters())
+    assert sum(p.grad.square().sum() for p in head.index_head.parameters()) > 0
+
+
 def test_focal_encoding_roundtrips_but_cropped_principal_point_does_not():
     extrinsic = torch.eye(4).repeat(1, 3, 1, 1)
     intrinsic = torch.tensor([[[24., 0., 2.], [0., 24., 6.], [0., 0., 1.]]])

@@ -16,6 +16,7 @@ from diagnose_gem_camera import (
     _warp_stats,
     normalize_ground_truth_camera,
     rotation_error_degrees,
+    summarize_focal_errors,
 )
 from diagnose_cost_volume_oracle import volume_quality
 from model.util.warp import plane_sweep_warp
@@ -86,6 +87,27 @@ def test_rotation_error_degrees():
     assert torch.allclose(
         rotation_error_degrees(prediction, target),
         torch.tensor([[90.0]]), atol=1e-4)
+
+
+def test_focal_summary_does_not_hide_failed_axis():
+    result = summarize_focal_errors([[.5, float("inf")], [.75, float("nan")]])
+    assert np.isnan(result["focal_relative_error"])
+    assert result["focal_relative_error_finite_only"] == .625
+    assert np.isnan(result["focal_relative_error_valid_frames"])
+    assert result["focal_finite_fraction"] == .5
+    assert result["focal_valid_frame_fraction"] == 0.
+    assert result["focal_nonfinite_by_axis"] == {"fx": 0, "fy": 2}
+
+
+def test_focal_summary_finite_and_empty_cases():
+    result = summarize_focal_errors([[.25, .75], [.5, .5]])
+    for key in ("focal_relative_error", "focal_relative_error_finite_only",
+                "focal_relative_error_valid_frames"):
+        assert result[key] == .5
+    assert result["focal_finite_fraction"] == result["focal_valid_frame_fraction"] == 1.
+    empty = summarize_focal_errors([])
+    assert np.isnan(empty["focal_relative_error"])
+    assert empty["focal_finite_fraction"] == empty["focal_valid_frame_fraction"] == 0.
 
 
 def test_camera_diagnostic_matches_actual_loss_after_both_normalizations():

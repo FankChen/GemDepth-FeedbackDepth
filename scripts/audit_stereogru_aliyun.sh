@@ -158,10 +158,15 @@ for path in sorted(root.glob('*oracle.json')) + sorted(root.glob('*backbone.json
 
 camera = json.loads((root / 'vkitti_ms_gem_camera.json').read_text())
 print('\n### ms_gem camera (its own auxiliary-task baseline, not costvol camera weights)')
-for key in ('focal_relative_error', 'principal_point_error_pixels', 'rotation_error_degrees',
+for key in ('focal_relative_error', 'focal_relative_error_finite_only',
+            'focal_relative_error_valid_frames', 'focal_finite_fraction',
+            'focal_valid_frame_fraction', 'principal_point_error_pixels', 'rotation_error_degrees',
             'translation_direction_cosine', 'translation_magnitude_ratio', 'translation_unit_metres',
-            'nonfinite_intrinsics_fraction', 'gt_warp_valid', 'pred_consistent_warp_valid'):
+            'nonfinite_intrinsics_fraction', 'nonfinite_extrinsics_fraction',
+            'gt_warp_valid', 'pred_consistent_warp_valid'):
     print(key, fmt(camera[key]))
+print('focal_nonfinite_by_axis', camera['focal_nonfinite_by_axis'])
+print(camera['focal_aggregation_caveat'])
 print('\nSend summary.txt plus config_summary.json and provenance.txt; full JSONs retain per-clip evidence.')
 print('Output directory:', root)
 PY

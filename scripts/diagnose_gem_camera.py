@@ -144,6 +144,29 @@ def _mean(values):
     return float(finite.mean()) if finite.size else float("nan")
 
 
+def summarize_focal_errors(errors):
+    """Do not disguise an invalid camera as a finite mean over its surviving axis.
+
+    Values are relative errors in interleaved (fx, fy) order. The overall error
+    is undefined if ANY focal entry fails; conditional means expose their coverage.
+    This changes reporting only, never camera predictions or checkpoint loading.
+    """
+    values = np.asarray(errors, dtype=np.float64).reshape(-1, 2)
+    finite = np.isfinite(values)
+    valid_frames = finite.all(axis=1)
+    return {
+        "focal_relative_error": (
+            float(values.mean()) if values.size and finite.all() else float("nan")),
+        "focal_relative_error_finite_only": _mean(values[finite]),
+        "focal_relative_error_valid_frames": _mean(values[valid_frames]),
+        "focal_finite_fraction": float(finite.mean()) if finite.size else 0.0,
+        "focal_valid_frame_fraction": (
+            float(valid_frames.mean()) if valid_frames.size else 0.0),
+        "focal_nonfinite_by_axis": {
+            name: int((~finite[:, axis]).sum()) for axis, name in enumerate(("fx", "fy"))},
+    }
+
+
 def _load_state(path):
     blob = torch.load(path, map_location="cpu", weights_only=False)
     state = blob["model_state_dict"] if (
@@ -271,8 +294,9 @@ def main():
                 values[f"{prefix}_warp_residual"].append(stats[1])
 
     summary = {key: _mean(items) for key, items in values.items()}
+    summary.update(summarize_focal_errors(values["focal_relative_error"]))
     summary.update({
-        "diagnostic_version": 2,
+        "diagnostic_version": 3,
         "config": os.path.abspath(args.config),
         "checkpoint": os.path.abspath(args.ckpt),
         "clips": clips,
@@ -286,6 +310,10 @@ def main():
             "two-stage normalisation; multiply predicted T by translation_unit_metres "
             "(approximately the maximum first-frame-relative GT baseline, NOT mean "
             "scene depth) for this GT-assisted diagnostic only"),
+        "focal_aggregation_caveat": (
+            "overall focal error is undefined if any focal entry is nonfinite; "
+            "finite-only and fully-valid-frame means are explicitly conditional. "
+            "Version 2 silently removed nonfinite focal errors from its mean"),
         "warp_residual_caveat": (
             "RGB residuals use each camera mode's own in-bounds mask, not shared "
             "visibility or a dynamic-object mask; do not rank camera quality by "
