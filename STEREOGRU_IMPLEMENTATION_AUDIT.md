@@ -401,3 +401,5 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 协议固定 Scene01/02 共 32 个 training clips、Scene18 共 16 个开发 clips，每臂 1000 updates；具体清单/间隔满足性先核验，不满足就停止而非静默换数据。它是新开发协议，旧 full-volume 两 clip pilot 不能充作 C1；C0 完成后才能启动 C1，**G1/GRU 暂不启动**。
 
 2026-09-10 用户要求开始落实后，已新增 [C0 注册头](model/dpt_calibrated_flat_volume_convnext.py)、[固定 manifest](dataset/stereogru_matched.py)、[顺序训练/证据校验](scripts/stereogru_matched_controls.py)与[单 arm 启动入口](scripts/run_stereogru_matched_controls.sh)，详见[执行契约](STEREOGRU_MATCHED_CONTROL_PLAN.md)。相关回归 **107 passed（15.62s）**，原有实验代码保持不变；真实 C0/C1 配额和训练结果尚待阿里云运行，不把代码完成当成 baseline 已跑完。
+
+**后续配额回传：**v1 在准备阶段停止，Scene02 只有 15 个满足既定间隔/运动条件的 clips，不能满足每场景 16 个。Scene01/18 容量为 48/41；C0 未训练。已记录[失败计数](results/stereogru/20260910_matched_quota_preflight.json)，新增 [v2 配额配置](config/stereogru/matched_c0_c1_30train.yaml)：Scene01/02 各 15 个、共 30 train，dev 仍 16；其他阈值/预算/训练逻辑不动。原 v1 保留，改用新目录准备，不以失败输出冒充 baseline 或重跑旧诊断。

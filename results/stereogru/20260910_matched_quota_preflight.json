@@ -1,0 +1,23 @@
+{
+  "evidence_source": "User-returned Aliyun preparation stdout, 2026-09-10; not a training result",
+  "source_snapshot": "d35ce775b1a1938f4197563635560ada843eda78",
+  "source_directory": "/tmp/stereogru-matched.w0RDcJ",
+  "protocol": "vkitti_calibrated_depth_axis_control_v1",
+  "status": "quota_failed_before_training",
+  "training_started": false,
+  "counts": {
+    "Scene01": {"native_frames": 447, "consecutive_windows": 444, "motion_eligible_windows": 375, "split": "train", "spacing_eligible_windows": 48, "required": 16, "selected": 16},
+    "Scene02": {"native_frames": 233, "consecutive_windows": 230, "motion_eligible_windows": 120, "split": "train", "spacing_eligible_windows": 15, "required": 16, "selected": 0},
+    "Scene18": {"native_frames": 339, "consecutive_windows": 336, "motion_eligible_windows": 323, "split": "dev", "spacing_eligible_windows": 41, "required": 16, "selected": 16}
+  },
+  "error": "ManifestQuotaError: Insufficient fixed quotas; no threshold/data fallback: Scene02: 15/16 spaced clips",
+  "interpretation": "Scene02 has 15 eligible spaced clips, not zero. selected=0 means the requested quota could not be satisfied, so no partial manifest or optimizer run was accepted. Duplicate pasted output is not independent evidence.",
+  "explicit_amendment_before_any_arm_training": {
+    "protocol": "vkitti_calibrated_depth_axis_control_v2_30train",
+    "config": "config/stereogru/matched_c0_c1_30train.yaml",
+    "train_clips_by_scene": {"Scene01": 15, "Scene02": 15},
+    "dev_clips_by_scene": {"Scene18": 16},
+    "unchanged": ["scene split", "motion range .5-5m", "minimum start gap 8", "4 frames/clip", "1000 updates per arm", "model", "objective", "optimizer", "seed", "baseline-first gate"],
+    "policy": "Rebuild a new manifest, crop assignments, schedule and experiment contract shared by both arms; preserve v1 config and failed artifacts. No automatic fallback or claimed v2 training result."
+  }
+}

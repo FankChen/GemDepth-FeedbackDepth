@@ -14,6 +14,8 @@
 
 **readout 更新：**原 pilot 分数复现、模型状态不变；清空 raw 明显退化，但拉平 depth 的影响小，反转 depth 在未拟合 training scene 降低 AbsRel 却增加 RMSE。当前只证明可学习及 raw 输入依赖，**尚未证明正确 depth 轴信息有稳定迁移收益**，也不能反过来否定 StereoGRU。停止重复类似诊断；[C0 平体训练 → C1 完整体训练的匹配对照](STEREOGRU_MATCHED_CONTROL_PLAN.md)入口已按用户要求实现并通过 107 项相关回归。阿里云先验证清单、只运行 C0；真实结果尚未产生，C0 完成后才允许 C1，GRU 不在当前执行清单。
 
+**执行版本更新：**v1 配额检查发现 Scene02 仅容纳 15 个合格 spaced clips，C0 尚未开始。显式采用 [v2：30 train / 16 dev](config/stereogru/matched_c0_c1_30train.yaml)，训练两场景各 15 个，保持原间隔/运动阈值/1000 步预算和 C0→C1 依赖；这是训练前的可行性修订，不是根据成绩修改协议。
+
 ## 0. 决策摘要
 
 **不再把“ConvNeXt-S + VKITTI 10k + 不断换 decoder”当作冲击准确率 SOTA 的主线。** 它仍适合便宜筛选，但不能替代强预训练模型、多域训练和长视频验证。

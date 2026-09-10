@@ -242,8 +242,9 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
   对清空体敏感，不等于已学会正确逐 bin 判别。未拟合场景反转体的 AbsRel 0.253740→0.236112，但 RMSE 13.4298→14.2513，不能只挑前者称改善。
   flat 仍保留几何 sweep 的空间/group 均值与 guides，并非无几何模型。现转入<a href="../STEREOGRU_MATCHED_CONTROL_PLAN.md">训练时即 flat 的 C0 → 完整体 C1 匹配方案</a>，
   先完成 C0，暂不开 GRU；同一回传表的重复粘贴只算一轮证据。
-  <br><b>C0/C1 入口现已实现：</b>固定 32 train / 16 dev clips、1000 steps，同 initial/manifest/order/cache；107 项相关测试通过。
-  真实清单配额须在阿里云核验，默认只启动 C0，完成证据通过后才允许 C1。不是已经取得的新训练分数。
+  <br><b>C0/C1 入口现已实现：</b>v1 的 32 train 配额在准备阶段被拒绝：Scene02 仅有 15 个合格 spaced clips，C0 未训练。
+  已显式修订为 <a href="../config/stereogru/matched_c0_c1_30train.yaml">v2：30 train（15+15）/16 dev</a>，仍 1000 steps、gap8、motion .5–5m，同 initial/manifest/order/cache。
+  原保护逻辑与 v1 不改，新目录只启动 C0，完成证据通过后才允许 C1。不是已取得的新训练分数。
   历史深度指标仍仅 268 帧、1 条序列、逐帧 affine，不是四集长序列主协议；本次诊断量不作新榜单。
 </div>
 </div>

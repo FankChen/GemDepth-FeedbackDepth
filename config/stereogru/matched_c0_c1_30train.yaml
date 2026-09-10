@@ -1,0 +1,56 @@
+# Explicit v2 quota revision BEFORE any C0/C1 training, not a silent fallback.
+# Aliyun preflight: Scene01/02/18 have 48/15/41 spaced motion-eligible clips.
+# Balance train scenes at 15 each; retain 16 dev clips, gap8, motion bounds and budget.
+# Keep matched_c0_c1.yaml (v1, quota16 each) intact for provenance.
+protocol: vkitti_calibrated_depth_axis_control_v2_30train
+seed: 0
+steps: 1000
+log_every: 100
+eval_every: 250
+max_seconds_per_arm: 3600
+optimizer:
+  learning_rate: 0.001
+  weight_decay: 0.0
+  grad_clip: 1.0
+backbone:
+  name: DINOv3ConvNeXtSmallBackbone
+dataset:
+  variation: 15-deg-left
+  crop_size: 256
+  crop_seed: 0
+  seq_len: 4
+  min_start_gap: 8
+  min_baseline_m: 0.5
+  max_baseline_m: 5.0
+  splits:
+    train:
+      scenes: [Scene01, Scene02]
+      clips_per_scene: 15
+    dev:
+      scenes: [Scene18]
+      clips_per_scene: 16
+decoder:
+  initial_class: DPTHeadCalibratedVolumeOnlyConvNeXt
+  kwargs:
+    volume_level: 1
+    num_sample: 32
+    num_groups: 8
+    match_dim: 96
+    volume_channels: 8
+    hidden_dim: 128
+    iters: 0
+    depth_min: 3.0
+    depth_max: 80.0
+    warp_offsets: [-1, 1]
+objective:
+  name: calibrated_index_l1
+  kwargs:
+    depth_min: ${decoder.kwargs.depth_min}
+    depth_max: ${decoder.kwargs.depth_max}
+arms:
+  C0:
+    decoder: DPTHeadCalibratedFlatVolumeConvNeXt
+    requires: []
+  C1:
+    decoder: DPTHeadCalibratedVolumeOnlyConvNeXt
+    requires: [C0]

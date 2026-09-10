@@ -2,6 +2,8 @@
 
 日期：2026-09-10。状态：**用户要求开始落实后，C0/C1 入口已实现，107 项相关测试通过；真实 C0/C1 训练尚待阿里云执行。** 这不是新方法结果，不继续堆同类诊断或自动开启 GRU。
 
+**当前执行版本为 v2：30 train / 16 dev。** v1 的阿里云准备阶段确认 Scene02 仅有 15 个满足运动范围与 8 帧起点间隔的窗口，无法满足每训练场景 16 个。任何 arm 均未训练；现显式将 Scene01/02 各改为 15 个，保持场景平衡、dev=16、运动/间隔/预算不变。旧配置和失败输出保留，不绕过配额检查。详见第 7 节。
+
 ## 1. 这一步只回答一个问题
 
 在校准几何与绝对 index 监督已经成立的前提下，**真实 depth 轴变化是否比仅保留逐像素/group 均值提供可迁移的增益**？
@@ -36,7 +38,7 @@ C0 不是纯单帧、不是无相机/无几何 baseline：均值来自带 GT 相
 |---|---|
 | 场景 | Scene01/02 用于训练；Scene18 固定为开发场景。它是原 training pool 的开发划分，不是未使用过的官方测试集 |
 | 最终测试 | Scene06/20 以及四集 RGB-only benchmark 不用于这轮挑配置；GT-camera 实验不进入 RGB-only 榜 |
-| 训练样本 | 预先固定 32 个 clip，Scene01/02 各 16 个，每段连续 4 帧；同场景起点至少间隔 8 帧，禁止帧重叠 |
+| 训练样本 | 当前 v2 预先固定 30 个 clip，Scene01/02 各 15 个；原 v1 的 16+16 配额未通过准备检查。每段连续 4 帧，同场景起点至少间隔 8 帧，禁止帧重叠 |
 | 开发样本 | Scene18 预先固定 16 个 clip；同样不重叠，不按当前模型误差选择，不逐轮更换清单 |
 | 运动条件 | 沿用 GT 最大首帧相对平移 .5–5m；共同适用且完整报告。它是机制子集，不是完整数据集分布 |
 | 数量不足 | 停止并重新登记共同协议，不从开发集回填、不自动放宽阈值、不随机重试坏数据 |
@@ -49,7 +51,7 @@ C0 不是纯单帧、不是无相机/无几何 baseline：均值来自带 GT 相
 | checkpoint | 主比较固定最后第 1000 步，不从 train/dev 曲线挑最优。中间每 250 步的结果只记录，不混表 |
 | 成本 | 单 H20 顺序运行，每 arm 内部检查 3600 秒预算，shell 同时限制训练进程 3600 秒、TERM 后 30 秒仍未退出则强制结束；超限不产生完成证据，不能以半程结果对比另一组全程 |
 
-训练 scene 覆盖、间隔和数量需要在生成 manifest 时计数验证；**目前没有宣称数据已满足这些数量**。1000 步/32 clips 仍是定额开发机制实验，不叫完整多域训练，不从先前 9.68s 的缓存两 clip pilot 推断真实吞吐。
+训练 scene 覆盖、间隔和数量需要在生成 manifest 时计数验证；v1 已回传间隔可用数 48/15/41，v2 的完整清单/图像/监督检查仍由准备阶段执行。1000 步/30 clips 是定额开发机制实验，不叫完整多域训练，不从先前 9.68s 的缓存两 clip pilot 推断真实吞吐。
 
 本次不同时更换深度范围、相关归一化、hourglass 容量、RGB stem、teacher 或 loss，以免发现增益后仍不知道是哪一项生效。
 
@@ -75,7 +77,7 @@ C0 不是纯单帧、不是无相机/无几何 baseline：均值来自带 GT 相
 
 ## 6. 实现与运行契约
 
-入口：[scripts/run_stereogru_matched_controls.sh](scripts/run_stereogru_matched_controls.sh)；训练/验证：[scripts/stereogru_matched_controls.py](scripts/stereogru_matched_controls.py)；固定配置：[config/stereogru/matched_c0_c1.yaml](config/stereogru/matched_c0_c1.yaml)；数据清单：[dataset/stereogru_matched.py](dataset/stereogru_matched.py)。
+当前新实验入口：[scripts/run_stereogru_matched_30train.sh](scripts/run_stereogru_matched_30train.sh)；v2 固定配置：[config/stereogru/matched_c0_c1_30train.yaml](config/stereogru/matched_c0_c1_30train.yaml)。训练/验证仍用原 [scripts/stereogru_matched_controls.py](scripts/stereogru_matched_controls.py) 与 [dataset/stereogru_matched.py](dataset/stereogru_matched.py)。[原 launcher](scripts/run_stereogru_matched_controls.sh)默认新建使用 [v1 配置](config/stereogru/matched_c0_c1.yaml)，不要再次用其空 `MATCHED_RUN` 默认路径创建 v2；v2 wrapper 显式指定配置后再传已准备好的实验目录给它。
 
 ### 6.1 准备一次，两个 arm 共享
 
@@ -100,4 +102,16 @@ GPU 在准备前和真正起训前各检查一次（降低竞态，但不是调�
 
 本地相关回归 **107 passed（15.62s）**。包含合成完整 C0→C1、共同初值/顺序/缓存、开发隔离、配额失败、篡改/短跑/跳过 baseline、缓存中超时、最终指标聚合，以及旧 pilot/readout/恢复/注册表回归。另以真实官方 backbone 和合成 RGB/GT 完成两头前后向：C0 的 raw depth-std=0、两头 matcher 均有有限非零梯度；**未做真实数据优化，不构成方法分数**。
 
-真实数据配额只能由阿里云准备阶段核验，本地不声称已经满足。交付首先只运行 C0；拿到完成记录后再继续同一实验的 C1。
+真实数据配额已由阿里云 v1 准备计数，但 v2 尚无训练结果。交付首先只运行 C0；拿到完成记录后再继续同一 v2 实验的 C1。
+
+## 7. v1 配额失败后的显式 v2 修订
+
+原始证据：[preflight record](results/stereogru/20260910_matched_quota_preflight.json)。Scene01/02/18 的运动合格窗口分别为 375/120/323，满足起点间隔后的容量为 **48/15/41**。Scene02 的 `selected=0` 是配额失败时拒绝部分清单，**不是没有有效数据**。失败发生在准备阶段、生成完整 manifest/初始化/优化器之前；不应重跑旧 readout 或启动 C1。
+
+新 [v2 配置](config/stereogru/matched_c0_c1_30train.yaml)与 v1 的解析差异严格只有两项：`protocol` 改为 `vkitti_calibrated_depth_axis_control_v2_30train`，`dataset.splits.train.clips_per_scene` 从 16 改为 15。开发配额仍 16、start gap 仍 8、motion 仍 .5–5m、两臂仍各 1000 updates。参数/目标/初始化策略/优化器和 C0 完成门槛不改。
+
+这是依据可用数据量、在任何 C0/C1 训练前登记的共同配额修订，不根据模型结果挑样本，也不是运行时自动放宽限制。新目录重新生成共同 manifest、crop 分配、训练顺序和初值契约，两个 arm 必须同用 v2；旧失败目录不覆盖、不作 C0 结果。原始 trainer、dataset、v1 配置和完成验证器逐字节保留。
+
+新增薄 wrapper 只在 CPU 用 `--config` 显式准备 v2，再将 `MATCHED_RUN` 传给原启动器单跑 C0；原 GPU 占用检查、超时和 C1 完成依赖仍执行。v2 配额若因数据变化再次不足，仍直接报错，不降到别的数量。后续 C1 使用同一已完成的 v2 实验目录，不重新准备 v1。
+
+v2 相关验证合计 **111 passed（15.23s）**；新增测试确认解析后只改变上述两项、可用 15 个的边界仍拒绝配额 16、开发集不变且 C0/C1 仍各 1000 updates。shell 语法通过；旧 trainer/dataset/model/v1 配置与 `d35ce77` 完全一致。尚无 v2 真实训练结果。
