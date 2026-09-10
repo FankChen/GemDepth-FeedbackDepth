@@ -12,9 +12,9 @@
 
 **pilot 已回传完成：**官方基座恢复通过完整指纹；同一 374807 个训练像素、eval 模式下 index-L1 `.30010→.01291`，AbsRel `.57223→.09102`，δ1 `.09822→.95532`，matcher 梯度非零。已通过可学习性检查，不再怀疑“volume 一定学不动”。随后[零训练 raw-volume 检查](scripts/diagnose_stereogru_pilot.py)也已回传，不能把 overfit 与旧 held-out 分数横比。
 
-**readout 更新：**原 pilot 分数复现、模型状态不变；清空 raw 明显退化，但拉平 depth 的影响小，反转 depth 在未拟合 training scene 降低 AbsRel 却增加 RMSE。当前只证明可学习及 raw 输入依赖，**尚未证明正确 depth 轴信息有稳定迁移收益**，也不能反过来否定 StereoGRU。停止重复类似诊断；[C0 平体训练 → C1 完整体训练的匹配对照](STEREOGRU_MATCHED_CONTROL_PLAN.md)入口已按用户要求实现并通过 107 项相关回归。阿里云先验证清单、只运行 C0；真实结果尚未产生，C0 完成后才允许 C1，GRU 不在当前执行清单。
+**readout 更新：**原 pilot 分数复现、模型状态不变；清空 raw 明显退化，但拉平 depth 的影响小，反转 depth 在未拟合 training scene 降低 AbsRel 却增加 RMSE。当前只证明可学习及 raw 输入依赖，**尚未证明正确 depth 轴信息有稳定迁移收益**，也不能反过来否定 StereoGRU。停止重复类似诊断；[C0 平体训练 → C1 完整体训练的匹配对照](STEREOGRU_MATCHED_CONTROL_PLAN.md)已实现，v2 C0 现已完成 1000 步，后续只运行同一实验的 C1，GRU 不在当前执行清单。
 
-**执行版本更新：**v1 配额检查发现 Scene02 仅容纳 15 个合格 spaced clips，C0 尚未开始。显式采用 [v2：30 train / 16 dev](config/stereogru/matched_c0_c1_30train.yaml)，训练两场景各 15 个，保持原间隔/运动阈值/1000 步预算和 C0→C1 依赖；这是训练前的可行性修订，不是根据成绩修改协议。
+**执行版本更新：**v1 配额检查发现 Scene02 仅容纳 15 个合格 spaced clips，当时 C0 尚未开始。显式采用 [v2：30 train / 16 dev](config/stereogru/matched_c0_c1_30train.yaml)，训练两场景各 15 个，保持原间隔/运动阈值/1000 步预算和 C0→C1 依赖；这是训练前的可行性修订，不是根据成绩修改协议。v2 清单现已通过、C0 final1000 开发集 AbsRel/RMSE/δ1 为 **.237924 / 9.810474 / .625427**；C1 必须与这组最终值比较，不挑更好的中间 checkpoint，尚无完整体或 GRU 的增益结论。
 
 ## 0. 决策摘要
 

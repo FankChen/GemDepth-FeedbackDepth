@@ -1,0 +1,67 @@
+{
+  "evidence_source": "User-returned Aliyun stdout, 2026-09-10; not an independent local training run",
+  "source_snapshot": "d4f33889cc7626c60813fa6bb2653283745368fd",
+  "protocol": "vkitti_calibrated_depth_axis_control_v2_30train",
+  "experiment": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_matched30_cJPdMuhW/experiment",
+  "log": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_C0_UNakxt5l.log",
+  "arm": "C0",
+  "decoder": "DPTHeadCalibratedFlatVolumeConvNeXt",
+  "status": "COMPLETED_C0_reported",
+  "steps": 1000,
+  "gpu": 4,
+  "next_arm_launched": false,
+  "reported_common_initial_state_sha256": "935d88d2f8e591872798c06c8805871bec857d033e6e3a02a25607969bbd99b0",
+  "head_parameters": 1234505,
+  "cached_clips": 46,
+  "manifest_counts": {
+    "Scene01": {"native_frames": 447, "consecutive_windows": 444, "motion_eligible_windows": 375, "spacing_eligible_windows": 48, "required": 15, "selected": 15, "split": "train"},
+    "Scene02": {"native_frames": 233, "consecutive_windows": 230, "motion_eligible_windows": 120, "spacing_eligible_windows": 15, "required": 15, "selected": 15, "split": "train"},
+    "Scene18": {"native_frames": 339, "consecutive_windows": 336, "motion_eligible_windows": 323, "spacing_eligible_windows": 41, "required": 16, "selected": 16, "split": "dev"}
+  },
+  "initial": {
+    "train": {"valid_pixels": 5884702, "index_l1": 0.30504102173746334, "absrel": 0.5844847106406775, "rmse": 24.090878441472086, "delta1": 0.09836402930853592},
+    "dev": {"valid_pixels": 3591702, "index_l1": 0.3134803362786342, "absrel": 0.6011148461732388, "rmse": 23.372599323733024, "delta1": 0.10258367759908812}
+  },
+  "evaluations": [
+    {
+      "step": 250,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.025215784793299605, "absrel": 0.1884017408014783, "rmse": 9.32222032801012, "delta1": 0.7518848023230403},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.04856943292359683, "absrel": 0.33842022657036774, "rmse": 10.863489574311675, "delta1": 0.5605776871243773}
+    },
+    {
+      "step": 500,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.022739002751896203, "absrel": 0.1662900474416967, "rmse": 7.881446774559804, "delta1": 0.7981851927251371},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.046470335827934986, "absrel": 0.3274915330146003, "rmse": 10.348238444189228, "delta1": 0.5976097126097878}
+    },
+    {
+      "step": 750,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.019556411922349214, "absrel": 0.12186111246053559, "rmse": 7.364353963079263, "delta1": 0.8437869921025738},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.0429940835914256, "absrel": 0.23561280965421222, "rmse": 9.888276498224332, "delta1": 0.6060455460948597}
+    },
+    {
+      "step": 1000,
+      "train": {"valid_pixels": 5884702, "index_l1": 0.016826939887598702, "absrel": 0.11015100741922988, "rmse": 7.463854187752141, "delta1": 0.861702257820362},
+      "dev": {"valid_pixels": 3591702, "index_l1": 0.041138623570499716, "absrel": 0.23792444849085378, "rmse": 9.810473607664624, "delta1": 0.6254266083322058}
+    }
+  ],
+  "comparison_checkpoint_step": 1000,
+  "reported_last_training_step": {
+    "step": 1000,
+    "clip_id": "Scene02/15-deg-left/Camera_0/00112",
+    "loss": 0.006945828907191753,
+    "grad_norm_before_clip": 0.16408668458461761,
+    "loop_elapsed_seconds": 21.554158342070878,
+    "raw_zero_fraction": 0.038330078125,
+    "raw_depth_std": 0.0,
+    "logit_depth_std": 1.2860674858093262
+  },
+  "limits": [
+    "Completed C0 is the prescribed calibrated development baseline, not an RGB-only or SOTA result. C1 has not yet been run in this evidence.",
+    "Use the prespecified final step 1000 for comparisons, not the lower dev AbsRel at step 750.",
+    "C0 has flat raw depth input but retains geometrically constructed spatial/group means, image guides and depth-position effects in aggregation; nonzero logit depth variation does not mean raw flattening failed.",
+    "The last training-step loss is for one clip in train mode, not the aggregate final train/dev evaluation.",
+    "21.554 seconds is the logged loop time before the final evaluation/save/verification; it excludes preparation and shared feature-cache creation, and is not total wall time.",
+    "The printed completion is backed by the runner's verification; the full completion certificate and final checkpoint hashes were not independently returned here. The C1 entry will verify all artifacts again before starting.",
+    "Both arms must use this same v2 experiment, shared initial state/order/cache and fresh optimizers. Do not create a new experiment or start C1 from C0 final weights."
+  ]
+}

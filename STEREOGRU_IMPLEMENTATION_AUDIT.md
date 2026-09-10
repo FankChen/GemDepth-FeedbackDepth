@@ -403,3 +403,11 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 2026-09-10 用户要求开始落实后，已新增 [C0 注册头](model/dpt_calibrated_flat_volume_convnext.py)、[固定 manifest](dataset/stereogru_matched.py)、[顺序训练/证据校验](scripts/stereogru_matched_controls.py)与[单 arm 启动入口](scripts/run_stereogru_matched_controls.sh)，详见[执行契约](STEREOGRU_MATCHED_CONTROL_PLAN.md)。相关回归 **107 passed（15.62s）**，原有实验代码保持不变；真实 C0/C1 配额和训练结果尚待阿里云运行，不把代码完成当成 baseline 已跑完。
 
 **后续配额回传：**v1 在准备阶段停止，Scene02 只有 15 个满足既定间隔/运动条件的 clips，不能满足每场景 16 个。Scene01/18 容量为 48/41；C0 未训练。已记录[失败计数](results/stereogru/20260910_matched_quota_preflight.json)，新增 [v2 配额配置](config/stereogru/matched_c0_c1_30train.yaml)：Scene01/02 各 15 个、共 30 train，dev 仍 16；其他阈值/预算/训练逻辑不动。原 v1 保留，改用新目录准备，不以失败输出冒充 baseline 或重跑旧诊断。
+
+## 12. v2 C0 正式完成本轮开发预算，C1 已可按原协议运行
+
+用户回传 `stereogru_matched30_cJPdMuhW/experiment` 的 C0，源快照 `d4f3388`。30 train/16 dev 清单及 46 clips 共享缓存均成功，1000 步结束后输出 `COMPLETED C0`。记录见 [C0 原始数值](results/stereogru/20260910_matched30_C0.json)和[对照计划第 8 节](STEREOGRU_MATCHED_CONTROL_PLAN.md)。
+
+最终 C0 开发集（Scene18）为 **AbsRel .23792445 / RMSE 9.81047361 / δ1 .62542661**，有效像素 3591702；训练集为 .11015101 / 7.46385419 / .86170226。保留 final1000，不选 step750 较低的单项 AbsRel。此结果是已校准平体的开发 baseline，不是 RGB-only/SOTA，也不能单独决定完整体胜负。
+
+下一步不再追加诊断或改代码，只运行同一实验的 C1。共享初值、配额、mask、缓存、顺序和预算都冻结，原完成门槛再次验证 C0 后解锁；C1 完成再生成对照表。本次仅更新实测记录与状态，训练源码/配置保持不变，尚未收到 C1 结果。
