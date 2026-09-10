@@ -236,7 +236,9 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
   与 0.5m 版的 0.3778 不能直接横比：bin 宽度/候选数不同。只开 focal loss 也可能被死 ReLU 挡住，已有回归。
   先做 training-scene 小样本和 volume-only baseline，再加 raw+GEV GRU，最后接回预测 K/T。
   <a href="../config/stereogru/calibrated_volume_only.yaml">隔离 pilot</a>已实现：clean frozen backbone、GT 相机、2×4 training frames、200 steps、绝对 index L1；
-  只启动 volume-only，不自动开 method。它不是正式训练、泛化结果或已验证提点。
+  <b>现已实测完成</b>，不自动开 method。同一 374807 个训练像素：index-L1 0.30010→0.01291，AbsRel 0.57223→0.09102，δ1 0.09822→0.95532；
+  matcher 梯度非零，说明校准下 volume-only 能学习，但不是正式训练、泛化结果或 GRU 提点。
+  下一步只读检查 zero/flat/reverse raw 体干预及未拟合 training clip，先区分匹配依赖与小样本记忆。
   历史深度指标仍仅 268 帧、1 条序列、逐帧 affine，不是四集长序列主协议；本次诊断量不作新榜单。
 </div>
 </div>

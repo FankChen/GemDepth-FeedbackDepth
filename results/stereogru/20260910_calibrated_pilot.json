@@ -1,0 +1,103 @@
+{
+  "evidence_source": "User-returned Aliyun stdout, 2026-09-10; not independently executed locally",
+  "run_id": "stereogru_calibrated_WuYmJxow",
+  "source_snapshot": "25dd7f060fa68a9f1b9a77c70c127413a7607a84",
+  "gpu": 4,
+  "recovered_backbone": {
+    "status": "VERIFIED_OFFICIAL_BASE",
+    "source_file_sha256": "2c23990550fd0eecd95fd97434ad71f79ea87c8869591d4fd83cf33cc3953b05",
+    "output_directory": "stereogru_verified_backbone.Abyop5",
+    "output_file_sha256": "1a19497d8e8fa24e4051c871733b12fbdf343aca84d04107f6f485aa71171a35",
+    "native_tensor_count": 342,
+    "native_state_sha256": "eb323d607420145dc0baa072355d232ffd9e953554e9765f3fc625324b63246c",
+    "lora_merged": false,
+    "source_modified": false,
+    "discarded_lora_tensors": 144,
+    "ignored_nonbackbone_entries": 300
+  },
+  "summary": {
+    "status": "completed_implementation_pilot",
+    "protocol": "vkitti_calibrated_volume_only_overfit_v1",
+    "steps": 200,
+    "clips": 2,
+    "initial": {
+      "index_l1": 0.3001017720447468,
+      "absrel": 0.5722318419880098,
+      "rmse": 21.934857229326568,
+      "delta1": 0.0982158817738196,
+      "valid_pixels": 374807,
+      "clips": [
+        {
+          "raw_zero_fraction": 0.03173828125,
+          "raw_depth_std": 0.0005466083530336618,
+          "logit_depth_std": 0.0000015544026155112078,
+          "index_l1": 0.2917846739292145,
+          "valid_pixels": 200894,
+          "q_min": 0.21473895013332367,
+          "q_max": 0.5000001788139343
+        },
+        {
+          "raw_zero_fraction": 0.03173828125,
+          "raw_depth_std": 0.001526244217529893,
+          "logit_depth_std": 0.0000012221141787449596,
+          "index_l1": 0.30970919132232666,
+          "valid_pixels": 173913,
+          "q_min": 0.21473893523216248,
+          "q_max": 0.5000001788139343
+        }
+      ]
+    },
+    "final": {
+      "index_l1": 0.012909114534994206,
+      "absrel": 0.09101537382906402,
+      "rmse": 4.743178206989945,
+      "delta1": 0.9553183371708639,
+      "valid_pixels": 374807,
+      "clips": [
+        {
+          "raw_zero_fraction": 0.03173828125,
+          "raw_depth_std": 0.00040529854595661163,
+          "logit_depth_std": 1.115820050239563,
+          "index_l1": 0.01433110237121582,
+          "valid_pixels": 200894,
+          "q_min": 0.008756767958402634,
+          "q_max": 0.500498354434967
+        },
+        {
+          "raw_zero_fraction": 0.03173828125,
+          "raw_depth_std": 0.0015687752747908235,
+          "logit_depth_std": 1.2618380784988403,
+          "index_l1": 0.011266518384218216,
+          "valid_pixels": 173913,
+          "q_min": 0.004249351564794779,
+          "q_max": 0.4845855236053467
+        }
+      ]
+    },
+    "first_matcher_grad_after_clip": 0.08811705323205238,
+    "elapsed_seconds": 9.67788832820952,
+    "method_launched": false,
+    "interpretation": "Training-clip overfit only, GT cameras, no affine alignment. NOT generalisation/RGB-only/SOTA. Review before a matched full baseline or GRU arm."
+  },
+  "reported_training_log": [
+    {"step": 1, "loss": 0.2880035936832428},
+    {"step": 20, "loss": 0.03946032002568245},
+    {"step": 40, "loss": 0.02007850632071495},
+    {"step": 60, "loss": 0.015592550858855247},
+    {"step": 80, "loss": 0.017787614837288857},
+    {"step": 100, "loss": 0.014215372502803802},
+    {"step": 120, "loss": 0.013498175889253616},
+    {"step": 140, "loss": 0.012285841628909111},
+    {"step": 160, "loss": 0.010187938809394836},
+    {"step": 180, "loss": 0.010686780326068401},
+    {"step": 200, "loss": 0.009161071851849556}
+  ],
+  "limits": [
+    "Initial/final aggregate metrics use the same 374807 valid training pixels and eval mode, with no affine fit.",
+    "Last-step loss uses one clip in train mode before that optimizer update; do not equate it with final two-clip eval metrics.",
+    "Raw-zero fraction is a value statistic, not the fraction of occlusion-free or valid camera projections.",
+    "Runtime is a tiny fixed-clip pilot with cached frozen-backbone features, not a full-training throughput estimate.",
+    "Exact pilot manifest and source/input hashes remain in Aliyun run artifacts; replay must verify them before interventions.",
+    "Learning and clean initialization are demonstrated; dependence on correct multi-view evidence and generalization remain unverified."
+  ]
+}

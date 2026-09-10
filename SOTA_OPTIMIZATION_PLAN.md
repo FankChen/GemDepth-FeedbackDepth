@@ -1,6 +1,6 @@
 # PP-DPT：面向标准视频深度 benchmark 的优化方案
 
-审阅日期：2026-09-09。代码依据：`feat/registry-mixdata@eb2c9ac`。状态：**研究设计，未启动新实验、未验证预期增益**。
+审阅日期：2026-09-09，实测更新至 2026-09-10。初审代码依据：`feat/registry-mixdata@eb2c9ac`。状态：**SOTA 方法仍为研究设计；校准 volume-only 小样本 pilot 已完成，不代表泛化或方法增益**。
 
 本次核对了当前实现、已有实验记录、跨会话记忆、DenseGRU / DA3-Metric-Repro 的本地结果，以及下列论文原文和官方资源。历史文档有相互矛盾的版本，以下不继承其中未经验证的因果结论。已有综述的工作区修改保持不动。
 
@@ -9,6 +9,8 @@
 **2026-09-10 实测更新：两版 costvol 各 8×4 抽查帧均出现非有限 K、预测相机支持为 0、实际 raw 体为零；GT K 恢复约 95% 支持。** 当前执行优先级是校准几何/索引修复 → 小样本 → 完成 volume-only 基线 → GRU 对照，再决定 SOTA 结构路线。不是继续等待“方法是否不适合”的抽象解释，也不是先启动下文 RGB/flow arm。死 ReLU 还使“仅打开 focal loss”不成为充分修复，详见 [实测与修复顺序](STEREOGRU_IMPLEMENTATION_AUDIT.md)。
 
 精确回传已确认首 clip 四帧 **fy=inf、GEV 全部严格 0**，六个执行源码 hash 与诊断快照吻合，取证结束。已新增[隔离的校准 volume-only pilot](config/stereogru/calibrated_volume_only.yaml)：clean frozen backbone、GT 相机、训练场景 2×4 帧、绝对 index 监督、200 步，无 GRU/no auto method。它是实现 gate，不是正式 baseline 完成或修复提点结果；详见 [入口与验收](STEREOGRU_IMPLEMENTATION_AUDIT.md)。
+
+**pilot 已回传完成：**官方基座恢复通过完整指纹；同一 374807 个训练像素、eval 模式下 index-L1 `.30010→.01291`，AbsRel `.57223→.09102`，δ1 `.09822→.95532`，matcher 梯度非零。已通过可学习性检查，不再怀疑“volume 一定学不动”。下一步是[零训练 raw-volume 依赖与未拟合 training clips 检查](scripts/diagnose_stereogru_pilot.py)，不是立即开 GRU 或拿 overfit 与旧 held-out 分数横比。
 
 ## 0. 决策摘要
 
@@ -256,7 +258,7 @@ SelfEvo 的 36.5% 是其 KITTI scale-only AbsRel `.074→.047`，不是四集平
 - 相机逐帧 K、resize/crop 后投影、flow 坐标同步、mask 不被 range mask 覆盖。
 - baseline/method 同一 clip 的原始输出和完整评测结果保存；不只保存挑选过的可视化。
 
-**原 SOTA 方案仍未启动方法训练。2026-09-10 仅新增隔离的校准 volume-only pilot 入口（见上文），不修改旧训练链路或旧 checkpoint、不覆盖已有综述修改。真实数据 pilot 尚待用户执行，不能标成完成的正式 baseline。**
+**原 SOTA 方案仍未启动方法训练。2026-09-10 的真实 calibrated volume-only pilot 已由用户完成，但只通过小样本可学习性 gate，不是完成的正式 baseline。旧训练链路/旧 checkpoint/用户综述修改均保持不动；新增只读检查不续训或自动开 method。**
 
 ## 8. 执行顺序、预算与止损
 

@@ -296,7 +296,7 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 
 相对于历史 costvol，此 pilot 改变了几何输入、输出监督、clean/frozen backbone、crop、优化预算等，**不能拿它与 `.4297/.4171` 当单变量提点实验**。后续 baseline/method 必须共同遵循新协议与共享初始化，不把 overfit 和测试结果混表。
 
-本地验证：**73 passed（11.03s）**，含新校准合约、train-only 文件夹/标定 fixture、无 GPU 的三步独立运行，以及原诊断、decoder/backbone/objective/freeze/mix 注册表回归。另用本地真实干净 backbone 权重验证 strict loading 和有限四级特征输出。**未在本机执行真实 VKITTI 200 步，未启动阿里云作业；真实学习结果仍待该 pilot 回传。**
+本地验证：**73 passed（11.03s）**，含新校准合约、train-only 文件夹/标定 fixture、无 GPU 的三步独立运行，以及原诊断、decoder/backbone/objective/freeze/mix 注册表回归。另用本地真实干净 backbone 权重验证 strict loading 和有限四级特征输出。随后用户已在阿里云完成真实 VKITTI 200 步，结果见第 10 节；本机未运行该真实数据训练。
 
 ### 9.1 部署阻塞：独立权重文件未找到，但可验证恢复冻结基座
 
@@ -310,6 +310,50 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 
 因此这不是拿 finetuned backbone 替换 clean 初始化：通过时恰好恢复官方相同参数，不改变 pilot 协议；不通过就停止，不能用“冻结过”“形状兼容”或只看几个 tensor 来放行。
 
-本地全尺寸验证：真实官方 ConvNeXt-S 加入 72 处非零 LoRA，再包装成模拟 PP-DPT/DDP 完整 state dict；恢复时排除 144 个 adapter tensors，342 个基座张量指纹通过，重新走 pilot 严格加载后四级特征最大差均为 **0**。临时模拟导出已清理，未用阿里云历史权重冒充该测试，实际阿里云 checkpoint 是否通过仍以运行校验为准。
+本地全尺寸验证：真实官方 ConvNeXt-S 加入 72 处非零 LoRA，再包装成模拟 PP-DPT/DDP 完整 state dict；恢复时排除 144 个 adapter tensors，342 个基座张量指纹通过，重新走 pilot 严格加载后四级特征最大差均为 **0**。临时模拟导出已清理。随后用户已回传真实阿里云 checkpoint 同样通过官方指纹，记录见第 10 节；两种证据不可混写。
 
 相关回归合计 **83 passed（11.73s）**；新增用例覆盖六种指纹变化、重复键/未知 wrapper、导出重读、源文件不变及失败时不写出。部署指令重新创建代码快照和独立权重目录，不依赖之前终端里的 `$D`；只在 `VERIFIED_OFFICIAL_BASE` 通过后继续相同 200 步 pilot，不改变任何训练协议。
+
+## 10. 真实校准 pilot 已完成：可学习性通过，不等于 GRU/泛化通过
+
+用户回传于 2026-09-10，运行标识 `stereogru_calibrated_WuYmJxow`，源快照 `25dd7f0`，GPU 4。数值归档见 [pilot evidence](results/stereogru/20260910_calibrated_pilot.json)。`VERIFIED_OFFICIAL_BASE` 确认真实 costvol checkpoint 中 342 个基座 tensor 与官方规范指纹完全一致，排除了 144 个 LoRA tensor 和 300 个其他条目；源权重未改。恢复文件 SHA256 为 `1a19497d8e8fa24e4051c871733b12fbdf343aca84d04107f6f485aa71171a35`，不能与官方序列化原文件哈希混淆。
+
+### 10.1 同一批训练像素上的初末结果
+
+| 指标 | initial（eval） | final（eval） |
+|---|---:|---:|
+| absolute normalized-index L1 | .3001017720 | **.0129091145** |
+| 对应平均 bin index 绝对差（×31） | 9.30315 | **.40018** |
+| AbsRel | .5722318420 | **.0910153738** |
+| RMSE (m) | 21.9348572 | **4.7431782** |
+| δ1 | .0982158818 | **.9553183372** |
+| 有效监督像素 | 374807 | **374807** |
+
+两个 clip 分别有 200894 / 173913 个有效像素，初末加权 index-L1 已按原输出独立核对。没有 affine alignment、没有丢弃困难像素来换这组下降。训练中首次 matcher 梯度范数（clip 后）为 `.0881171`，真实 raw-zero 从旧失效模型的全零状态变为本 pilot 的 `.0317383`，末次两个 clip 的 GEV depth-std 为 `1.11582 / 1.26184`，q 范围均在 [0,1]。
+
+**通过的是：给定有效标定、正确索引目标与新协议，volume-only 路径能够得到梯度并学习拟合这两个 clip。** 不需要先靠 GRU 才能让 volume 读出学习，旧“cost volume 本身不 work”的解释应撤回。与此同时，不能把这套多项修正后的 overfit 分数与旧 `.4297/.4171` 作单因素效果比较，也不能与 ms_gem 的 held-out `.1134` 横比。
+
+### 10.2 日志细节与不能夸大的内容
+
+- 初末的 overall 指标均为 **eval 模式、两 clip 加权**；step200 的 `.0091611` 是一个 clip 在 train 模式下、该次 optimizer update 前的 loss，不等于 final `.0129091`。存在 BatchNorm 和 clip 差异，不能只由两者不等认定评测 bug。
+- initial eval GEV std 约 `1e-6`，step1 train 约 `.2766`，这与 BN train/eval 不同相容，不应写成“一步训练已经突然恢复强匹配”；应看最终 eval 与初始 eval。
+- `.0317383` 是 raw 数值全零的像素比例，不是“96.8% 真正可见/无遮挡”的证明；缺乏纹理、边界等具体来源尚未定位。
+- 最终第二 clip 的 q_min `.00424935` 低于旧 `.005` floor 但合法；此 pilot 没有错误截断。初值 q 在边界低于 .5 与零 padding 的 convex upsample 相容，不自动是相机错误。
+- 恢复干净 base 的成功只证明冻结基座未改变，不代表原 LoRA 没被坏几何训练影响。本 pilot 不使用这些 LoRA。
+- `9.6779s` 是该小型缓存特征 pilot 的计时；包含 setup，但不含前置恢复，也没有每步 backbone 前向，不能推算正式全数据训练只需同样时间。
+- Albumentations 版本查询超时和 `float(loss)` 的 scalar warning 没有终止训练；后者是日志读取已 backward 的 scalar，不改变优化目标。为保证旧 run 源码指纹可回放，本阶段不修改该旧入口。新 readout 关闭无关版本联网检查。
+
+小样本 loss 下降仍可能主要依赖记忆、图像引导或宽泛先验；**非零 matcher 梯度不等于已证明模型利用了正确多视角深度顺序**。因此不立即跳到 GRU method、10k 全量训练或 RGB-only/SOTA 声明。
+
+### 10.3 下一步仅做只读依赖/未拟合样本检查
+
+新增 [readout](scripts/diagnose_stereogru_pilot.py) 和 [readout entry](scripts/run_stereogru_pilot_readout.sh)。**不训练、不更新 BN、不写 checkpoint**，只在新目录保存报告；旧 pilot 与训练源码保持不变。
+
+1. 校验 pilot 的 config/manifest 一致性，原源码、输入 RGB/depth/标定文件与 clean backbone 哈希；严格加载已保存最终 head，先在原两个 clip 上复现 final 的有效像素数和四个汇总指标，超出 `rtol=1e-4, atol=1e-6` 则停止。
+2. 原 pilot 未独立保存最终 head 哈希，所以不能声称“已有外部指纹证明历史 head 逐字节未变”；readout 记录当前 head/file 指纹、检查运行前后不变，并核对 checkpoint metadata 与原指标。此边界在报告中显式说明。
+3. 原始体送入 aggregation 前，分别使用原体、全零体、逐像素沿 depth 均值展开的平体、depth 顺序反转的体。**同一 head、guides、GT K/T、bounds 和 GT 支持域，只改变 volume_stem 的输入**。原 raw 统计和实际干预后统计分开显示。干预损害说明敏感性，不单独证明正确三角化，尤其全零输入也会造成分布变化。
+4. 从同一 training scene pool、同一预定义运动筛选规则追加 6 个与原拟合帧不重叠的 clip，不按 loss 选。原 fit prefix 必须与 manifest 完全相同。未参与拟合的训练 scene 与同 scene 新 clip 分开显示；后者可能只与拟合窗口相邻，报告帧间隙，**不冒称独立 held-out benchmark**。正式的 Scene06/20 不在此步骤作调参集。
+
+解读顺序：若原指标不能复现，先排 artifact/环境；若 zero/flat/reverse 都基本不影响输出，不能把 overfit 当匹配证据；若干预有影响但新 clip 明显差，先处理覆盖/过拟合。只有实现 gate 与有意义的新样本检查成立，才固定完整 calibrated baseline 的协议和预算，**先跑完 baseline，再启动同协议 raw+GEV GRU**。当前 readout 没有 optimizer 或自动下一组开关。
+
+本地最终回归 **94 passed（12.61s）**，含已保存合成 pilot 的完整回放、相同支持域、原始/有效 raw 区分、hook 异常清理、源码或指标不一致拒绝，以及原恢复/校准/各注册表测试。原 pilot 的 9 个 provenance-covered 源码文件仍与 `25dd7f0` 逐字节相同。真实阿里云 readout 尚待执行；本次没有新训练或 GRU 结果。
