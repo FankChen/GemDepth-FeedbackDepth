@@ -51,7 +51,7 @@
 
 [CameraHead](model/tools/camera.py) 下一轮 pose 输入 detach；因此焦距输出行不能通过下一轮 R/T 的梯度“顺便学好”。合成反向实测：`pose_branch.fc2` 的 R/T 行梯度范数 `.303886`，FoV 行为 **0**。共享 trunk/weight decay 可以改变数值，但不能等同于学到了正确焦距。
 
-FoV 激活是 ReLU，0 会在 `f=(W/2)/tan(FoV/2)` 中变成 inf；[warp](model/util/warp.py) 将非有限投影移到图外。这避免 NaN，却可能使某些帧没有几何证据。**finite loss / 无 NaN 不是代价体有效性证明。** 2026-09-10 实测已确认两版 checkpoint 抽查帧全部有非有限 K、实际 raw 体全零；具体是哪个焦距轴、inf 还是 NaN，待现有完整 JSON 核对，不把合成 FoV=0 的构造冒充真实 logits。
+FoV 激活是 ReLU，0 会在 `f=(W/2)/tan(FoV/2)` 中变成 inf；[warp](model/util/warp.py) 将非有限投影移到图外。这避免 NaN，却可能使某些帧没有几何证据。**finite loss / 无 NaN 不是代价体有效性证明。** 2026-09-10 实测已确认两版 checkpoint 抽查帧全部有非有限 K、实际 raw 体全零；后续首 clip 精确回传确认是 fy=+inf。原始 preactivation 未记录，不把合成负值构造冒充真实 logits。
 
 新增合成反向验证：故意令 FoV preactivation 为负，即便 `weight_focal=1`，FoV loss≈`.24915`，该输出行梯度仍为 **0**。因此不能把“打开 focal 权重”当作充分修复；新版本需要可训练且严格正值的焦距/有界 FoV 参数化和初始化。共享 R/T 更新可能偶然改变其符号，但不是恢复机制的保证。
 
@@ -169,7 +169,7 @@ $$
 
 ### 8.1 来源与直接证据
 
-来源为用户回传的完整终端 summary，运行标识 `mckzcNRl`，源快照 `b8e2dd3`，GPU 4，diagnostic v2。三个 checkpoint 均通过 runner 的文件检查/strict load，四项诊断完成。下表保留终端四位小数，**不是新 benchmark，也不是完整 JSON 的精度**；配置摘要与权重 hash 的原文尚待归档。每版只抽查 8 clips，每 clip 4 帧，不能当作 32 个独立统计样本。
+来源为用户回传的完整终端 summary，运行标识 `mckzcNRl`，源快照 `b8e2dd3`，GPU 4，diagnostic v2。三个 checkpoint 均通过 runner 的文件检查/strict load，四项诊断完成。下表保留终端四位小数，**不是新 benchmark，也不是完整 JSON 的精度**；配置/权重 hash 和首 clip 精确统计已在后续回传归档，见第 8.6 节。每版只抽查 8 clips，每 clip 4 帧，不能当作 32 个独立统计样本。
 
 | 抽查证据 | costvol (.5–80m) | costvol_d3 (3–80m) |
 |---|---:|---:|
@@ -245,4 +245,55 @@ ms_gem 回传：非有限 K 帧比例 1.0000，中心误差 246.8767px，旋转�
 3. **然后才开 raw+GEV 的 GRU 对照。** 恢复官方双体查表，独立约束内部 index，记录分轮预测/越界；与完成的 volume-only 对照比较。不要仅硬 clamp 来遮住失控，更不要给旧 checkpoint 换查表后把即时差异叫作训练修复收益。
 4. **最后逐个接回预测 K/T。** 相机使用可学习的严格正焦距/有界 FoV、非零监督、可表达主点的表示与自洽共同尺度。分别验证 K、R/T 后才进入 RGB-only 正式基线/方法；所有行为版本用新增注册模块/config 表达，旧 run 冻结。GT-camera 结果永远不冒充 RGB-only SOTA。
 
-本次已完成结果解释、诊断汇总修正与 36 项回归，**尚未声称实现上述新训练版本或取得修复后深度指标**。只需再从本次现成结果读取配置、权重 hash、fx/fy 和原始 trace 范围作归档，不需要重复整套 GPU 诊断来确认首要阻塞。
+第一次回传已完成结果解释、诊断汇总修正与 36 项回归。后续精确证据和新增隔离入口见下文；没有修复后真实数据深度指标，不再重复诊断取证。
+
+### 8.6 第二次回传：fy=inf 与严格零 GEV，源码指纹吻合
+
+机器可读记录见 [reported evidence](results/stereogru/20260910_reported_evidence.json)。六个源码 SHA256 已在本机逐一与 `b8e2dd3` 的 Git 对象核对，**全部一致**。provenance 中的 `eb2c9ac` 是 runner 查询的阿里云训练工作树 HEAD，不是执行快照版本；因此不是“运行到了旧诊断”。回传环境为 Torch `2.9.1+cu128`，CUDA/bf16 可用；不能把它自动追溯为历史训练环境。
+
+权重 SHA256 原样归档；本机没有旧训练权重，不能声称独立复算了它们。回传配置确认 focal 权重 0、ASTT 关、32 bins/8 次 GRU/4 帧；配置来源仍是快照，非历史 model-only checkpoint 内嵌配置。
+
+| 首 clip 精确证据 | costvol | costvol_d3 |
+|---|---|---|
+| fx（四帧） | 1204.89, 2803.06, 2923.40, 2904.92 | 1007.03, 1802.54, 1836.58, 1836.44 |
+| fy（四帧） | **全部 +inf** | **全部 +inf** |
+| GEV min/max/std/depth_std | **全部严格 0** | **全部严格 0** |
+| final raw q 范围 | −.000737…1.917865 | .008518…2.595232 |
+| final raw q>1 | **22.3369%** | **29.3950%** |
+
+这里明确到竖向焦距，而非所有 fx/fy 都坏。之前统计已知各版 32/32 抽查帧的 K 有非有限项，但本次逐轴信息仅覆盖首 clip，不能把“首 clip 的 fy”扩写为所有帧逐轴统计。
+
+严格零 GEV 排除了“只是 softmax 熵比较高”的歧义。head 从零 logits 得到均匀概率和初始 index=15.5，之后的更新读取的是没有图像匹配信息的 GEV/概率体与偏置初始化 hidden；后续非零输出不证明匹配已工作。`1.000000119` 的 entropy 是浮点舍入，不是概率逻辑异常。q>1 的最终上采样输出统计也与前文“第 8 次 lookup 前越界”不同，不能混成同一个比例。
+
+这已经完成首要故障取证，**不再要求重复 GPU 诊断或猜测换哪个相机轴**。剩余问题转入正确实现的受控验证。
+
+## 9. 新增隔离的 calibrated volume-only pilot（不是完整重训）
+
+实现文件：[registered volume-only head](model/dpt_calibrated_volume_only_convnext.py)、[absolute index objective](loss/objective_calibrated_index.py)、[camera-safe training clips](dataset/stereogru_calibration.py)、[standalone runner](scripts/stereogru_calibrated_baseline.py)、[shell entry](scripts/run_stereogru_calibrated_baseline.sh)、[fixed config](config/stereogru/calibrated_volume_only.yaml)。旧 head、核心 train、旧 loss/config 均不改。
+
+| 控制项 | 本次固定内容 |
+|---|---|
+| 唯一目的 | GT-camera 下，volume 本身能否获得梯度并拟合固定训练样本 |
+| 数据 | 仅 Scene01/02/18 的 15-deg-left、Camera_0；2 个不重叠 clip，每 clip 连续 4 帧 |
+| 选择 | 按 GT 最大第一帧相对平移 .5–5m 预选，跨 scene 优先；不按 loss 挑样本，不自动放宽门槛 |
+| 相机/预处理 | 读取逐帧原始 K；原 E 先 float64 第一帧重基再 cast；共同固定 crop256、独立 sx/sy、OpenCV resize 与原生 ConvNeXt stride-conv 像素中心修正 |
+| backbone | 干净官方 DINOv3 ConvNeXt-S；冻结且 eval，无 LoRA、无 GEM；预缓存特征 |
+| 头 | 新注册 volume-only：保留 matcher、hourglass 和上采样，移除所有 GRU/lookup 参数 |
+| 几何/监督 | 米制 K/T/depth 与 3–80m/32 bins；绝对 normalized inverse-depth L1，不用 SSI、相机 loss 或 .005 floor |
+| 预算 | 200 步，逐 clip 循环，AdamW lr=.001、wd=0、clip-grad=1、seed0、FP32；只为 overfit 定义的新预算 |
+| 指标 | 固定训练 clip 的 index-L1，以及不做 affine 对齐的 AbsRel/RMSE/δ1；**不代表泛化或 RGB-only** |
+| 自动后续 | **无**；只完成这个 baseline pilot，绝不自动启动 GRU arm |
+
+严格加载经本机真实干净权重核对：342 个 tensor，唯一显式忽略的导出键为 native `norm=False` 特征不使用的 `norms.3.weight/bias`；缺失/其他多余键报错。缺清洁权重、缺 K 标定文本、坏数据或繁忙 GPU 都退出，不换随机初始化、不拿旧 costvol 权重冒充 clean backbone。
+
+数值防护：非有限 K/T、非正焦距、无效旋转直接报错；不把失败相机换成大数。`geometry_gauge='metric'` 必须显式确认，避免被旧 RGB-only `train.py` 误用。`q=0` 仍是有效远平面，softmax+convex baseline 的输出自然在 [0,1]，不是硬 clamp 掩盖 GRU 越界。预测 head bounds 与 objective bounds 必须相同。
+
+坐标约定也单独验证：OpenCV resize 满足 `u'=s*(u+.5)-.5`；原生 ConvNeXt 的无 padding 4×4/2×2 stride-conv 使 stride8 特征中心落在 `8u+3.5`。新头只对传入旧 ratio-scaler 的主点做中心补偿，不改旧工具或 GT 存档。相机射线与实际 OpenCV 坐标斜坡采样均有回归，不能把 resize/crop 后的 K 再近似为固定中心。
+
+输出为全新目录：保存固定 clip/变换/完整相机 manifest、权重和输入 SHA256、配置、初始 head、最终 head、逐步 loss/梯度/raw 诊断及初末指标。拒绝 resume/覆盖旧目录。head 新增参数会正常写入**新 pilot 目录**，不是此前只读诊断；历史 checkpoint 不改。
+
+**验收不是“200 步跑完就说明方法可用”**：先检查 raw 非空与有限非零 matcher 梯度，再检查相同训练支持域上的初末 index-L1/深度误差及 eval 模式输出。没有学习信号就回到 raw/aggregation/监督链，不扩大预算。即使小样本能拟合，也仅通过实现 gate；下一步仍需完整同协议 volume-only baseline，再开 raw+GEV GRU 对照。
+
+相对于历史 costvol，此 pilot 改变了几何输入、输出监督、clean/frozen backbone、crop、优化预算等，**不能拿它与 `.4297/.4171` 当单变量提点实验**。后续 baseline/method 必须共同遵循新协议与共享初始化，不把 overfit 和测试结果混表。
+
+本地验证：**73 passed（11.03s）**，含新校准合约、train-only 文件夹/标定 fixture、无 GPU 的三步独立运行，以及原诊断、decoder/backbone/objective/freeze/mix 注册表回归。另用本地真实干净 backbone 权重验证 strict loading 和有限四级特征输出。**未在本机执行真实 VKITTI 200 步，未启动阿里云作业；真实学习结果仍待该 pilot 回传。**

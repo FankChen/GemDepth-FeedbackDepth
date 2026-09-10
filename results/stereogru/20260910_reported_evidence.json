@@ -1,0 +1,64 @@
+{
+  "source": "User-returned Aliyun terminal output, 2026-09-10; not a new local checkpoint execution",
+  "run_id": "stereogru_audit_mckzcNRl",
+  "scope": "Config/provenance and FIRST clip detail only; the previous summary covered eight clips per arm",
+  "nonfinite_encoding": "Infinity is stored as a string to keep this evidence file valid standard JSON",
+  "runtime": {
+    "torch": "2.9.1+cu128",
+    "cuda_available": true,
+    "bf16_supported": true,
+    "source_snapshot": "b8e2dd36d87502c7a46c890a74c4192695101b23",
+    "run_worktree_head_not_execution_snapshot": "eb2c9ace6bdaa842daf7ecbcf89d282ca9d728ad",
+    "source_hashes_independently_matched_to_snapshot": true,
+    "config_origin": "Source snapshot; old model-only exports do not embed training config"
+  },
+  "source_sha256": {
+    "model/dpt_cost_volume_convnext.py": "049687267227ba8143d71a8b63950ae486154de2a3e836d16e3a1640fbe59a7d",
+    "model/util/cost_volume.py": "22b4b1684e6f01b8ab2d0d2123829b090c36b3e1f8e5adceb6bf598d8e896a27",
+    "model/util/warp.py": "116f69cb12b7cc91adecf94a662a3b3f2aeeca2d410800be18c259383eac2478",
+    "loss/videoloss.py": "9072aa826cb30c2f42fb1073d84bf0da33d353e58d7b1de3379e366d0161bdad",
+    "scripts/diagnose_gem_camera.py": "0045feffb278de882562eebda03ded9082d92d9e403d8151128b2fb4420b2d7e",
+    "scripts/diagnose_cost_volume_oracle.py": "55b95ea04f0e56e166f6a021745fc15debefbf556b29fa4319d28555be2eeb91"
+  },
+  "reported_checkpoint_sha256": {
+    "vkitti_costvol": "2c23990550fd0eecd95fd97434ad71f79ea87c8869591d4fd83cf33cc3953b05",
+    "vkitti_costvol_d3": "7cde5d9a8853302724dca6e0a3a3b8c95d6c08d44ee854b28d8e08dac5b3ff7b",
+    "vkitti_ms_gem": "a9dc2527127652ed4aec7fee8c3afe71e91268e8bb6a2131258770e3013b1824"
+  },
+  "reported_shared_config": {
+    "pose_flag": true,
+    "use_astt": false,
+    "camera_weight_focal": 0.0,
+    "clip_len": 4,
+    "budget": 10000,
+    "seed": 0
+  },
+  "costvol_decoder_kwargs": {
+    "volume_level": 1,
+    "num_sample": 32,
+    "num_groups": 8,
+    "iters": 8,
+    "corr_radius": 4,
+    "corr_levels": 2,
+    "depth_max": 80.0,
+    "depth_min_by_arm": {"vkitti_costvol": 0.5, "vkitti_costvol_d3": 3.0},
+    "warp_offsets": [-1, 1]
+  },
+  "costvol_loss_weights": [0.0702712386343591, 0.07807915403817678, 0.08675461559797419, 0.09639401733108244, 0.10710446370120269, 0.11900495966800301, 0.1322277329644478, 0.14691970329383086, 0.16324411477092318],
+  "first_clip": {
+    "vkitti_costvol_d3": {
+      "focal_x": [1007.0299072265625, 1802.542236328125, 1836.5810546875, 1836.444091796875],
+      "focal_y": ["Infinity", "Infinity", "Infinity", "Infinity"],
+      "principal_point_each_frame": [224.0, 224.0],
+      "GEV": {"finite_fraction": 1.0, "min": 0.0, "max": 0.0, "mean": 0.0, "std": 0.0, "depth_std": 0.0, "normalized_entropy": 1.0000001192092896},
+      "raw_output": {"finite_fraction": 1.0, "min": 0.008517910726368427, "max": 2.595231533050537, "mean": 0.6923837065696716, "std": 0.7541703581809998, "relu_zero_fraction": 0.0, "above_volume_fraction": 0.29395028948783875, "training_floor_fraction": 0.0}
+    },
+    "vkitti_costvol": {
+      "focal_x": [1204.8895263671875, 2803.05859375, 2923.3984375, 2904.92431640625],
+      "focal_y": ["Infinity", "Infinity", "Infinity", "Infinity"],
+      "principal_point_each_frame": [224.0, 224.0],
+      "GEV": {"finite_fraction": 1.0, "min": 0.0, "max": 0.0, "mean": 0.0, "std": 0.0, "depth_std": 0.0, "normalized_entropy": 1.0000001192092896},
+      "raw_output": {"finite_fraction": 1.0, "min": -0.0007371391984634101, "max": 1.9178645610809326, "mean": 0.5106180310249329, "std": 0.5572490692138672, "relu_zero_fraction": 0.002567213261500001, "above_volume_fraction": 0.22336873412132263, "training_floor_fraction": 0.0459769107401371}
+    }
+  }
+}

@@ -1,0 +1,35 @@
+# Standalone implementation overfit control. NOT for train.py or an RGB-only table.
+# No method arm is launched by this config; finish/review the baseline first.
+protocol: vkitti_calibrated_volume_only_overfit_v1
+seed: 0
+steps: 200
+log_every: 20
+learning_rate: 0.001
+weight_decay: 0.0
+grad_clip: 1.0
+backbone:
+  name: DINOv3ConvNeXtSmallBackbone
+dataset:
+  crop_size: 256
+  seq_len: 4
+  num_clips: 2
+  min_baseline_m: 0.5
+  max_baseline_m: 5.0
+decoder:
+  name: DPTHeadCalibratedVolumeOnlyConvNeXt
+  kwargs:
+    volume_level: 1
+    num_sample: 32
+    num_groups: 8
+    match_dim: 96
+    volume_channels: 8
+    hidden_dim: 128
+    iters: 0
+    depth_min: 3.0
+    depth_max: 80.0
+    warp_offsets: [-1, 1]
+objective:
+  name: calibrated_index_l1
+  kwargs:
+    depth_min: ${decoder.kwargs.depth_min}
+    depth_max: ${decoder.kwargs.depth_max}

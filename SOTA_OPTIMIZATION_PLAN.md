@@ -8,6 +8,8 @@
 
 **2026-09-10 实测更新：两版 costvol 各 8×4 抽查帧均出现非有限 K、预测相机支持为 0、实际 raw 体为零；GT K 恢复约 95% 支持。** 当前执行优先级是校准几何/索引修复 → 小样本 → 完成 volume-only 基线 → GRU 对照，再决定 SOTA 结构路线。不是继续等待“方法是否不适合”的抽象解释，也不是先启动下文 RGB/flow arm。死 ReLU 还使“仅打开 focal loss”不成为充分修复，详见 [实测与修复顺序](STEREOGRU_IMPLEMENTATION_AUDIT.md)。
 
+精确回传已确认首 clip 四帧 **fy=inf、GEV 全部严格 0**，六个执行源码 hash 与诊断快照吻合，取证结束。已新增[隔离的校准 volume-only pilot](config/stereogru/calibrated_volume_only.yaml)：clean frozen backbone、GT 相机、训练场景 2×4 帧、绝对 index 监督、200 步，无 GRU/no auto method。它是实现 gate，不是正式 baseline 完成或修复提点结果；详见 [入口与验收](STEREOGRU_IMPLEMENTATION_AUDIT.md)。
+
 ## 0. 决策摘要
 
 **不再把“ConvNeXt-S + VKITTI 10k + 不断换 decoder”当作冲击准确率 SOTA 的主线。** 它仍适合便宜筛选，但不能替代强预训练模型、多域训练和长视频验证。
@@ -254,7 +256,7 @@ SelfEvo 的 36.5% 是其 KITTI scale-only AbsRel `.074→.047`，不是四集平
 - 相机逐帧 K、resize/crop 后投影、flow 坐标同步、mask 不被 range mask 覆盖。
 - baseline/method 同一 clip 的原始输出和完整评测结果保存；不只保存挑选过的可视化。
 
-**本次只交付方案，不修改训练实现、不启动作业、不碰 checkpoint、不覆盖已有综述修改。**
+**原 SOTA 方案仍未启动方法训练。2026-09-10 仅新增隔离的校准 volume-only pilot 入口（见上文），不修改旧训练链路或旧 checkpoint、不覆盖已有综述修改。真实数据 pilot 尚待用户执行，不能标成完成的正式 baseline。**
 
 ## 8. 执行顺序、预算与止损
 

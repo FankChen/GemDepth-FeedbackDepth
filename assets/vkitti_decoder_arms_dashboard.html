@@ -199,6 +199,8 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
   换 GT K 后支持恢复约 95%。真实 forward 的 raw-zero=1.0000、GEV entropy=1.0000；
   末次 lookup 前越界为 20.82% / 27.84%。<b>这是失效输入下的负结果，不是有效 StereoGRU 对照。</b>
   各 clip 的 GRU 均值相同到四位小数，不能单凭均值断言整图完全相同，更不能推定历史每一步训练都为空体。
+  <br><b>精确回传：</b>两版首 clip 四帧均为 fy=inf，GEV min/max/std 严格等于 0；最终上采样 q&gt;1 为 22.34% / 29.40%。
+  六个执行源码 hash 与 b8e2dd3 一致；provenance 的 eb2c9ac 是原训练目录 HEAD，并非错误执行版本。
 </div>
 
 <h3>诊断链</h3>
@@ -233,6 +235,8 @@ vs <code>norm</code>（均匀监督四尺度）同时把最细尺度权重从 1 
   d3 的 GT-camera top1/chance 为 0.1364/0.0331，前置 backbone 为 0.1440/0.0331；没有显示绕过 matcher 就恢复强匹配。
   与 0.5m 版的 0.3778 不能直接横比：bin 宽度/候选数不同。只开 focal loss 也可能被死 ReLU 挡住，已有回归。
   先做 training-scene 小样本和 volume-only baseline，再加 raw+GEV GRU，最后接回预测 K/T。
+  <a href="../config/stereogru/calibrated_volume_only.yaml">隔离 pilot</a>已实现：clean frozen backbone、GT 相机、2×4 training frames、200 steps、绝对 index L1；
+  只启动 volume-only，不自动开 method。它不是正式训练、泛化结果或已验证提点。
   历史深度指标仍仅 268 帧、1 条序列、逐帧 affine，不是四集长序列主协议；本次诊断量不作新榜单。
 </div>
 </div>
