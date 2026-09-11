@@ -14,7 +14,7 @@
 
 **readout 与匹配训练均完成：**原 pilot 分数复现、模型状态不变；只读干预提示 depth 轴收益尚待验证，随后[三种子 C0 平体 → C1 完整体匹配对照](STEREOGRU_MATCHED_CONTROL_PLAN.md)全部完成 final1000。开发集标准 depth 指标均值更好，但 AbsRel/RMSE 的逐种子方向翻转、index-L1 三组更差，**尚未证明稳定统一收益**。本轮收束，不再追加种子、改评测点或重复探针。
 
-**当前统计：**[v2：30 train / 16 dev](config/stereogru/matched_c0_c1_30train.yaml)的三个 seed 均保留1000步。开发 C0→C1 的跨 seed 均值为 **AbsRel .256214→.233526（−8.86%），RMSE 9.691719→9.400443（−3.01%），δ1 .626705→.636903（+1.02pp）**；index-L1 .041804→.043037（+2.95%，更差）。先前 seed0 的取舍仍计入，不选择性丢弃。下一阶段是修正后 registered GRU 的合成/小样本验证，再与 C1 匹配比较；尚未实现/运行，不把此开发子集的平均正信号等同于正式准确率/SOTA 提点。
+**当前统计：**[v2：30 train / 16 dev](config/stereogru/matched_c0_c1_30train.yaml)的三个 seed 均保留1000步。开发 C0→C1 的跨 seed 均值为 **AbsRel .256214→.233526（−8.86%），RMSE 9.691719→9.400443（−3.01%），δ1 .626705→.636903（+1.02pp）**；index-L1 .041804→.043037（+2.95%，更差）。先前 seed0 的取舍仍计入，不选择性丢弃。[修正后 registered G1](STEREOGRU_CORRECTED_GRU_PLAN.md)已实现，139项回归及正式尺寸合成前后向通过；下一步先跑三组训练场景门控，再重置后与 C1 匹配比较。真实 G1 尚未运行，不把本地验证当作准确率/SOTA 提点。
 
 ## 0. 决策摘要
 

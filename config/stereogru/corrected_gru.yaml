@@ -1,0 +1,15 @@
+# G1 implementation control against COMPLETED C1, not an official IGEV reproduction.
+# Data, bounds, optimizer, seed/order and budget are read from each immutable C1 contract.
+method: calibrated_raw_gev_gru_v1
+decoder: DPTHeadCalibratedGRUConvNeXt
+iterations: 8
+index_update: remaining_range_tanh_v1
+objective_contract: same_as_c1_final_absolute_index_l1
+seeds: [0, 1, 2]
+gate:
+  steps: 200
+  clips_per_train_scene: 1
+  maximum_final_initial_loss_ratio: 0.5
+# Every small-sample gate is discarded; formal G1 resets to the identical saved
+# method initial state + empty optimizer. Gate steps never count as warmup.
+gate_reset_required: true

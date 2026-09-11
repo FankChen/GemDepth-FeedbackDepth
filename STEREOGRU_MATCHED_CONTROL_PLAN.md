@@ -26,7 +26,7 @@ $$
 | C1：full volume | 原始 $C$ | 与 C0 相同 | 真正的逐 bin 变化是否带来开发集增益？ |
 | G1：条件项 | full volume + 正确 raw/GEV lookup 的 GRU | 另定义与完成的 C1 的预算/初始化匹配协议 | 在已验证的 geometry 上，迭代是否进一步有益？ |
 
-**C0 完整跑完并核对 artifact 后，才允许 C1；G1 不在当前执行清单。** 当前旧的两 clip full-volume pilot 不是这张新表的 C1，不能直接复用其最终权重补表。
+**C0 完整跑完并核对 artifact 后，才允许 C1。** 原阶段未执行 G1；现已完成独立修复与本地验证，真实门控通过后才启动 G1，见[新执行契约](STEREOGRU_CORRECTED_GRU_PLAN.md)。旧的两 clip full-volume pilot 不是这张新表的 C1，不能直接复用其最终权重补表。
 
 C0 不是纯单帧、不是无相机/无几何 baseline：均值来自带 GT 相机、depth bounds 和有效性的真实体，仍可携带多视角/遮挡/空间信息。它只控制**显式 depth 轴变化**。C0 仍保留相同的全部体构建计算，不把减少计算或替换网络容量混进贡献。
 
@@ -214,4 +214,4 @@ index-L1 对 normalized inverse-depth/index 计量，AbsRel、RMSE 和 δ1 对�
 4. **增益对照的直接 baseline 为 C1。** 尽量保留同 manifest/crop/cache、三个 seed、1000 updates、优化器和最后一步 evaluator；公共 matcher/GEV/上采样参数从各 seed 的共同初值映射，而非用 method 额外预训。若第一轮仅比较 GRU 加入，可保持现有最终预测的 absolute-index L1，不同时新增迭代辅助 loss。新增循环参数/计算须报告，不能将结果直接称为纯迭代机制的贡献。
 5. **任何契约变化都重新定义匹配 baseline。** 如果为了 GRU 改深度范围、loss 权重/中间监督、共同相机单位、训练预算或初始化，不能借用现有 C1 当完全匹配基线，必须先跑相应新 baseline。GRU 单测/小样本通过前不直接开完整 run；RGB-only 预测 K/T 的修复与标准跨域评测仍是更后面的任务。
 
-上述 GRU 下一阶段仅明确工程/实验边界，**当前尚未实现新 GRU、尚未运行 G1，不能给出已可运行的 G1 指令或称其有收益**。本次交付是完成统计核验、证据归档和结论收束，不要求用户再跑旧命令。
+上述为三种子收束时的边界。**后续 corrected G1 已实现并通过139项相关回归与正式尺寸合成前后向，真实 G1 尚未运行**。见[修复实现、对照矩阵及门控契约](STEREOGRU_CORRECTED_GRU_PLAN.md)；不重跑旧 C0/C1，也不宣称已有收益。

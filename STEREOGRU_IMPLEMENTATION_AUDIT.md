@@ -435,4 +435,4 @@ C1 随后已完成并输出对照表；共享初值、配额、mask、缓存、�
 
 这些值与原回传逐 seed 原值复算一致；训练 Scene02 的 index-L1 和 AbsRel 也三组变差，所以不宣称完整体在所有场景/目标上占优。**当前是同协议多 seed 的初步平均正信号，不是稳定全面提升、统计显著性或 SOTA。** 它足以支持一个有限的 corrected-GRU 工程验证，但不证明 GRU 能提点；更不改变首要发现——旧 `fy=inf`/空体负结果不是有效的 StereoGRU 架构反证。
 
-本轮 C0/C1 到此冻结，不再让用户重复诊断、追加种子或改选较早 checkpoint。下一项应是独立注册 calibrated GRU 的实现与合成/小样本合同测试，再以完成的 C1 作匹配对照；若改变监督/初始化/预算必须先定义并完成新 baseline。具体约束见[计划第 11.3 节](STEREOGRU_MATCHED_CONTROL_PLAN.md)。**当前仅完成结论和证据记录，没有实现/启动 G1、没有新训练或后台任务。**
+本轮 C0/C1 到此冻结，不再重复诊断、追加种子或改选较早 checkpoint。后续独立注册 calibrated GRU 已实现，见[修复 G1 契约](STEREOGRU_CORRECTED_GRU_PLAN.md)：raw+GEV lookup、正确 hidden/坐标 detach、同 final-only loss、有界 index 变体。139项回归与正式尺寸合成前后向通过，门控证据/他seed cache/基线scene汇总均已严格校验。**真实 G1 尚未启动，没有实际精度结果。** 保留旧源码，若改变监督/初始化/预算仍须先完成新 baseline。
