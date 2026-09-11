@@ -1,6 +1,6 @@
 # Corrected G1：实现验证与匹配运行契约
 
-状态：本地实现、合成验证、139 项相关回归通过；**真实 VKITTI 门控与 G1 三种子训练尚未运行**。C0/C1 六组已完成，原源码/配置/权重/输出保持只读。
+状态（2026-09-11）：阿里云首轮 G1 已准备成功，但 seed0 在 **C1 指标回放**阶段停止，尚无门控优化或正式训练。已修复回放前遗漏的 FP32/TF32 初始化，**148 项相关回归通过；远端修复回放仍待执行**。C0/C1 六组已完成，原源码/配置/权重/输出保持只读。
 
 ## 1. 固定问题与矩阵
 
@@ -46,7 +46,7 @@ $$
 
 1. 读取已完成 repetitions 与 seed summary；校验旧全部 contract/source/runtime/input/cache/权重/完成证书，并从 clip 行重算 C0/C1 每场景和三种子汇总。重复验证脚本也进入新 source hash，旧文件不改。
 2. 新建独立 G1 输出；公共参数严格按 key/dtype/shape 从各 seed **initial** 映射并核指纹。缺/多 key 拒绝，不用 permissive load。
-3. 每个 seed 重放 C1 final 的 train/dev 指标。trained C1 final 仅用于独立 **零迭代等价探针**，随后销毁；绝不作为门控或正式初始化。
+3. 每个 seed 在独立进程内先执行与 C1 相同的 seed/后端设置（matmul highest、CUDA matmul/cuDNN TF32 关闭、cuDNN benchmark 关闭），再重放 C1 final 的 train/dev 指标；容差仍为 rtol1e-4/atol1e-6。回放保存实际/期望指标和后端设置，失败明确打印场景、指标与差值。trained C1 final 仅用于回放和独立 **零迭代等价探针**，随后销毁；绝不作为门控或正式初始化。
 4. 门控使用每个训练场景固定首个 clip，合计2 clips，200 updates。只在这些训练 clips 上评价初末 loss，要求 final/initial ≤ .5；首步 matcher/classifier/encoder/三个 GRU/index_head 七模块梯度均有限且正。开发集只用于 C1 重放，不进入门控优化或通过阈值。
 5. 三个 seed 的门控全部有效，才允许创建任何正式输出。门控参数不保存、不复用；额外 **600 次 disposable updates** 单独记账，不算作正式 warmup。
 6. 正式训练重新加载保存的 G1 initial 和空优化器，各1000步，原训练顺序。任何失败/超时/证据变化立即停止，不自动放宽阈值、追加步数、换种子或续训。
@@ -62,3 +62,13 @@ $$
 - 正式尺寸 CPU 合成 smoke（随机特征，不加载真实图像/backbone）：4帧256²、D32/G8/hidden128、8轮，输出4×1×256×256；零迭代与 C1 完全相同。loss .1381412，输出范围 [.2076815,.5252613]，七个关键模块梯度有限且正；计算段约2.93s，不是 GPU 吞吐估计。
 - **未验证项：真实 VKITTI 两 clip 门控是否通过、GPU 显存/总耗时、真实三种子 G1 效果。** 本地合成通过不保证实测门控或精度；失败如实保留，不能推断 GRU 已提点。
 - 阿里云只能由用户执行；当前环境没有该机器的终端/SSH 访问。发布快照仅归档 model/loss/dataset/config/scripts，不切远端工作树，不触碰 checkpoint。
+
+## 5. 2026-09-11：独立进程回放初始化修复
+
+首轮失败记录：用户运行 `8918b769a82a06e278774f65ee2c1e1e50f6eba4`，输出为 `/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_corrected_gru_FGClc5Gx/run`。三种子初值/参数校验通过，seed0 在 `C1 final metrics did not replay: train/index_l1` 停止。该位置在创建门控优化器之前，**没有 G1 优化更新，更没有正式结果**；旧错误未输出实际/期望值，不能编造误差幅度或断言远端问题已解决。
+
+- 确定的代码遗漏：原 `train_arm` 在模型前向前执行 `seed_everything`（同时设置 FP32/TF32），新 `run_gate` 仅在随后构造 GRU 时才执行。shell 的 prepare/gate 是不同 Python 进程，准备阶段的后端开关不会继承。cuDNN TF32 等设置因而可能与已完成 C1 不同。
+- 上轮 CPU 同进程流程测试继承了 prepare 的全局开关，未覆盖该入口差异。本轮增加三个 seed 的回归，主动重置为 TF32-enabled 状态，在**第一次 C1 evaluate**处断言已恢复原设置；另增加独立子进程检查及故意污染全局设置的完整合成流程。容差边界用例保留 rtol1e-4/atol1e-6，拒绝越界差值。
+- 修复仅调整新 runner 的回放初始化和日志；模型、loss、数据、seed、初始权重映射、正式预算与旧基线源码均不变。不靠放宽容差让门控通过。
+- 本轮完整相关回归 **148 passed in59.21s**，shell 语法与 diff 检查通过。这证明入口设置已修，不代替真实 H20 回放验证。
+- **重启使用新源码快照、新 G1 目录**：源码 hash 已变，不能修改旧已准备 contract 或删除失败 gate 来续跑。首轮失败目录保留；只复用原已完成 C0/C1 的 manifest/cache/initial/证书，不重训基线、不追加试验 seed。新入口通过 C1 回放与所有既定门控后，才会运行原定三组正式训练。

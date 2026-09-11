@@ -208,14 +208,17 @@ def assert_metric_replay(actual, expected):
     for split, item in expected.items():
         if set(actual[split]["scenes"]) != set(item["scenes"]):
             raise ValueError("C1 replay scene inventory changed")
-        aggregates = [(actual[split]["overall"], item["overall"])]
-        aggregates.extend((actual[split]["scenes"][s], item["scenes"][s]) for s in item["scenes"])
-        for a, b in aggregates:
+        aggregates = [("overall", actual[split]["overall"], item["overall"])]
+        aggregates.extend((s, actual[split]["scenes"][s], item["scenes"][s]) for s in item["scenes"])
+        for group, a, b in aggregates:
             if a["valid_pixels"] != b["valid_pixels"]:
                 raise ValueError("C1 replay support changed")
             for name in ("index_l1", "absrel", "rmse", "delta1"):
                 if not math.isclose(a[name], b[name], rel_tol=1e-4, abs_tol=1e-6):
-                    raise ValueError(f"C1 final metrics did not replay: {split}/{name}")
+                    raise ValueError(
+                        f"C1 final metrics did not replay: {split}/{group}/{name}; "
+                        f"actual={a[name]:.17g}, expected={b[name]:.17g}, "
+                        f"abs_diff={abs(a[name] - b[name]):.17g}; rtol=1e-4, atol=1e-6")
 
 
 def choose_gate_manifest(manifest):
@@ -318,12 +321,29 @@ def run_gate(output, seed, device):
     destination.mkdir()  # Refuse previous/partial gates; do not tune until a gate passes.
     deadline = time.monotonic() + pair["config"]["max_seconds_per_arm"]
     try:
+        # Each shell stage is a NEW process. make_gru() in prepare (or below)
+        # cannot configure the earlier C1 replay in this process. Restore the
+        # exact original C1 numeric policy BEFORE cache use / model evaluation.
+        controls.seed_everything(int(pair["config"]["seed"]))
+        numerical_policy = {
+            "seed": int(pair["config"]["seed"]),
+            "float32_matmul_precision": torch.get_float32_matmul_precision(),
+            "cuda_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+            "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+            "cudnn_benchmark": torch.backends.cudnn.benchmark,
+        }
+        print("C1_REPLAY_NUMERICS", json.dumps(numerical_policy), flush=True)
         clips, cache = load_cache(pair, device, deadline)
         objective = controls.build_objective(pair["config"]["objective"]["name"], pair["config"]["objective"]["kwargs"]).to(device)
         baseline = controls.build_head(pair["config"]["arms"]["C1"]["decoder"], pair["config"], pair["contract"]["backbone"]).to(device)
         final = torch.load(pair["root"] / "arms/C1/final_head.pth", map_location="cpu", weights_only=True)
         baseline.load_state_dict(final["model_state_dict"], strict=True)
         replay = controls.evaluate(baseline, clips, pair["manifest"], objective, device, deadline)
+        # Preserve both sides even on replay failure; never relax the tolerance.
+        controls.write_json(destination / "baseline_replay.json", {
+            "numerical_policy": numerical_policy, "cache_sha256": cache["file_sha256"],
+            "actual": replay, "expected": entry["baseline_metrics"],
+            "relative_tolerance": 1e-4, "absolute_tolerance": 1e-6})
         validate_metrics(replay, pair["manifest"])
         assert_metric_replay(replay, entry["baseline_metrics"])
         gate_manifest = choose_gate_manifest(pair["manifest"])

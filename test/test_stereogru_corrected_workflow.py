@@ -6,7 +6,9 @@ official IGEV accuracy results. Full-size recurrence math has separate tests.
 
 import copy
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -122,10 +124,20 @@ def test_baseline_gates_reset_and_all_seed_final_comparison(tmp_path, monkeypatc
             gru.train(destination, 0, torch.device("cpu"))
         assert not (destination / "seed0/formal").exists()
         for seed in gru.SEEDS:
+            # Same-process fixtures otherwise inherit C1's global precision policy.
+            torch.set_float32_matmul_precision("high")
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
             report = gru.run_gate(destination, seed, torch.device("cpu"))
             assert report["status"] == "passed" and report["gate_weights_discarded"]
             assert report["baseline_replayed"] and report["zero_iter_max_abs_diff"] < 1e-6
             assert report["loss_ratio"] < .5
+            replay = controls.read_json(destination / f"seed{seed}/gate/baseline_replay.json")
+            assert replay["numerical_policy"] == {
+                "seed": seed, "float32_matmul_precision": "highest", "cuda_matmul_allow_tf32": False,
+                "cudnn_allow_tf32": False, "cudnn_benchmark": False}
+            gru.assert_metric_replay(replay["actual"], replay["expected"])
         # A malformed OTHER-seed gate must reject before seed0 spends formal budget.
         for key, value in (("first_gradients", {}), ("first_gradients", {"matcher": 1.}),
                            ("zero_iter_max_abs_diff", float("nan")), ("zero_iter_max_abs_diff", -1.),
@@ -221,3 +233,123 @@ def test_metric_replay_checks_scenes_not_only_overall():
     actual["train"]["scenes"]["Scene01"]["absrel"] = .9
     with pytest.raises(ValueError, match="did not replay"):
         gru.assert_metric_replay(actual, expected)
+
+
+def test_gate_restores_baseline_precision_in_fresh_process(tmp_path):
+    # No GPU work: check policy at the first cache boundary in a new interpreter,
+    # without a preceding baseline training or prepare call.
+    code = r'''
+import json
+from pathlib import Path
+import sys
+from unittest.mock import patch
+import torch
+import stereogru_corrected_gru as gru
+
+root = Path(sys.argv[1])
+(root / "seed0").mkdir()
+pair = {"config": {"seed": 0, "max_seconds_per_arm": 60}}
+torch.set_float32_matmul_precision("high")
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.benchmark = True
+assert torch.backends.cudnn.allow_tf32
+
+def check_before_cache(*args):
+    assert torch.get_float32_matmul_precision() == "highest"
+    assert not torch.backends.cuda.matmul.allow_tf32
+    assert not torch.backends.cudnn.allow_tf32
+    assert not torch.backends.cudnn.benchmark
+    raise RuntimeError("verified-before-cache-no-training")
+
+with patch.object(gru, "verify", return_value=(root, {}, {}, {}, pair, {}, {})), \
+        patch.object(gru, "load_cache", side_effect=check_before_cache):
+    try:
+        gru.run_gate(root, 0, torch.device("cpu"))
+    except RuntimeError as exc:
+        assert str(exc) == "verified-before-cache-no-training"
+    else:
+        raise AssertionError("Expected intentional stop before cache")
+assert not (root / "seed0/gate/progress.jsonl").exists()
+assert not (root / "seed0/formal").exists()
+assert json.loads((root / "seed0/gate/failure.json").read_text())["formal_allowed"] is False
+print("FRESH_PROCESS_PRECISION_RESTORED")
+'''
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(ROOT), str(ROOT / "scripts"))),
+               NO_ALBUMENTATIONS_UPDATE="1", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2")
+    result = subprocess.run([sys.executable, "-c", code, str(tmp_path)], cwd=ROOT,
+                            env=env, text=True, capture_output=True, timeout=180)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FRESH_PROCESS_PRECISION_RESTORED" in result.stdout
+
+
+def test_replay_failure_reports_values_without_relaxing_tolerance():
+    stats = {"valid_pixels": 10, "index_l1": .2, "absrel": .3, "rmse": 2., "delta1": .8}
+    expected = {"train": {"overall": stats, "scenes": {"Scene01": copy.deepcopy(stats)}}}
+    actual = copy.deepcopy(expected)
+    actual["train"]["overall"]["index_l1"] += 1e-3
+    with pytest.raises(ValueError, match=r"train/overall/index_l1; actual=.*expected=.*abs_diff=.*rtol=1e-4, atol=1e-6"):
+        gru.assert_metric_replay(actual, expected)
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_gate_resets_backend_defaults_before_replaying_c1(tmp_path, monkeypatch, seed):
+    # Shell phases are separate interpreters. Same-process prepare/train tests
+    # leave TF32 disabled and can conceal missing setup in the first gate eval.
+    root, source = tmp_path / "g1", tmp_path / "c1"
+    (root / f"seed{seed}").mkdir(parents=True)
+    (source / "arms/C1").mkdir(parents=True)
+    controls.save_state(source / "arms/C1/final_head.pth", {"model_state_dict": {}})
+    pair = {"root": source, "manifest": {}, "contract": {"backbone": {}},
+            "config": {"seed": seed, "max_seconds_per_arm": 60,
+                       "objective": {"name": "unused", "kwargs": {}},
+                       "arms": {"C1": {"decoder": "unused"}}}}
+    monkeypatch.setattr(gru, "verify", lambda *_: (root, {}, {}, {}, pair, {}, {}))
+    monkeypatch.setattr(gru, "load_cache", lambda *_: ({}, {}))
+    monkeypatch.setattr(controls, "build_head", lambda *_: torch.nn.Identity())
+    monkeypatch.setattr(controls, "build_objective", lambda *_: torch.nn.Identity())
+
+    def settings():
+        return (torch.backends.cudnn.benchmark, torch.get_float32_matmul_precision(),
+                torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32)
+
+    observed = {}
+
+    def stop_at_first_evaluation(*_):
+        observed["settings"] = settings()
+        observed["seed"] = torch.initial_seed()
+        raise RuntimeError("probe stops before any gate optimisation")
+
+    monkeypatch.setattr(controls, "evaluate", stop_at_first_evaluation)
+    previous, rng = settings(), torch.get_rng_state()
+    try:
+        torch.backends.cudnn.benchmark = True
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.manual_seed(99)
+        with pytest.raises(RuntimeError, match="probe stops"):
+            gru.run_gate(root, seed, torch.device("cpu"))
+    finally:
+        torch.backends.cudnn.benchmark = previous[0]
+        torch.set_float32_matmul_precision(previous[1])
+        torch.backends.cuda.matmul.allow_tf32 = previous[2]
+        torch.backends.cudnn.allow_tf32 = previous[3]
+        torch.set_rng_state(rng)
+    assert observed == {"settings": (False, "highest", False, False), "seed": seed}
+    assert not (root / f"seed{seed}/gate/progress.jsonl").exists()
+    assert not (root / f"seed{seed}/formal").exists()
+
+
+@pytest.mark.parametrize("expected_value,delta,accepted", [(.2, 1.9e-5, True), (.2, 2.1e-5, False),
+                                                         (0., .9e-6, True), (0., 1.1e-6, False)])
+def test_replay_tolerances_stay_fixed_and_failure_reports_values(expected_value, delta, accepted):
+    stats = {"valid_pixels": 10, "index_l1": expected_value, "absrel": .3, "rmse": 2., "delta1": .8}
+    expected = {"train": {"overall": stats, "scenes": {"Scene01": copy.deepcopy(stats)}}}
+    actual = copy.deepcopy(expected)
+    actual["train"]["overall"]["index_l1"] += delta
+    if accepted:
+        gru.assert_metric_replay(actual, expected)
+    else:
+        with pytest.raises(ValueError, match="train/overall/index_l1.*actual=.*expected=.*abs_diff="):
+            gru.assert_metric_replay(actual, expected)
