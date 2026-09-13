@@ -1,5 +1,35 @@
 # GRU 初始／逐轮监督：独立受控验证（2026-09-13）
 
+## 当前实测状态：B0 seed0 已优化 1000 步，验收失败，方法仍阻塞
+
+- 用户在 Aliyun GPU5 执行发布版 `4aff2f8`，新目录
+	`/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_sequence_wcIm3t5e/run`；
+	启动日志 `/mnt/data/PROJECT_CHEN/code/PP-DPT/seq_TsYAhV.log`。
+- B0 seed0 初始 train/dev indexL1 与旧 C1 精确一致；final1000 train indexL1
+	`.018909876887974412` 对旧 C1 `.01649684075546028` 不符，原检查拒绝写完成证书。
+	新 dev AbsRel `.21094213617810592`、RMSE `9.666406567052993`、δ1 `.648516218773161`。
+	**不因某个指标更好就批准失败 baseline；F1/S1、其他 seed 均未由此启动。**
+- 完整用户回传归档：[results/stereogru/20260913_sequence_B0_replay_failure.json](results/stereogru/20260913_sequence_B0_replay_failure.json)。
+	这里只归档终端证据，未冒充本地已独立读取远端 checkpoint。
+- 验收设计问题明确：原规则把**新训练末态与历史训练末态之差**称为 replay；
+	它不是“固定相同权重的前向回放”。相同模型/初值/seed 不自动保证 CUDA 的长期训练轨迹相同。
+	但本轮也**没有证明**具体差异来自 CUDA 非确定性，不能把 tuple 包装当数值根因。
+- 下一步不是重训/改容差/伪造完成证书，而是新的独立诊断
+	[diagnostics/run_sequence_replay_audit.sh](diagnostics/run_sequence_replay_audit.sh)：
+	原 C1、保留 B0、共同 INITIAL 分别在**各自相同权重**下比较旧/新 evaluator，并对旧路径重复回放；
+	每种输出检查逐 clip/场景/总体指标，仍用 `rtol=1e-4, atol=1e-6`。
+	另取固定两个训练 clip，比较同初值的旧旧重复／新旧单步前向、loss、全部参数梯度、BN 和 AdamW 更新。
+- 总共六次一次性诊断更新，仅存在内存、不存权重，正式训练更新数为零。
+	原失败目录全部文件及旧 baseline/input/cache 重新校验；报告只写外部新目录。
+	诊断放在五棵冻结源码树之外，不改原 source inventory，禁写 Python bytecode；
+	即使报告全通过，也**不能**推出 1000 步差异的唯一根因，不能自动解锁 B0/F1/S1。
+- 初始化验证失败可能只有 shell 日志；外层强制 timeout/被杀不能保证写出完整报告或完成末尾校验。
+	只有 `AUDIT_COMPLETE` 且报告明确 `original_files_unchanged=true` 才表示本次完整检查结束。
+	三种权重各三次全 46 clips 评测共 414 clip forwards，另六次一次性更新；不是再训 1000 步。
+- 本次诊断及 sequence head/CLI、corrected head/workflow 回归实跑 **68 passed / 119.81 s**；
+	合成测试刻意制造不同训练末态，验证两套固定权重仍各自回放、旧失败不会被改成完成；
+	并验证异常分支、篡改拒绝和原文件不变。此结果仍是 CPU 测试，不是阿里云诊断已通过。
+
 ## 1. 目标与边界
 
 验证「匹配体出初值 → raw correlation + GEV 查表 → 三层 GRU 修正 8 次 →

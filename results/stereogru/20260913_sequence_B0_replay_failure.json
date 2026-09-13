@@ -1,0 +1,27 @@
+{
+  "evidence_source": "User-returned Aliyun stdout; retained remote files not independently read locally",
+  "source_snapshot": "4aff2f8e6ae8dcf904902c1e7c3e65564e5e0337",
+  "experiment": "/mnt/data/PROJECT_CHEN/code/PP-DPT/stereogru_sequence_wcIm3t5e/run",
+  "source_directory": "/tmp/gru-seq.bMQf4p",
+  "launch_log": "/mnt/data/PROJECT_CHEN/code/PP-DPT/seq_TsYAhV.log",
+  "gpu": 5,
+  "arm": "B0",
+  "seed": 0,
+  "steps": 1000,
+  "status": "optimisation_reached_1000_but_completion_rejected",
+  "F1_S1_launched": false,
+  "initial_index_l1": {"train": 0.3050410285454688, "dev": 0.31348034064660496},
+  "evaluations": [
+    {"step": 250, "train": {"valid_pixels": 5884702, "index_l1": 0.0208063823955172, "absrel": 0.15892106779722978, "rmse": 8.706217308584748, "delta1": 0.7910492323995336}, "dev": {"valid_pixels": 3591702, "index_l1": 0.044691361797790326, "absrel": 0.2803207069017184, "rmse": 9.404289264359663, "delta1": 0.6027142563609119}},
+    {"step": 500, "train": {"valid_pixels": 5884702, "index_l1": 0.019615470993681168, "absrel": 0.1450401961266644, "rmse": 7.635957626550723, "delta1": 0.8207418149636124}, "dev": {"valid_pixels": 3591702, "index_l1": 0.04439003612281988, "absrel": 0.281962347735558, "rmse": 8.984828572820597, "delta1": 0.6275654271985817}},
+    {"step": 750, "train": {"valid_pixels": 5884702, "index_l1": 0.01610209565123164, "absrel": 0.11390777690268228, "rmse": 6.940309691813509, "delta1": 0.8590968582606222}, "dev": {"valid_pixels": 3591702, "index_l1": 0.04144367169659767, "absrel": 0.24376608006247405, "rmse": 8.40093217041547, "delta1": 0.6486629458680035}},
+    {"step": 1000, "train": {"valid_pixels": 5884702, "index_l1": 0.018909876887974412, "absrel": 0.1232404007709849, "rmse": 8.83404766560523, "delta1": 0.7872899936139502}, "dev": {"valid_pixels": 3591702, "index_l1": 0.04063321569062926, "absrel": 0.21094213617810592, "rmse": 9.666406567052993, "delta1": 0.648516218773161}}
+  ],
+  "failure": {"comparison": "newly_retrained_B0_vs_historically_trained_C1", "split": "train", "group": "overall", "metric": "index_l1", "actual": 0.018909876887974412, "expected": 0.01649684075546028, "abs_diff": 0.002413036132514132, "rtol": 0.0001, "atol": 0.000001},
+  "limits": [
+    "Initial aggregate losses match archived C1 exactly; later training trajectories differ. Root cause is not established.",
+    "This is a cross-training comparison, not fixed-checkpoint replay. Tuple wrapping and CUDA nondeterminism are not proven causes.",
+    "Do not approve the failed baseline, relax the guard, choose a better checkpoint, or launch GRU from these metrics.",
+    "Preserve all original artifacts. Next action is fixed-weight replay and disposable one-update equivalence on the actual GPU, not another 1000-step run."
+  ]
+}
