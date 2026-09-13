@@ -1,0 +1,34 @@
+# New experiment, not a change to old C0/C1/G1 artifacts or their hashes.
+# Baseline-first across ALL seeds; every formal run starts from saved INITIAL.
+protocol: calibrated_gru_sequence_supervision_v1
+seeds: [0, 1, 2]
+index_update: remaining_range_tanh_v1
+weight_contract: igev_mvs_relative_gamma09_sum_normalized
+evaluation: final_physical_q_no_alignment
+gate:
+  steps: 200
+  clips_per_train_scene: 1
+  maximum_final_initial_loss_ratio: 0.5
+gate_reset_required: true
+arms:
+  B0:
+    decoder: DPTHeadCalibratedVolumeSequenceConvNeXt
+    iterations: 0
+    objective: calibrated_igev_sequence_index_l1
+    objective_kwargs: {iterations: 0, gamma: 0.9}
+    requires: []
+    gate_required: false
+  F1:
+    decoder: DPTHeadCalibratedGRUSequenceConvNeXt
+    iterations: 8
+    objective: calibrated_final_sequence_index_l1
+    objective_kwargs: {iterations: 8}
+    requires: [B0]
+    gate_required: true
+  S1:
+    decoder: DPTHeadCalibratedGRUSequenceConvNeXt
+    iterations: 8
+    objective: calibrated_igev_sequence_index_l1
+    objective_kwargs: {iterations: 8, gamma: 0.9}
+    requires: [B0, F1]
+    gate_required: true
